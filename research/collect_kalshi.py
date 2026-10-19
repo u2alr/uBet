@@ -146,7 +146,10 @@ def snapshot(conn: sqlite3.Connection) -> tuple[int, int]:
 
 
 def main():
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stdout is None:  # pythonw.exe (no console window): write to the log file instead
+        sys.stdout = sys.stderr = open(DB_PATH.parent / "kalshi.log", "a", encoding="utf-8", buffering=1)
+    else:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--loop", type=int, default=0, help="repeat every N minutes (0 = once)")
     args = ap.parse_args()

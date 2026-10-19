@@ -62,7 +62,8 @@ ingest/.venv/Scripts/python research/project.py              # boosted projectio
 ### Free forward data: Kalshi
 
 `research/collect_kalshi.py` snapshots Kalshi's public NBA prices (player props, game winners, spreads, totals)
-into `research/data/kalshi.sqlite`, with no API key and no cost. A Windows task ("uBet Kalshi collector", defined
-by `research/collect_kalshi.ps1`) runs it every 10 minutes while the PC is on. `kalshi_eval.py --peek` shows how
+into `research/data/kalshi.sqlite`, with no API key and no cost. A Windows task ("uBet Kalshi collector", running
+`ingest/.venv/Scripts/pythonw.exe research/collect_kalshi.py`, which has no console window) runs it every
+10 minutes while the PC is on; output goes to `research/data/kalshi.log`. `kalshi_eval.py --peek` shows how
 much usable data exists; it refuses to show scores until the minimum fixed in `research/PREREG_KALSHI.md`
 (1,500 liquid props across 30 game dates) is reached.
