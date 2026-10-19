@@ -66,6 +66,25 @@ function poissonCdf(k: number, lambda: number) {
   return Math.min(sum, 1)
 }
 
+/**
+ * P(X > line) for a negative binomial with mean mu and dispersion alpha (Var = mu + alpha * mu^2).
+ * Used with the boosted model's projections (research/project.py), which are scored the same way in
+ * research/evaluate.py. Verified against scipy in research/tests/test_nb.py.
+ */
+export function nbPOver(line: number, mu: number, alpha: number) {
+  const m = Math.max(mu, 1e-3)
+  const r = 1 / Math.max(alpha, 1e-6)
+  const p = r / (r + m)
+  const k = Math.floor(line)
+  let pmf = Math.pow(p, r)
+  let cdf = pmf
+  for (let i = 0; i < k; i++) {
+    pmf *= ((i + r) / (i + 1)) * (1 - p)
+    cdf += pmf
+  }
+  return Math.max(0, Math.min(1, 1 - cdf))
+}
+
 /** values: most recent game first. */
 export function hitRate(values: number[], line: number, n: number) {
   const recent = values.slice(0, n)

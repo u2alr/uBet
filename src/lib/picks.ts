@@ -17,6 +17,7 @@ export interface Pick {
   impliedProb: number
   ev: number
   risk: Risk
+  model: string
   bigGap: boolean
   confidence: number
   projection: number

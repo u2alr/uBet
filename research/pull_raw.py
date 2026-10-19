@@ -6,6 +6,7 @@ so an interrupted run resumes where it stopped.
 
     ingest/.venv/Scripts/python research/pull_raw.py
 """
+import datetime
 import sys
 import time
 from pathlib import Path
@@ -13,7 +14,13 @@ from pathlib import Path
 from nba_api.stats.endpoints import leaguegamelog
 
 DATA = Path(__file__).resolve().parent / "data"
-SEASONS = ["2022-23", "2023-24", "2024-25", "2025-26"]
+SEASONS = ["2022-23", "2023-24", "2024-25", "2025-26", "2026-27"]
+
+
+def current_season() -> str:
+    today = datetime.date.today()
+    start = today.year if today.month >= 10 else today.year - 1
+    return f"{start}-{str(start + 1)[2:]}"
 TYPES = {"regular": "Regular Season", "playoffs": "Playoffs"}
 LEVELS = {"P": "player", "T": "team"}
 
@@ -33,14 +40,18 @@ def fetch(season: str, season_type: str, level: str):
     raise RuntimeError(f"gave up on {season} {season_type} {level}")
 
 
-def main():
+def main(refresh_current: bool = True):
+    """Download anything missing. The current season is re-downloaded every time since it keeps growing."""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     DATA.mkdir(exist_ok=True)
+    now = current_season()
     for season in SEASONS:
+        if season > now:
+            continue  # not started yet
         for tkey, tname in TYPES.items():
             for lkey, lname in LEVELS.items():
                 out = DATA / f"{lname}_{season}_{tkey}.csv"
-                if out.exists():
+                if out.exists() and not (refresh_current and season == now):
                     print(f"skip {out.name}")
                     continue
                 df = fetch(season, tname, lkey)

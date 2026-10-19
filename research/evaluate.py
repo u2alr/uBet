@@ -84,6 +84,7 @@ def run(train_seasons: list[int], test_season: int, df: pd.DataFrame, app: dict)
                 "logloss_pseudo": float(-np.mean(over * np.log(p) + (1 - over) * np.log(1 - p))),
             }
             per_row[name] = ls
+            per_row[name + "_mu"] = mu
             per_row[name + "_p"] = p
         # The app's native distribution (normal / Poisson), as users see it.
         pn = np.clip(app_p_over(mu_test["app"], app_cols.loc[te.index, "spread"].to_numpy(float), line), 1e-4, 1 - 1e-4)

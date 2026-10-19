@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
-import { BIG_GAP, STATS, blendProb, hitRate, predict, riskTier, type GameType, type Risk, type Stat } from '../../shared/baseline'
+import { BIG_GAP, STATS, blendProb, hitRate, nbPOver, predict, riskTier, type GameType, type Risk, type Stat } from '../../shared/baseline'
 
 type Env = { Bindings: { DB: D1Database; ODDS_API_KEY?: string; CAPTURE_TOKEN?: string; ODDS_REGIONS?: string; ODDS_MARKETS?: string; ODDS_HOURS?: string; ODDS_BOOKS?: string } }
 
@@ -303,6 +303,8 @@ interface Pick {
   /** Expected profit per 1 staked, using the blended probability. */
   ev: number
   risk: Risk
+  /** Which model produced the projection: the boosted model ('gbm-v1') or the fallback ('baseline-v2'). */
+  model: string
   /** True when the model and market disagree wildly, which usually means the model is missing news. */
   bigGap: boolean
   confidence: number
@@ -340,6 +342,16 @@ async function loadPicks(env: Env['Bindings']): Promise<{ configured: boolean; p
 
   const { results: players } = await env.DB.prepare('SELECT id, name, team FROM players').all<{ id: number; name: string; team: string | null }>()
   const byName = new Map(players.map((p) => [normName(p.name), p]))
+
+  // Boosted-model projections written by research/project.py. Missing rows fall back to the older model.
+  const dates = [...new Set(odds.map((o) => etDate(o.commence_time)))]
+  const { results: projRows } = dates.length
+    ? await env.DB.prepare(
+        `SELECT player_id, game_date, stat, mean, alpha, model FROM projections WHERE game_date IN (${dates.map(() => '?').join(',')})`,
+      ).bind(...dates).all<{ player_id: number; game_date: string; stat: string; mean: number; alpha: number; model: string }>()
+        .catch(() => ({ results: [] as { player_id: number; game_date: string; stat: string; mean: number; alpha: number; model: string }[] }))
+    : { results: [] }
+  const projections = new Map(projRows.map((r) => [`${r.player_id}|${r.game_date}|${r.stat}`, r]))
 
   // One query for every matched player's history (regular season, playoffs and preseason).
   const wanted = new Set<number>()
@@ -389,6 +401,11 @@ async function loadPicks(env: Env['Bindings']): Promise<{ configured: boolean; p
       const samples = rows.map((r) => ({ value: r[L.stat] as number, type: r.type as GameType }))
       const pred = predict(samples, L.point, upcomingType)
       if (!pred) continue
+      // Prefer the boosted model's mean and a negative-binomial tail; keep the older model's confidence and sample size.
+      const proj = projections.get(`${L.pl.id}|${gameDate}|${L.stat}`)
+      const pOver = proj ? nbPOver(L.point, proj.mean, proj.alpha) : pred.pOver
+      const projected = proj ? proj.mean : pred.predicted
+      const modelName = proj ? proj.model : pred.model
       const played = samples.filter((s) => s.type !== 'preseason').map((s) => s.value)
 
       // Market view with the book margin removed, averaged over books that quote both sides.
@@ -405,14 +422,14 @@ async function loadPicks(env: Env['Bindings']): Promise<{ configured: boolean; p
           .map(([book, price]) => ({ book, price }))
           .sort((a, b) => b.price - a.price)
         const best = sorted[0]
-        const modelProb = side === 'over' ? pred.pOver : 1 - pred.pOver
+        const modelProb = side === 'over' ? pOver : 1 - pOver
         const marketProb = marketOver == null ? null : side === 'over' ? marketOver : 1 - marketOver
         const prob = blendProb(modelProb, marketProb, pred.confidence)
         const over10 = hitRate(played, L.point, 10)
         picks.push({
           playerId: L.pl.id, player: L.pl.name, team: L.pl.team, teamName: L.pl.team ? TEAM_NAMES[L.pl.team] ?? null : null, stat: L.stat, side, line: L.point, price: best.price, book: best.book,
           prices: sorted.slice(0, 5), modelProb, marketProb, prob, impliedProb: 1 / best.price,
-          ev: prob * best.price - 1, risk: riskTier(prob), bigGap: marketProb != null && Math.abs(modelProb - marketProb) > BIG_GAP, confidence: pred.confidence, projection: pred.predicted,
+          ev: prob * best.price - 1, risk: riskTier(prob), model: modelName, bigGap: marketProb != null && Math.abs(modelProb - marketProb) > BIG_GAP, confidence: pred.confidence, projection: projected,
           hitRate10: over10 == null ? null : side === 'over' ? over10 : 1 - over10,
           recent: played.slice(0, 10).reverse(), sample: pred.sample, game, gameDate,
         })
@@ -446,7 +463,7 @@ app.get('/picks', async (c) => {
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
         ).bind(
           p.playerId, p.stat, p.line, p.projection, p.side === 'over' ? p.prob : 1 - p.prob,
-          'baseline-v2', p.gameDate, p.side, p.price, p.book,
+          p.model, p.gameDate, p.side, p.price, p.book,
         ),
       ),
     )

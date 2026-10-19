@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const python = join(root, 'ingest', '.venv', 'Scripts', 'python.exe')
 const script = join(root, 'ingest', 'sync.py')
+const projectScript = join(root, 'research', 'project.py')
 const PORT = 8789
 
 // Only the local dev pages may call this (blocks other websites from poking it).
@@ -19,10 +20,10 @@ const ALLOWED_ORIGINS = new Set([
 
 const state = { running: false, label: '', done: 0, total: 0, error: '', finishedAt: null }
 
-function run(args, label) {
+function run(args, label, file = script) {
   return new Promise((resolve) => {
     state.label = label
-    const child = spawn(python, ['-X', 'utf8', script, ...args], { cwd: root })
+    const child = spawn(python, ['-X', 'utf8', file, ...args], { cwd: root })
     let tail = ''
     const onData = (buf) => {
       const text = buf.toString()
@@ -51,6 +52,8 @@ async function startSync(mode, player) {
       await run(['--seasons', '3', player], `Syncing ${player}`)
     } else if (await run(['--teams-only'], 'Updating teams')) {
       await run(['--all-active', '--seasons', '1', '--delay', '1'], 'Syncing box scores')
+      // Fresh game logs -> fresh projections for the upcoming games.
+      await run([], 'Updating projections', projectScript)
     }
   } finally {
     state.running = false

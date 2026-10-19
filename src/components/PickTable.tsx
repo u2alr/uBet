@@ -90,7 +90,7 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
         {p.bigGap && <span className="mr-1 cursor-help text-neutral-500" title={`Model ${pct(p.modelProb)} vs market ${pct(p.marketProb)}. A gap this big usually means news the model cannot see (injury, trade, role change).`}>⚠</span>}
         {pct(p.prob)}
       </td>
-      <td className="px-2 py-2.5 text-right tabular-nums text-neutral-400">{fmt(p.projection)}</td>
+      <td className="px-2 py-2.5 text-right tabular-nums text-neutral-400" title={`Projection from ${p.model === 'gbm-v1' ? 'the boosted model' : 'the fallback average model'}`}>{fmt(p.projection)}</td>
       <td className="px-2 py-2.5 text-right tabular-nums text-neutral-400">{pct(p.hitRate10)}</td>
       <td className="px-2 py-2.5 text-right tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}%</td>
       <td className="px-2 py-2.5"><RiskBadge risk={p.risk} /></td>
