@@ -58,3 +58,11 @@ ingest/.venv/Scripts/python research/project.py              # boosted projectio
   in `odds_raw`, and `/api/capture` snapshots games about to start.
 - `research/tests/` also verifies the Python port of the app model and the negative-binomial maths against
   the TypeScript in `shared/baseline.ts`.
+
+### Free forward data: Kalshi
+
+`research/collect_kalshi.py` snapshots Kalshi's public NBA prices (player props, game winners, spreads, totals)
+into `research/data/kalshi.sqlite`, with no API key and no cost. A Windows task ("uBet Kalshi collector", defined
+by `research/collect_kalshi.ps1`) runs it every 10 minutes while the PC is on. `kalshi_eval.py --peek` shows how
+much usable data exists; it refuses to show scores until the minimum fixed in `research/PREREG_KALSHI.md`
+(1,500 liquid props across 30 game dates) is reached.
