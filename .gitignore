@@ -28,3 +28,5 @@ ingest/.venv
 ingest/out.sql
 research/data/
 research/out/
+__pycache__/
+*.pyc
