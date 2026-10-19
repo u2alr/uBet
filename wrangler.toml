@@ -1,0 +1,8 @@
+name = "ubet"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ubet"
+database_id = "REPLACE_AFTER_wrangler_d1_create"
