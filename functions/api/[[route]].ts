@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { BIG_GAP, STATS, blendProb, hitRate, predict, riskTier, type GameType, type Risk, type Stat } from '../../shared/baseline'
 
-type Env = { Bindings: { DB: D1Database; ODDS_API_KEY?: string; ODDS_REGIONS?: string; ODDS_MARKETS?: string; ODDS_HOURS?: string; ODDS_BOOKS?: string } }
+type Env = { Bindings: { DB: D1Database; ODDS_API_KEY?: string; CAPTURE_TOKEN?: string; ODDS_REGIONS?: string; ODDS_MARKETS?: string; ODDS_HOURS?: string; ODDS_BOOKS?: string } }
 
 const app = new Hono<Env>().basePath('/api')
 app.onError((err, c) => c.json({ error: err.message }, 500))
@@ -60,8 +60,38 @@ async function oddsFetch<T>(env: Env['Bindings'], path: string, params: Record<s
   const qs = new URLSearchParams({ apiKey: env.ODDS_API_KEY!, ...params })
   const res = await fetch(`${ODDS}${path}?${qs}`)
   if (!res.ok) throw new Error(`The Odds API ${res.status}`)
-  return res.json()
+  const body = await res.text()
+  // Keep every odds response exactly as received (the API key is never stored) so closing lines can be
+  // reconstructed later. A storage failure must never break the request.
+  if (path.includes('/odds'))
+    await env.DB.prepare('INSERT INTO odds_raw (path, params, body) VALUES (?,?,?)')
+      .bind(path, JSON.stringify(params), body).run().catch(() => {})
+  return JSON.parse(body)
 }
+
+// ---------- odds capture (for closing-line analysis) ----------
+
+// Fetches fresh prop and team odds for games starting within `hours` and stores the raw responses.
+// This spends Odds API credits (markets x events), so it is not public: it needs CAPTURE_TOKEN, or must
+// be called from localhost when no token is configured.
+app.get('/capture', async (c) => {
+  const host = new URL(c.req.url).hostname
+  const local = host === 'localhost' || host === '127.0.0.1'
+  if (c.env.CAPTURE_TOKEN ? c.req.header('x-capture-token') !== c.env.CAPTURE_TOKEN : !local)
+    return c.json({ error: 'Forbidden' }, 403)
+  if (!c.env.ODDS_API_KEY) return c.json({ error: 'ODDS_API_KEY not set' }, 400)
+
+  const hours = Math.min(Number(c.req.query('hours') ?? 3), 12)
+  const events = await oddsFetch<any[]>(c.env, '/events')
+  const soon = events.filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + hours * 3600_000)
+  const regions = c.env.ODDS_REGIONS ?? 'us'
+  const markets = c.env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists'
+  for (const e of soon)
+    await oddsFetch(c.env, `/events/${e.id}/odds`, { regions, markets, oddsFormat: 'decimal' })
+  if (soon.length) await loadTeamOdds(c.env, true)
+  const credits = soon.length * markets.split(',').length * regions.split(',').length + (soon.length ? 3 : 0)
+  return c.json({ games: soon.length, approxCreditsSpent: credits })
+})
 
 // ---------- status ----------
 
