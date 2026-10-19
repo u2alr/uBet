@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
-import type { Pick } from '../lib/picks'
+import { pickKey, type Pick } from '../lib/picks'
 import { RiskBadge, SlipButton } from './PickTable'
 
 interface TeamPlayer {
@@ -78,7 +78,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                   <div className="mb-2 text-sm text-neutral-400">{t.name}</div>
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {list.map((p) => (
-              <div key={`${p.playerId}${p.stat}`} className="rounded-lg bg-neutral-900 p-4">
+              <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
                 <div className="flex items-baseline justify-between">
                   <button className="text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>{p.player}</button>
                   <span className="flex items-center gap-2">
@@ -121,7 +121,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                   <div className="mb-2 text-sm text-neutral-400">Other</div>
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {rest.map((p) => (
-              <div key={`${p.playerId}${p.stat}`} className="rounded-lg bg-neutral-900 p-4">
+              <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
                 <div className="flex items-baseline justify-between">
                   <button className="text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>{p.player}</button>
                   <span className="flex items-center gap-2">
