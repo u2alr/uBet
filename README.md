@@ -36,3 +36,25 @@ npm run dev:sync                      # optional: lets the Sync button run inges
   `sync.py --start N` resumes an interrupted run; `--remote` writes to production D1.
 - Player props only appear for players you have synced. Injuries and lineup news are not modeled.
 - Keys live in `.dev.vars` (git-ignored). Never commit them.
+
+## Research and the model
+
+`research/` holds the evidence behind the model. Start with `research/RESULTS.md`; the pass/fail rules were
+written first in `research/PREREG.md`.
+
+```bash
+ingest/.venv/Scripts/python -m pip install pandas numpy scipy scikit-learn tzdata
+ingest/.venv/Scripts/python research/pull_raw.py             # league-wide game logs (one request per season)
+ingest/.venv/Scripts/python research/features.py             # point-in-time features
+ingest/.venv/Scripts/python research/tests/test_leakage.py   # proves no feature peeks at the future
+ingest/.venv/Scripts/python research/evaluate.py             # walk-forward development folds
+ingest/.venv/Scripts/python research/project.py              # boosted projections for upcoming games -> D1
+```
+
+- Picks use the boosted model's projection with a negative-binomial tail when `projections` has a row, and
+  fall back to the weighted-average model otherwise (`model` on each pick says which).
+- **No sportsbook edge has been shown.** Historical lines are needed for that: `research/backfill_odds.py`
+  (paid Odds API plan; `--dry-run` prices a run) then `research/market_eval.py`. Raw live odds are also stored
+  in `odds_raw`, and `/api/capture` snapshots games about to start.
+- `research/tests/` also verifies the Python port of the app model and the negative-binomial maths against
+  the TypeScript in `shared/baseline.ts`.
