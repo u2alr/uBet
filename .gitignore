@@ -26,3 +26,5 @@ dist-ssr
 .wrangler
 ingest/.venv
 ingest/out.sql
+research/data/
+research/out/
