@@ -17,7 +17,7 @@
     "test:db": "node --no-warnings --test tests/grade.test.mjs tests/grade_minds.test.mjs",
     "test:ingest": "node --no-warnings --test tests/ingest.test.mjs",
     "grade": "ingest\\.venv\\Scripts\\python ingest\\sync.py --grade-only",
-    "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs tests/integration/fallback_v3.test.mjs tests/integration/minds_games.test.mjs",
+    "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs tests/integration/fallback_v3.test.mjs tests/integration/minds_games.test.mjs tests/integration/injuries_roles.test.mjs tests/integration/injuries_down.test.mjs",
     "test:mutation": "node --no-warnings tests/mutation_check.mjs",
     "check:data": "node --no-warnings ingest/check_data.mjs"
   },

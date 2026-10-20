@@ -1,6 +1,7 @@
 // Pure construction of suggested bets from raw odds, history and projections.
 // No database, no network, no clock: everything arrives as an argument, so every number a user sees can be
 // reproduced in a test. The Worker (functions/api) does the I/O and calls buildPicks().
+import type { Injury, Role } from './injuries.ts'
 import {
   BIG_GAP, blendProb, expectedValue, hitRate, outcomeProbs, predict, predictV3, riskTier,
   type GameType, type Risk, type Stat,
@@ -14,7 +15,7 @@ export interface OddsBook { key: string; title: string; markets: OddsMarket[] }
 export interface OddsEvent { id: string; commence_time: string; home_team: string; away_team: string; bookmakers?: OddsBook[] }
 export interface PlayerRow { id: number; name: string; team: string | null }
 /** One past game for one player. Rows for a player must be newest first. */
-export interface HistoryRow { player_id: number; type: GameType; pts: number; reb: number; ast: number; fg3m: number }
+export interface HistoryRow { player_id: number; type: GameType; pts: number; reb: number; ast: number; fg3m: number; minutes?: number }
 export interface ProjectionRow {
   player_id: number; game_date: string; stat: string; mean: number; alpha: number; model: string
   /** UTC timestamp as SQLite writes it: 'YYYY-MM-DD HH:MM:SS'. */
@@ -131,6 +132,10 @@ export interface Pick {
   projectionAgeHours: number | null
   game: string
   gameDate: string
+  /** ESPN's listed status for the player (Questionable, Doubtful...), if any. Players listed Out never get a pick. */
+  injury?: Injury | null
+  /** Minutes role from the last 10 games. */
+  role?: Role | null
 }
 
 export interface Warning { code: string; message: string }

@@ -175,7 +175,7 @@ describe('picks', () => {
   it('say how old the odds are and what is missing', () => {
     assert.ok(Math.abs(Date.now() - Date.parse(body.meta.oddsAsOf)) < 5 * 60_000)
     const codes = body.meta.warnings.map((x) => x.code)
-    assert.ok(codes.includes('no_injury_data'))
+    assert.ok(codes.includes('injuries_not_modelled'), 'injuries are loaded but still not modelled, and the app says so')
     assert.ok(codes.includes('unmatched_players'), 'a player in the odds that is not in the database is reported')
   })
 

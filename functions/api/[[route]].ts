@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
+import { annotateInjuries, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { assessOddsAge, buildPicks, etDate, normName, sameMatchup, scoreboardDates, teamKey, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
 
 type Bindings = {
@@ -187,12 +188,17 @@ app.get('/players/:id/stats', async (c) => {
      WHERE pg.player_id = ?${typeSql} ORDER BY g.date DESC`,
   ).bind(...(type ? [id, type] : [id])).all<{ date: string; gameId: number; type: GameType; minutes: number; value: number }>()
 
+  const who = await c.env.DB.prepare('SELECT name FROM players WHERE id = ?').bind(id).first<{ name: string }>()
+  const regularMinutes = results.filter((r) => r.type !== 'preseason').map((r) => r.minutes)
+  const role: Role | null = roleFromMinutes(regularMinutes.length >= 3 ? regularMinutes : results.map((r) => r.minutes))
+  const injury = who ? ((await loadInjuries(c.env)) ?? new Map<string, Injury>()).get(normName(who.name)) ?? null : null
   const values = results.map((r) => r.value)
   const avg = (n: number) => {
     const s = values.slice(0, n)
     return s.length ? s.reduce((a, b) => a + b, 0) / s.length : null
   }
   return c.json({
+    role, injury,
     games: results,
     averages: { last5: avg(5), last10: avg(10), season: avg(values.length) },
     ...(line !== null && {
@@ -333,6 +339,23 @@ async function loadTeamOdds(env: Bindings, fresh = false): Promise<Map<string, G
   return new Map(events.map((e) => [`${teamKey(e.away_team)}@${teamKey(e.home_team)}`, parseGameOdds(e)]))
 }
 
+// ---------- availability (ESPN's keyless injury list) ----------
+
+/** Player name -> listed status. Keyless, so it costs no credits; null if ESPN is down, which callers say out loud. */
+async function loadInjuries(env: Bindings, fresh = false): Promise<Map<string, Injury> | null> {
+  try {
+    const feed = await cachedJson<unknown>('espn-injuries', 15 * 60, async () => {
+      const res = await fetch(`${env.ESPN_BASE_URL ?? 'https://site.api.espn.com'}/apis/site/v2/sports/basketball/nba/injuries`)
+      if (!res.ok) throw new UpstreamError(`ESPN injuries ${res.status}`)
+      return res.json()
+    }, fresh)
+    return parseInjuries(feed)
+  } catch (e) {
+    console.error('injuries unavailable', e instanceof Error ? e.message : String(e))
+    return null
+  }
+}
+
 // ---------- picks (The Odds API + model) ----------
 
 async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: boolean; picks: Pick[]; meta: PicksMeta }> {
@@ -383,13 +406,27 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
     : []
   const history = wanted.size
     ? (await env.DB.prepare(
-        `SELECT pg.player_id, g.game_type AS type, pg.pts, pg.reb, pg.ast, pg.fg3m
+        `SELECT pg.player_id, g.game_type AS type, pg.pts, pg.reb, pg.ast, pg.fg3m, pg.minutes
          FROM player_games pg JOIN games g ON g.id = pg.game_id
          WHERE pg.player_id IN (${[...wanted].join(',')}) ORDER BY g.date DESC`,
       ).all<HistoryRow>()).results
     : []
 
-  const { picks, diagnostics: d } = buildPicks({ events: odds, players, history, projections, now, fallback: env.FALLBACK_MODEL === 'v3' ? 'v3' : 'v2' })
+  const built = buildPicks({ events: odds, players, history, projections, now, fallback: env.FALLBACK_MODEL === 'v3' ? 'v3' : 'v2' })
+  const d = built.diagnostics
+
+  // Role: minutes over the last 10 games (preseason only if that is all there is). History is newest first.
+  const minutesBy = new Map<number, { regular: number[]; any: number[] }>()
+  for (const r of history) {
+    const e = minutesBy.get(r.player_id) ?? minutesBy.set(r.player_id, { regular: [], any: [] }).get(r.player_id)!
+    if (typeof r.minutes === 'number') { e.any.push(r.minutes); if (r.type !== 'preseason') e.regular.push(r.minutes) }
+  }
+  const injuries = await loadInjuries(env, fresh)
+  const annotated = annotateInjuries(built.picks.map((p) => {
+    const m = minutesBy.get(p.playerId)
+    return { ...p, role: m ? roleFromMinutes(m.regular.length >= 3 ? m.regular : m.any) : null } as Pick
+  }), injuries ?? new Map())
+  const picks = annotated.picks
 
   if (d.fallbackLines > 0)
     meta.warnings.push({
@@ -401,7 +438,13 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
     meta.warnings.push({ code: 'unmatched_players', message: `${d.unmatchedPlayers.length} players in the odds are not synced, so they have no pick.` })
   if (d.invalidQuotes)
     meta.warnings.push({ code: 'invalid_quotes', message: `${d.invalidQuotes} malformed price${d.invalidQuotes === 1 ? '' : 's'} from the provider were ignored.` })
-  meta.warnings.push({ code: 'no_injury_data', message: 'Injuries and lineup news are not modelled. Check the injury report before betting.' })
+  if (injuries === null)
+    meta.warnings.push({ code: 'no_injury_data', message: 'Injury statuses could not be loaded, and injuries are not modelled. Check the injury report before betting.' })
+  else {
+    if (annotated.dropped.length)
+      meta.warnings.push({ code: 'injured_dropped', message: `${annotated.dropped.length} player${annotated.dropped.length === 1 ? '' : 's'} listed Out, so their lines are hidden: ${annotated.dropped.slice(0, 4).join(', ')}${annotated.dropped.length > 4 ? '…' : ''}.` })
+    meta.warnings.push({ code: 'injuries_not_modelled', message: 'Injury tags come from ESPN and can lag. The projections do not use them, and lineup news is not modelled: check the team report before betting.' })
+  }
 
   // Are the box scores behind every projection current?
   const sync = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_sync'").first<{ value: string }>().catch(() => null)

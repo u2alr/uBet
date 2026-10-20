@@ -88,6 +88,7 @@ function teamOdds(ev) {
 
 const counts = {}
 let failing = false
+let failingInjuries = false
 
 // ESPN-shaped scoreboard for the same games (ESPN abbreviations differ from NBA.com's: NY, GS, SA).
 const ESPN_ABBR = { 'Detroit Pistons': 'DET', 'Boston Celtics': 'BOS', 'New York Knicks': 'NY', 'Philadelphia 76ers': 'PHI',
@@ -106,6 +107,15 @@ const server = createServer((req, res) => {
   if (path === '/__stats') return send(200, counts)
   if (path === '/__fail') { failing = url.searchParams.get('on') === '1'; return send(200, { failing }) }
   if (path.startsWith('/apis/site/v2/sports/basketball/nba/scoreboard')) return send(200, scoreboard())
+  if (path === '/apis/site/v2/sports/basketball/nba/injuries') {
+    if (failingInjuries) return send(503, { message: 'injuries down' })
+    return send(200, { injuries: [
+      { displayName: 'Philadelphia 76ers', injuries: [{ status: 'Out', shortComment: 'Brown is out with a sprained ankle.', athlete: { displayName: 'Jaylen Brown' } }] },
+      { displayName: 'San Antonio Spurs', injuries: [{ status: 'Questionable', shortComment: 'Wembanyama is questionable (illness).', athlete: { displayName: 'Victor Wembanyama' } }] },
+      { displayName: 'Los Angeles Lakers', injuries: [{ status: 'Day-To-Day', shortComment: 'Doncic is day-to-day.', athlete: { displayName: 'Luka Doncic' } }] },
+    ] })
+  }
+  if (path === '/__failinjuries') { failingInjuries = url.searchParams.get('on') === '1'; return send(200, { failingInjuries }) }
   if (path === '/__reset') { for (const k of Object.keys(counts)) delete counts[k]; return send(200, {}) }
   if (failing) return send(500, { message: 'boom: internal provider detail that must never reach a browser' })
   const key = path.replace(/\/events\/[^/]+\/odds/, '/events/:id/odds')

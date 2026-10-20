@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { STATS, type Prediction, type Stat } from '../../shared/baseline'
+import type { Injury, Role } from '../../shared/injuries'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
 import { helperStatus, helperSync } from '../lib/helper'
 import type { GameRow } from '../lib/stats'
+import { InjuryTag, RoleTag } from './Availability'
 import GameLog from './GameLog'
 import GameTypeSplit from './GameTypeSplit'
 import Headshot from './Headshot'
@@ -15,6 +17,8 @@ interface StatsResponse {
   averages: { last5: number | null; last10: number | null; season: number | null }
   hitRate?: { last5: number | null; last10: number | null; season: number | null }
   prediction?: Prediction | null
+  role?: Role | null
+  injury?: Injury | null
 }
 
 type Kind = 'regular' | 'playoffs' | 'preseason' | 'all'
@@ -157,7 +161,12 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
             <Headshot id={player.id} name={player.name} size={104} />
             <div>
               <h2 className="text-xl text-neutral-100">{player.name}</h2>
-              {player.team && <div className="text-xs text-neutral-500">{player.team}</div>}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+                {player.team}
+                <RoleTag role={data?.role} />
+                <InjuryTag injury={data?.injury} />
+              </div>
+              {data?.injury?.note && <p className="max-w-xl text-xs text-neutral-500">{data.injury.note}</p>}
             </div>
             {helperOn && (
               <button className="mr-auto rounded-md bg-neutral-900 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800" onClick={syncPlayer}>

@@ -1,3 +1,4 @@
+import { InjuryTag, RoleTag } from './Availability'
 import Headshot from './Headshot'
 import { useEffect, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -88,7 +89,11 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
               <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-3">
                 <div className="flex items-center justify-between">
                   <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
-                    <Headshot id={p.playerId} name={p.player} size={56} />{p.player}
+                    <Headshot id={p.playerId} name={p.player} size={56} />
+                    <span className="flex flex-col items-start leading-tight">
+                      <span className="flex items-center gap-1.5">{p.player}<InjuryTag injury={p.injury} /></span>
+                      <RoleTag role={p.role} />
+                    </span>
                   </button>
                   <span className="flex items-center gap-2">
                     <RiskBadge risk={p.risk} />
@@ -135,7 +140,11 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
               <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-3">
                 <div className="flex items-center justify-between">
                   <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
-                    <Headshot id={p.playerId} name={p.player} size={56} />{p.player}
+                    <Headshot id={p.playerId} name={p.player} size={56} />
+                    <span className="flex flex-col items-start leading-tight">
+                      <span className="flex items-center gap-1.5">{p.player}<InjuryTag injury={p.injury} /></span>
+                      <RoleTag role={p.role} />
+                    </span>
                   </button>
                   <span className="flex items-center gap-2">
                     <RiskBadge risk={p.risk} />

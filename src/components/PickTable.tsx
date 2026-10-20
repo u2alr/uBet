@@ -3,6 +3,7 @@ import { STAT_LABEL, fmt, pct } from '../lib/format'
 import type { Risk } from '../../shared/baseline'
 import { groupByGame, type Pick } from '../lib/picks'
 import { useSlip } from '../lib/slipContext'
+import { InjuryTag, RoleTag } from './Availability'
 import Headshot from './Headshot'
 import { PickBars, PickSpark } from './PickSpark'
 
@@ -85,7 +86,11 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
     <tr className="border-t border-neutral-800/60 hover:bg-neutral-800/60">
       <td className="px-3 py-0.5">
         <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
-          <Headshot id={p.playerId} name={p.player} size={30} />{p.player}
+          <Headshot id={p.playerId} name={p.player} size={30} />
+          <span className="flex flex-col items-start leading-tight">
+            <span className="flex items-center gap-1.5">{p.player}<InjuryTag injury={p.injury} /></span>
+            <RoleTag role={p.role} />
+          </span>
         </button>
       </td>
       <td className="px-2 py-0.5 tabular-nums">
