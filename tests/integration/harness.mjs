@@ -28,17 +28,33 @@ export function freshState() {
     try {
       const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name))
       if (!tables.has('predictions')) continue
-      db.exec('DELETE FROM predictions; DELETE FROM odds_raw;')
+      db.exec("DELETE FROM predictions; DELETE FROM odds_raw; DELETE FROM meta WHERE key = 'last_pick_log';")
     } finally { db.close() }
   }
   rmSync(join(TEST_STATE, 'v3', 'cache'), { recursive: true, force: true })  // never inherit cached upstream responses
 }
 
-export async function start({ extraBindings = [] } = {}) {
+/** Open the scratch copy of the app database (the file that holds the `predictions` table). */
+export function openScratch() {
+  const dir = join(TEST_STATE, 'v3', 'd1', 'miniflare-D1DatabaseObject')
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.sqlite'))) {
+    const db = new DatabaseSync(join(dir, f))
+    const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predictions'").get()
+    if (has) return db
+    db.close()
+  }
+  throw new Error('scratch database not found')
+}
+
+export async function start({ extraBindings = [], seed } = {}) {
   freshState()
+  if (seed) {
+    const db = openScratch()
+    try { seed(db) } finally { db.close() }
+  }
   await new Promise((r) => fake.listen(FAKE_PORT, '127.0.0.1', r))
   const args = ['wrangler', 'pages', 'dev', '--port', String(APP_PORT), '--persist-to', TEST_STATE,
-    '--binding', `ODDS_BASE_URL=${FAKE}/v4/sports/basketball_nba`, '--binding', 'ODDS_API_KEY=test-key-not-real', ...extraBindings.flatMap((b) => ['--binding', b])]
+    '--binding', `ODDS_BASE_URL=${FAKE}/v4/sports/basketball_nba`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'ODDS_API_KEY=test-key-not-real', ...extraBindings.flatMap((b) => ['--binding', b])]
   const child = spawn('npx', args, { cwd: ROOT, shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   child.stdout.on('data', (b) => { log += b })
@@ -55,6 +71,7 @@ export async function start({ extraBindings = [] } = {}) {
   return { stop, log: () => log }
 }
 
+export const setUpstreamFailing = async (on) => (await fetch(`${FAKE}/__fail?on=${on ? 1 : 0}`)).json()
 export const upstreamStats = async () => (await fetch(`${FAKE}/__stats`)).json()
 export const upstreamReset = async () => (await fetch(`${FAKE}/__reset`)).json()
 export const api = async (path, init) => {

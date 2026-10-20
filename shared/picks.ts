@@ -109,6 +109,39 @@ export interface Pick {
   gameDate: string
 }
 
+export interface Warning { code: string; message: string }
+export interface PicksMeta {
+  generatedAt: string
+  /** Time of the OLDEST odds snapshot behind the picks; null if unknown. */
+  oddsAsOf: string | null
+  warnings: Warning[]
+}
+
+/** Odds older than this are not shown at all: it is just beyond the cache lifetime, so it only fires if caching has failed. */
+export const MAX_ODDS_AGE_HOURS = 9
+/** Odds older than this are shown with a warning. */
+export const WARN_ODDS_AGE_HOURS = 4
+
+/**
+ * Decide what the age of the odds means. `fetchedAt` holds one entry per game (ms since the epoch, or null if the
+ * entry was cached by an older version and its age is unknown). Pure, so the fail-closed rule can be tested.
+ */
+export function assessOddsAge(fetchedAt: (number | null)[], now: number): { oddsAsOf: string | null; warnings: Warning[]; blocked: boolean } {
+  const warnings: Warning[] = []
+  const known = fetchedAt.filter((t): t is number => t !== null && Number.isFinite(t))
+  const oddsAsOf = known.length ? new Date(Math.min(...known)).toISOString() : null
+  if (fetchedAt.length && known.length < fetchedAt.length)
+    warnings.push({ code: 'odds_age_unknown', message: 'Some odds were cached by an older version, so their age is unknown.' })
+  const oldest = known.length ? (now - Math.min(...known)) / 3600_000 : 0
+  if (oldest > MAX_ODDS_AGE_HOURS) {
+    warnings.push({ code: 'odds_too_old', message: `Odds are ${oldest.toFixed(0)} hours old, which is past the limit, so no picks are shown.` })
+    return { oddsAsOf, warnings, blocked: true }
+  }
+  if (oldest > WARN_ODDS_AGE_HOURS)
+    warnings.push({ code: 'odds_old', message: `Odds were fetched ${oldest.toFixed(0)} hours ago. Lines move before tip-off, so check the book's current price.` })
+  return { oddsAsOf, warnings, blocked: false }
+}
+
 export interface Diagnostics {
   /** Names in the odds that match no synced player (so no pick is possible). */
   unmatchedPlayers: string[]

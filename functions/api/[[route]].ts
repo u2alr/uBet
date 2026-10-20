@@ -1,15 +1,16 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, type GameType, type Stat } from '../../shared/baseline.ts'
-import { buildPicks, etDate, normName, type HistoryRow, type OddsEvent, type Pick, type ProjectionRow } from '../../shared/picks.ts'
+import { assessOddsAge, buildPicks, etDate, normName, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
 
 type Bindings = {
   DB: D1Database
   ODDS_API_KEY?: string
   /** If set, privileged routes need this in the x-capture-token header; if not, they only work from localhost. */
   CAPTURE_TOKEN?: string
-  /** Only for tests: point the Worker at a fake provider (tests/integration). */
+  /** Only for tests: point the Worker at fake providers (tests/integration). */
   ODDS_BASE_URL?: string
+  ESPN_BASE_URL?: string
   ODDS_REGIONS?: string
   ODDS_MARKETS?: string
   ODDS_HOURS?: string
@@ -68,8 +69,6 @@ const GAME_TYPES = ['regular', 'playoffs', 'preseason']
 const ODDS_DEFAULT = 'https://api.the-odds-api.com/v4/sports/basketball_nba'
 // The free plan is ~500 credits/month; one event costs (markets x regions) credits, so cache hard.
 const ODDS_TTL = 8 * 60 * 60 // seconds
-const MAX_ODDS_AGE_HOURS = 9 // just beyond the cache lifetime: older than this means the cache logic failed, so show nothing
-const WARN_ODDS_AGE_HOURS = 4
 const MAX_EVENTS = 8
 
 // ESPN team abbreviations that differ from NBA.com's (what ingest/sync.py stores).
@@ -210,7 +209,7 @@ app.get('/players/:id/log', async (c) => {
 
 // ---------- schedule (ESPN, keyless) ----------
 
-async function loadGames(fresh = false) {
+async function loadGames(env: Bindings, fresh = false) {
   const fmt = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '')
   const now = Date.now()
   return cachedJson<any[]>('scoreboard', 120, async () => {
@@ -218,7 +217,7 @@ async function loadGames(fresh = false) {
     const days = await Promise.all(
       [0, 1, 2].map(async (i) => {
         const res = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${fmt(new Date(now + i * 86400_000))}`,
+          `${env.ESPN_BASE_URL ?? 'https://site.api.espn.com'}/apis/site/v2/sports/basketball/nba/scoreboard?dates=${fmt(new Date(now + i * 86400_000))}`,
         )
         if (!res.ok) throw new UpstreamError(`ESPN ${res.status}`)
         return ((await res.json()) as any).events ?? []
@@ -242,7 +241,7 @@ async function loadGames(fresh = false) {
 app.get('/games', async (c) => {
   // ?fresh=1 skips the cache (the Refresh button) but is honoured only for privileged callers (it spends credits).
   const fresh = wantsFresh(c)
-  const [games, odds] = await Promise.all([loadGames(fresh), loadTeamOdds(c.env, fresh).catch((e) => {
+  const [games, odds] = await Promise.all([loadGames(c.env, fresh), loadTeamOdds(c.env, fresh).catch((e) => {
     console.error('team odds unavailable', e instanceof Error ? e.message : String(e))
     return null
   })])
@@ -329,14 +328,6 @@ async function loadTeamOdds(env: Bindings, fresh = false): Promise<Map<string, G
 
 // ---------- picks (The Odds API + model) ----------
 
-export interface Warning { code: string; message: string }
-export interface PicksMeta {
-  generatedAt: string
-  /** Time of the OLDEST odds snapshot behind the picks; null if unknown. */
-  oddsAsOf: string | null
-  warnings: Warning[]
-}
-
 async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: boolean; picks: Pick[]; meta: PicksMeta }> {
   const now = Date.now()
   const meta: PicksMeta = { generatedAt: new Date(now).toISOString(), oddsAsOf: null, warnings: [] }
@@ -358,18 +349,10 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
   )
 
   // How old is what we are about to show? Lines move before tip-off, so the age is part of the answer.
-  const times = fetched.map((f) => f.fetchedAt)
-  const known = times.filter((t): t is number => t !== null)
-  if (known.length) meta.oddsAsOf = new Date(Math.min(...known)).toISOString()
-  if (times.some((t) => t === null) && upcoming.length)
-    meta.warnings.push({ code: 'odds_age_unknown', message: 'Some odds were cached by an older version, so their age is unknown.' })
-  const oldest = known.length ? (now - Math.min(...known)) / 3600_000 : 0
-  if (oldest > MAX_ODDS_AGE_HOURS) {
-    meta.warnings.push({ code: 'odds_too_old', message: `Odds are ${oldest.toFixed(0)} hours old, which is past the limit, so no picks are shown.` })
-    return { configured: true, picks: [], meta }
-  }
-  if (oldest > WARN_ODDS_AGE_HOURS)
-    meta.warnings.push({ code: 'odds_old', message: `Odds were fetched ${oldest.toFixed(0)} hours ago. Lines move before tip-off, so check the book's current price.` })
+  const age = assessOddsAge(fetched.map((f) => f.fetchedAt), now)
+  meta.oddsAsOf = age.oddsAsOf
+  meta.warnings.push(...age.warnings)
+  if (age.blocked) return { configured: true, picks: [], meta }
 
   const odds = fetched.map((f) => f.data)
   const { results: players } = await env.DB.prepare('SELECT id, name, team FROM players').all<{ id: number; name: string; team: string | null }>()
@@ -456,7 +439,7 @@ async function logPicks(env: Bindings, picks: Pick[]) {
 // Everything for one game: key players on each team (recent form) plus suggested bets.
 app.get('/games/:id', async (c) => {
   const fresh = wantsFresh(c)
-  const game = (await loadGames(fresh)).find((g) => g.id === c.req.param('id'))
+  const game = (await loadGames(c.env, fresh)).find((g) => g.id === c.req.param('id'))
   if (!game) return c.json({ error: 'Game not found' }, 404)
 
   const teams = [game.away, game.home]
@@ -528,9 +511,11 @@ app.post('/predictions', async (c) => {
   if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
   let b: Record<string, unknown>
   try {
-    b = await c.req.json()
+    const parsed: unknown = await c.req.json()
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object')
+    b = parsed as Record<string, unknown>
   } catch {
-    return c.json({ error: 'body must be JSON' }, 400)
+    return c.json({ error: 'body must be a JSON object' }, 400)
   }
   const num = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null)
   const playerId = num(b.playerId, 1, 1e12)

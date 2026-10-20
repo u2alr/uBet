@@ -69,15 +69,19 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
 
   async function logPrediction() {
     if (!player || !data?.prediction) return
-    await api('/predictions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        playerId: player.id, stat, line: Number(line),
-        predicted: data.prediction.predicted, pOver: data.prediction.pOver, model: data.prediction.model,
-      }),
-    })
-    setStatus('Prediction logged')
+    try {
+      await api('/predictions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: player.id, stat, line: Number(line),
+          predicted: data.prediction.predicted, pOver: data.prediction.pOver, model: data.prediction.model,
+        }),
+      })
+      setStatus('Prediction logged')
+    } catch {
+      setStatus('Logging is only allowed from your own machine.')
+    }
   }
 
   const shown = kind === 'all' ? log : log.filter((g) => g.gameType === kind)
@@ -163,6 +167,7 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
                   <span className="text-neutral-400">
                     Projection <b className="text-neutral-100">{fmt(data.prediction.predicted)}</b> ±{fmt(data.prediction.stdDev)} ·
                     over {line} <b className="text-neutral-100">{pct(data.prediction.pOver)}</b>
+                    {data.prediction.pPush > 0.005 && <> · under <b className="text-neutral-100">{pct(data.prediction.pUnder)}</b> · push (refund) {pct(data.prediction.pPush)}</>}
                   </span>
                   <button className="rounded-md bg-neutral-800 px-3 py-1 text-xs hover:bg-neutral-700" onClick={logPrediction}>Log</button>
                 </div>

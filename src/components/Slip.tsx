@@ -45,7 +45,7 @@ export default function Slip() {
 
       <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg bg-neutral-800 text-center">
         <Stat label="Combined odds" value={`${odds.toFixed(2)}x`} />
-        <Stat label="Hit chance" value={pct(prob)} />
+        <Stat label="No leg loses (if independent)" value={pct(prob)} />
         <Stat label="Expected value" value={`${ev > 0 ? '+' : ''}${(ev * 100).toFixed(0)}%`} />
       </div>
 
@@ -72,7 +72,7 @@ export default function Slip() {
         </p>
       )}
       <p className="text-xs text-neutral-600">
-        Hit chance multiplies each leg's blended probability, which assumes the legs are independent. A parlay needs every leg to win.
+        The chance multiplies each leg's blended probability, which assumes the legs are independent. They are not, and nothing here knows by how much. A parlay needs every leg to win; a tie on a whole-number line removes that leg.
       </p>
 
       <button className="text-xs text-neutral-500 hover:text-neutral-300" onClick={slip.clear}>Clear slip</button>

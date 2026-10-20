@@ -22,6 +22,8 @@ OUT = Path(__file__).resolve().parent / "out.sql"
 TEAM_IDS = {t["abbreviation"]: t["id"] for t in teams.get_teams()}
 # The app shows this as "synced 2h ago".
 MARK_SYNCED = "INSERT OR REPLACE INTO meta (key,value) VALUES ('last_sync', datetime('now'));"
+# Picks are graded here, right after new box scores land (the website no longer writes to the database on page views).
+GRADE_SQL = (Path(__file__).resolve().parent / "grade.sql").read_text(encoding="utf-8")
 MIN_GAMES = 10  # below this, always include the previous season
 
 
@@ -135,9 +137,17 @@ def main():
     ap.add_argument("--seasons", type=int, default=2, help="how many seasons of history to load (default 2)")
     ap.add_argument("--delay", type=float, default=0.7, help="seconds between players (raise it if NBA.com times out)")
     ap.add_argument("--start", type=int, default=0, help="skip the first N players (resume an interrupted --all-active run)")
+    ap.add_argument("--grade-only", action="store_true", help="just grade logged picks against the box scores already stored")
     ap.add_argument("--teams-only", action="store_true", help="just refresh every player's current team (fast)")
     ap.add_argument("--remote", action="store_true", help="write to production D1 instead of local")
     args = ap.parse_args()
+
+    if args.grade_only:
+        OUT.write_text(GRADE_SQL, encoding="utf-8")
+        subprocess.run(["npx", "wrangler", "d1", "execute", "ubet", "--remote" if args.remote else "--local", "--file", str(OUT)],
+                       cwd=ROOT, shell=True, check=True)
+        print("Graded logged picks")
+        return
 
     teams = current_teams()
 
@@ -165,7 +175,7 @@ def main():
     targets = targets[args.start:]
 
     def flush(sql: list[str]) -> None:
-        sql = sql + [MARK_SYNCED]
+        sql = sql + [MARK_SYNCED, GRADE_SQL]
         OUT.write_text("\n".join(sql), encoding="utf-8")
         subprocess.run(
             ["npx", "wrangler", "d1", "execute", "ubet", "--remote" if args.remote else "--local", "--file", str(OUT)],

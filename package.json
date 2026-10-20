@@ -13,7 +13,10 @@
     "preview": "vite preview",
     "test": "node --no-warnings --test shared/*.test.ts",
     "typecheck": "tsc -b && tsc -p tsconfig.functions.json && tsc -p tsconfig.test.json",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test && npm run test:db",
+    "test:db": "node --no-warnings --test tests/grade.test.mjs",
+    "grade": "ingest\\.venv\\Scripts\\python ingest\\sync.py --grade-only",
+    "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs"
   },
   "dependencies": {
     "hono": "^4.13.13",

@@ -21,6 +21,8 @@ const EVENTS = [
   { id: 'ev_phi_nyk', home: 'New York Knicks', away: 'Philadelphia 76ers', at: base + 1800_000 },
   { id: 'ev_okc_sas', home: 'San Antonio Spurs', away: 'Oklahoma City Thunder', at: base + 3600_000 },
   { id: 'ev_gsw_lal', home: 'Los Angeles Lakers', away: 'Golden State Warriors', at: base + 5400_000 },
+  // starts within about 3 hours, so a capture window finds it (it has no player props)
+  { id: 'ev_mia_min', home: 'Miami Heat', away: 'Minnesota Timberwolves', at: Math.ceil(Date.now() / HOUR) * HOUR + 2 * HOUR },
 ]
 
 // [event, player name as the book writes it, market, line, P(over), books that quote it]
@@ -42,6 +44,9 @@ const PROPS = [
   ['ev_gsw_lal', 'Nobody Atall', 'player_points', 12.5, 0.50, ['DraftKings']],                      // not in the database
   ['ev_gsw_lal', 'Stephen Curry', 'player_assists', 5.5, 0.50, ['FanDuel']],                        // single book
 ]
+/** Eastern-time date of the fake games, so tests can seed projections for the right day. */
+export const EVENT_DATE_ET = new Date(base).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+
 const ONE_SIDED = new Set(['Stephen Curry|player_assists'])  // only an Over is quoted
 
 const hash = (s) => [...s].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) / 2 ** 32
@@ -82,12 +87,27 @@ function teamOdds(ev) {
 }
 
 const counts = {}
+let failing = false
+
+// ESPN-shaped scoreboard for the same games (ESPN abbreviations differ from NBA.com's: NY, GS, SA).
+const ESPN_ABBR = { 'Detroit Pistons': 'DET', 'Boston Celtics': 'BOS', 'New York Knicks': 'NY', 'Philadelphia 76ers': 'PHI',
+  'San Antonio Spurs': 'SA', 'Oklahoma City Thunder': 'OKC', 'Los Angeles Lakers': 'LAL', 'Golden State Warriors': 'GS', 'Miami Heat': 'MIA', 'Minnesota Timberwolves': 'MIN' }
+const scoreboard = () => ({ events: EVENTS.map((e) => ({
+  id: `espn_${e.id}`, date: iso(e.at), status: { type: { shortDetail: 'Scheduled', state: 'pre' } },
+  competitions: [{ competitors: [
+    { homeAway: 'home', team: { abbreviation: ESPN_ABBR[e.home], displayName: e.home }, score: '0' },
+    { homeAway: 'away', team: { abbreviation: ESPN_ABBR[e.away], displayName: e.away }, score: '0' },
+  ] }],
+})) })
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   const path = url.pathname.replace('/v4/sports/basketball_nba', '')
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json', 'x-requests-remaining': '400', 'x-requests-last': '1' }); res.end(JSON.stringify(body)) }
   if (path === '/__stats') return send(200, counts)
+  if (path === '/__fail') { failing = url.searchParams.get('on') === '1'; return send(200, { failing }) }
+  if (path.startsWith('/apis/site/v2/sports/basketball/nba/scoreboard')) return send(200, scoreboard())
   if (path === '/__reset') { for (const k of Object.keys(counts)) delete counts[k]; return send(200, {}) }
+  if (failing) return send(500, { message: 'boom: internal provider detail that must never reach a browser' })
   const key = path.replace(/\/events\/[^/]+\/odds/, '/events/:id/odds')
   counts[key] = (counts[key] ?? 0) + 1
   if (url.searchParams.get('apiKey') == null) return send(401, { message: 'missing key' })

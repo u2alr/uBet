@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import type { PicksMeta } from '../../shared/picks.ts'
 import { api } from '../lib/format'
 import { riskiestPicks, safestPicks, suggestParlays, valuePicks, type Pick } from '../lib/picks'
+import Notices from './Notices'
 import Parlays from './Parlays'
 import PickTable from './PickTable'
 
@@ -24,12 +26,15 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip
   const [picks, setPicks] = useState<Pick[] | null>(null)
   const [configured, setConfigured] = useState(true)
   const [error, setError] = useState('')
+  const [meta, setMeta] = useState<PicksMeta | null>(null)
+  const [gamesMeta, setGamesMeta] = useState<{ oddsAvailable: boolean; freshRequested: boolean; freshHonored: boolean } | null>(null)
   const [view, setView] = useState<View>('Value')
 
   useEffect(() => {
-    api<{ data: Game[] }>(refreshKey ? '/games?fresh=1' : '/games').then((r) => setGames(r.data)).catch((e) => setError(e.message))
-    api<{ configured: boolean; data: Pick[] }>('/picks')
-      .then((r) => { setConfigured(r.configured); setPicks(r.data) })
+    api<{ data: Game[]; meta?: typeof gamesMeta }>(refreshKey ? '/games?fresh=1' : '/games')
+      .then((r) => { setGames(r.data); setGamesMeta(r.meta ?? null) }).catch((e) => setError(e.message))
+    api<{ configured: boolean; data: Pick[]; meta: PicksMeta }>('/picks') // props stay cached on purpose: a fresh pull costs ~24 credits
+      .then((r) => { setConfigured(r.configured); setPicks(r.data); setMeta(r.meta ?? null) })
       .catch((e) => setError(e.message))
   }, [refreshKey])
 
@@ -45,6 +50,8 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip
 
       <section>
         <h2 className="mb-3 text-xs uppercase tracking-widest text-neutral-500">Upcoming games</h2>
+        {gamesMeta && !gamesMeta.oddsAvailable && <p className="mb-3 text-xs text-neutral-500">Team odds could not be loaded right now, so games show without spreads or totals.</p>}
+        {gamesMeta?.freshRequested && !gamesMeta.freshHonored && <p className="mb-3 text-xs text-neutral-500">Refresh re-read what is stored, but odds are only re-fetched from your own machine (it spends provider credits).</p>}
         {games === null ? <Muted>Loading…</Muted> : games.length === 0 ? <Muted>No games scheduled.</Muted> : (
           <div className="space-y-5">
             {[...byDay].map(([day, list]) => (
@@ -94,6 +101,7 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip
           {view === 'Safest' && 'Most likely to land, from players with plenty of games behind the estimate. Prices are short.'}
           {view === 'Riskiest' && 'Biggest payouts that the numbers do not rule out. Expect to lose most of these.'}
         </p>
+        <Notices meta={meta} />
         {picks === null ? <Muted>Loading…</Muted> : !configured ? (
           <Muted>Add an <code className="text-neutral-300">ODDS_API_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to pull live lines.</Muted>
         ) : (

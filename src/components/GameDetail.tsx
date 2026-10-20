@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
+import type { PicksMeta } from '../../shared/picks.ts'
 import { pickKey, type Pick } from '../lib/picks'
+import Notices from './Notices'
 import { RiskBadge, SlipButton } from './PickTable'
 
 interface TeamPlayer {
@@ -20,6 +22,7 @@ interface GameOdds {
   summary: { spread: number | null; total: number | null; homeWinProb: number | null; bestMoneyline: { home: number; away: number } | null }
 }
 interface Detail {
+  meta?: PicksMeta
   odds: GameOdds | null
   game: { id: string; date: string; status: string; state: 'pre' | 'in' | 'post' }
   configured: boolean
@@ -64,6 +67,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
 
       <section>
         <h3 className="mb-3 text-xs uppercase tracking-widest text-neutral-500">Suggested bets</h3>
+        {d.configured && <Notices meta={d.meta ?? null} />}
         {!d.configured ? (
           <Note>Add an <code className="text-neutral-300">ODDS_API_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to see lines and picks.</Note>
         ) : d.picks.length === 0 ? (

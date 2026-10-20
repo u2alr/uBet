@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { blendProb, expectedValue, nbPOver, outcomeProbs, MODEL_WEIGHT } from './baseline.ts'
 import {
-  buildPicks, devigPair, etDate, normName,
+  assessOddsAge, buildPicks, devigPair, etDate, normName,
   type BuildInput, type HistoryRow, type OddsEvent, type PlayerRow, type ProjectionRow,
 } from './picks.ts'
 
@@ -237,5 +237,33 @@ describe('fuzz: whatever the odds and history look like, every number is finite 
         else assert.equal(p.push, 0)
       }
     }
+  })
+})
+
+describe('odds age fails closed', () => {
+  const H = 3600_000
+  it('fresh odds: no warning, nothing blocked', () => {
+    const r = assessOddsAge([NOW - 1 * H, NOW - 2 * H], NOW)
+    assert.equal(r.blocked, false)
+    assert.deepEqual(r.warnings, [])
+    assert.equal(r.oddsAsOf, new Date(NOW - 2 * H).toISOString()) // the OLDEST snapshot decides
+  })
+  it('older than the warning age: warned but shown', () => {
+    const r = assessOddsAge([NOW - 6 * H], NOW)
+    assert.equal(r.blocked, false)
+    assert.deepEqual(r.warnings.map((w) => w.code), ['odds_old'])
+  })
+  it('older than the limit: blocked, with the reason', () => {
+    const r = assessOddsAge([NOW - 1 * H, NOW - 12 * H], NOW)
+    assert.equal(r.blocked, true)
+    assert.deepEqual(r.warnings.map((w) => w.code), ['odds_too_old'])
+  })
+  it('an unknown age is reported, never assumed fresh', () => {
+    const r = assessOddsAge([null, NOW - H], NOW)
+    assert.ok(r.warnings.some((w) => w.code === 'odds_age_unknown'))
+    assert.equal(assessOddsAge([null], NOW).oddsAsOf, null)
+  })
+  it('no games: nothing to warn about', () => {
+    assert.deepEqual(assessOddsAge([], NOW), { oddsAsOf: null, warnings: [], blocked: false })
   })
 })

@@ -27,10 +27,19 @@ export interface Parlay {
   legs: Pick[]
 }
 
+/**
+ * Combined parlay figures, ASSUMING the legs are independent. They are not: legs from the same game, or the same player,
+ * move together, and nothing here knows by how much. Treat these as rough, not as an accurate combined probability.
+ *  odds  payout multiple if every leg wins
+ *  prob  chance that no leg loses (a leg that ties on a whole-number line is refunded and drops out)
+ *  ev    expected profit per 1 staked: the product of each leg's expected multiplier, minus 1
+ */
 export function combine(legs: Pick[]) {
+  const push = (l: Pick) => l.push ?? 0 // legs saved in a browser before this field existed have none
   const odds = legs.reduce((a, l) => a * l.price, 1)
-  const prob = legs.reduce((a, l) => a * l.prob, 1)
-  return { odds, prob, ev: prob * odds - 1 }
+  const prob = legs.reduce((a, l) => a * ((1 - push(l)) * l.prob + push(l)), 1)
+  const ev = legs.reduce((a, l) => a * ((1 - push(l)) * l.prob * l.price + push(l)), 1) - 1
+  return { odds, prob, ev }
 }
 
 /** One leg per player, and one per game when possible (legs from the same game are correlated). */

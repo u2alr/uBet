@@ -81,6 +81,7 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
       <td className="px-2 py-2.5 tabular-nums">
         <span className="text-neutral-100">{p.side === 'over' ? 'O' : 'U'} {p.line}</span>{' '}
         <span className="text-neutral-500">{STAT_LABEL[p.stat]}</span>
+        {p.push > 0.005 && <span className="ml-1 text-xs text-neutral-600" title="Chance the stat lands exactly on this whole-number line, in which case the stake is refunded">push {pct(p.push)}</span>}
       </td>
       <td className="px-2 py-2.5 tabular-nums" title={p.prices.map((x) => `${x.book} ${x.price.toFixed(2)}`).join(' · ')}>
         {p.price.toFixed(2)} <span className="text-xs text-neutral-600">{p.book}</span>
@@ -88,7 +89,7 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
       </td>
       <td className="px-2 py-2.5 text-right tabular-nums text-neutral-100">
         {p.bigGap && <span className="mr-1 cursor-help text-neutral-500" title={`Model ${pct(p.modelProb)} vs market ${pct(p.marketProb)}. A gap this big usually means news the model cannot see (injury, trade, role change).`}>⚠</span>}
-        {pct(p.prob)}
+        <span title="Chance of winning if the bet is not refunded (model blended with the market). It is not the same thing as how sure the model is.">{pct(p.prob)}</span>
       </td>
       <td className="px-2 py-2.5 text-right tabular-nums text-neutral-400" title={`Projection from ${p.model === 'gbm-v1' ? 'the boosted model' : 'the fallback average model'}`}>{fmt(p.projection)}</td>
       <td className="px-2 py-2.5 text-right tabular-nums text-neutral-400">{pct(p.hitRate10)}</td>
