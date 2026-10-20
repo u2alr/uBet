@@ -8,7 +8,7 @@ import {
 
 // ---------- raw inputs, shaped like The Odds API / the database ----------
 
-export interface OddsOutcome { name: string; description?: string; price: number; point?: number }
+export interface OddsOutcome { name: string; description?: string; price: number; point?: number; /** provider's id for this exact price, used to look up closing lines later */ id?: string }
 export interface OddsMarket { key: string; outcomes: OddsOutcome[] }
 export interface OddsBook { key: string; title: string; markets: OddsMarket[] }
 export interface OddsEvent { id: string; commence_time: string; home_team: string; away_team: string; bookmakers?: OddsBook[] }
@@ -79,7 +79,13 @@ export interface Pick {
   price: number
   book: string
   /** Best price per book for this exact bet, highest first. */
-  prices: { book: string; price: number }[]
+  prices: { book: string; price: number; id?: string }[]
+  /** The provider's id for the best price (null if the provider gives none). */
+  oddsId: string | null
+  /** The provider's id for the game, so legs can be grouped by game. */
+  eventId: string
+  /** How many books quote BOTH sides of this line: the evidence behind the market probability. */
+  marketBooks: number
   /** The model's chance of winning, given the bet is not refunded. */
   modelProb: number
   /** The market's chance of winning with the margin removed, averaged over books; null if no book quotes both sides. */
@@ -168,7 +174,7 @@ export interface BuildInput {
   fallback?: 'v2' | 'v3'
 }
 
-type Quote = { book: string; price: number }
+type Quote = { book: string; price: number; id?: string }
 type Line = { pl: PlayerRow; stat: Stat; point: number; over: Quote[]; under: Quote[] }
 
 const validQuote = (o: OddsOutcome) =>
@@ -211,7 +217,7 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
           if (!rowsByPlayer.has(pl.id)) { noHistory.add(pl.name); continue }
           const k = `${pl.id}|${stat}|${out.point}`
           const L = lines.get(k) ?? lines.set(k, { pl, stat, point: out.point!, over: [], under: [] }).get(k)!
-          ;(out.name === 'Over' ? L.over : L.under).push({ book: b.title, price: out.price })
+          ;(out.name === 'Over' ? L.over : L.under).push({ book: b.title, price: out.price, id: out.id })
         }
       }
 
@@ -258,9 +264,12 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
       for (const side of ['over', 'under'] as const) {
         const quotes = side === 'over' ? L.over : L.under
         if (!quotes.length) continue
-        const best = new Map<string, number>()
-        for (const q of quotes) best.set(q.book, Math.max(q.price, best.get(q.book) ?? 0))
-        const sorted = [...best].map(([book, price]) => ({ book, price })).sort((a, b) => b.price - a.price)
+        const best = new Map<string, { price: number; id?: string }>()
+        for (const q of quotes) {
+          const cur = best.get(q.book)
+          if (!cur || q.price > cur.price) best.set(q.book, { price: q.price, id: q.id })
+        }
+        const sorted = [...best].map(([book, v]) => ({ book, price: v.price, id: v.id })).sort((a, b) => b.price - a.price)
         const top = sorted[0]
 
         const win = side === 'over' ? outcome.over : outcome.under
@@ -273,6 +282,7 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
         picks.push({
           playerId: L.pl.id, player: L.pl.name, team: L.pl.team, teamName: L.pl.team ? TEAM_NAMES[L.pl.team] ?? null : null,
           stat: L.stat, side, line: L.point, price: top.price, book: top.book, prices: sorted.slice(0, 5),
+          oddsId: top.id ?? null, eventId: ev.id, marketBooks: both.length,
           modelProb, marketProb, prob, push: outcome.push, impliedProb: 1 / top.price,
           ev: expectedValue(prob, outcome.push, top.price), risk: riskTier(prob), model: modelName,
           bigGap: marketProb != null && Math.abs(modelProb - marketProb) > BIG_GAP,
