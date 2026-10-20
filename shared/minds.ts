@@ -86,11 +86,15 @@ export function mulberry32(seed: number) {
 }
 export const seedFromString = (s: string) => [...s].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0, 7)
 
-export function runMinds(allPicks: Pick[], day: string): Bet[] {
+/**
+ * `done` lists the minds that already have a card for `day`: they are skipped, so running the job again never adds
+ * bets past the daily cap or rewrites a card that was supposed to be frozen.
+ */
+export function runMinds(allPicks: Pick[], day: string, done: ReadonlySet<string> = new Set()): Bet[] {
   const c = MINDS_V1
   const pool = sharedPool(allPicks)
   const bets: Bet[] = []
-  const cap = (_mind: MindId, list: Bet[]) => bets.push(...list.slice(0, c.maxBetsPerDay))
+  const cap = (mind: MindId, list: Bet[]) => { if (!done.has(mind)) bets.push(...list.slice(0, c.maxBetsPerDay)) }
 
   // Safe Sam
   {

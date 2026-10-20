@@ -79,8 +79,8 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
         }),
       })
       setStatus('Prediction logged')
-    } catch {
-      setStatus('Logging is only allowed from your own machine.')
+    } catch (e) {
+      setStatus((e as Error).message)
     }
   }
 

@@ -54,6 +54,24 @@ export const normName = (s: string) =>
 /** Eastern-time calendar date of an instant, e.g. '2026-10-21'. */
 export const etDate = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
+/**
+ * The Eastern-time dates (YYYYMMDD) of today and the next two days, which is how ESPN keys its scoreboard.
+ * Taking them from the UTC date instead drops tonight's games from 8pm Eastern onward, once UTC has rolled over.
+ */
+export function scoreboardDates(now: number, days = 3): string[] {
+  const [y, m, d] = etDate(new Date(now).toISOString()).split('-').map(Number)
+  return Array.from({ length: days }, (_, i) => new Date(Date.UTC(y, m - 1, d + i)).toISOString().slice(0, 10).replace(/-/g, ''))
+}
+
+/** The Odds API says "Los Angeles Clippers"; ESPN says "LA Clippers". Compare teams through this. */
+export const teamKey = (n: string) => n.replace(/^Los Angeles /, 'LA ').toLowerCase()
+
+/** Is `game` ("Away @ Home", as the pick builder writes it from the Odds API) the ESPN game between these teams? */
+export const sameMatchup = (game: string, awayName: string, homeName: string) => {
+  const [away, home] = game.split(' @ ')
+  return away !== undefined && home !== undefined && teamKey(away) === teamKey(awayName) && teamKey(home) === teamKey(homeName)
+}
+
 // Roughly mid-April to June is playoff time.
 export function isPlayoffDate(etDay: string) {
   const [, m, d] = etDay.split('-').map(Number)

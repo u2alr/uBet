@@ -25,9 +25,11 @@ MARK_SYNCED = "INSERT OR REPLACE INTO meta (key,value) VALUES ('last_sync', date
 # Picks are graded here, right after new box scores land (the website no longer writes to the database on page views).
 # Removes box-score rows with impossible minutes that an older version of this script ingested. Idempotent.
 CLEAN_SQL = "DELETE FROM player_games WHERE minutes <= 0 OR minutes > 70;"
-GRADE_SQL = ((Path(__file__).resolve().parent / "grade.sql").read_text(encoding="utf-8") + "
-"
-             + (Path(__file__).resolve().parent / "grade_minds.sql").read_text(encoding="utf-8"))
+GRADE_SQL = (
+    (Path(__file__).resolve().parent / "grade.sql").read_text(encoding="utf-8")
+    + "\n"
+    + (Path(__file__).resolve().parent / "grade_minds.sql").read_text(encoding="utf-8")
+)
 MIN_GAMES = 10  # below this, always include the previous season
 
 
@@ -156,7 +158,7 @@ def main():
     teams = current_teams()
 
     if args.teams_only:
-        flush_teams = [f"UPDATE players SET team = {q(t)} WHERE id = {pid};" for pid, t in teams.items()] + [MARK_SYNCED]
+        flush_teams = [f"UPDATE players SET team = {q(t)} WHERE id = {pid};" for pid, t in teams.items()]
         OUT.write_text("\n".join(flush_teams), encoding="utf-8")
         subprocess.run(
             ["npx", "wrangler", "d1", "execute", "ubet", "--remote" if args.remote else "--local", "--file", str(OUT)],
@@ -178,8 +180,9 @@ def main():
         sys.exit("Give player names or --all-active")
     targets = targets[args.start:]
 
-    def flush(sql: list[str]) -> None:
-        sql = sql + [CLEAN_SQL, MARK_SYNCED, GRADE_SQL]
+    def flush(sql: list[str], final: bool = False) -> None:
+        # last_sync means "every requested player is up to date": only a clean, finished run may set it.
+        sql = sql + [CLEAN_SQL] + ([MARK_SYNCED] if final and not failed else []) + [GRADE_SQL]
         OUT.write_text("\n".join(sql), encoding="utf-8")
         subprocess.run(
             ["npx", "wrangler", "d1", "execute", "ubet", "--remote" if args.remote else "--local", "--file", str(OUT)],
@@ -190,18 +193,22 @@ def main():
 
     # Save in batches so a crash or network failure never loses the whole run.
     sql: list[str] = []
+    failed: list[str] = []
     for i, p in enumerate(targets, 1):
         try:
             sql += player_sql(p, args.seasons, teams)
             print(f"[{i}/{len(targets)}] {p['full_name']}", flush=True)
         except Exception as e:  # keep going; one failure shouldn't lose the batch
+            failed.append(p['full_name'])
             print(f"[{i}/{len(targets)}] {p['full_name']} FAILED: {e}", flush=True)
         if i % 50 == 0 and sql:
             flush(sql)
             sql = []
         time.sleep(args.delay)  # be polite to stats.nba.com
-    if sql:
-        flush(sql)
+    flush(sql, final=True)
+    if failed:
+        # Non-zero exit so the Sync button reports it, and no last_sync stamp so the stale-data warning stays on.
+        sys.exit(f"{len(failed)} of {len(targets)} players failed (not marked as synced): {', '.join(failed[:10])}")
 
 
 if __name__ == "__main__":

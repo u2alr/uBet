@@ -73,6 +73,16 @@ test('Control is deterministic per day, differs across days, and caps at 3', () 
   assert.equal(of(runMinds(ps, 'x'), 'control').length, MINDS_V1.control.singles)
 })
 
+test('a mind that already has a card today is skipped, so a re-run cannot exceed the cap or rewrite it', () => {
+  const ps = Array.from({ length: 20 }, () => pick({ prob: 0.9, ev: 0.3, price: 2.0, modelProb: 0.75, marketProb: 0.5 }))
+  const first = runMinds(ps, 'd')
+  assert.ok(of(first, 'val').length > 0)
+  const again = runMinds(ps, 'd', new Set(['val', 'sam']))
+  assert.equal(of(again, 'val').length, 0)
+  assert.equal(of(again, 'sam').length, 0)
+  assert.ok(of(again, 'cat').length > 0)
+})
+
 test('bet maths and the per-mind daily cap', () => {
   const ps = Array.from({ length: 30 }, () => pick({ prob: 0.9, ev: 0.3, price: 2.0 }))
   const bets = runMinds(ps, 'd')

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { blendProb, expectedValue, nbPOver, outcomeProbs, MODEL_WEIGHT } from './baseline.ts'
 import {
-  assessOddsAge, buildPicks, devigPair, etDate, isPlayoffDate, normName,
+  assessOddsAge, buildPicks, devigPair, etDate, isPlayoffDate, normName, sameMatchup, scoreboardDates, teamKey,
   type BuildInput, type HistoryRow, type OddsEvent, type PlayerRow, type ProjectionRow,
 } from './picks.ts'
 
@@ -311,5 +311,30 @@ describe('opt-in fallback model', () => {
   it('a fresh projection still wins over either fallback', () => {
     const r = buildPicks(base({ fallback: 'v3', projections: [projection(7, 'pts', 24.8, 0.08)] }))
     assert.equal(r.picks[0].model, 'gbm-v1')
+  })
+})
+
+describe('scoreboard dates follow the Eastern calendar, not UTC', () => {
+  it('9pm Eastern (already tomorrow in UTC) still asks for tonight\'s games', () => {
+    // 2026-10-21T01:00Z is 9pm Eastern on the 20th. The old code used the UTC date and started at the 21st.
+    assert.deepEqual(scoreboardDates(Date.parse('2026-10-21T01:00:00Z')), ['20261020', '20261021', '20261022'])
+  })
+  it('midday is unchanged, and month ends and daylight-saving changes roll over correctly', () => {
+    assert.deepEqual(scoreboardDates(Date.parse('2026-10-20T16:00:00Z')), ['20261020', '20261021', '20261022'])
+    assert.deepEqual(scoreboardDates(Date.parse('2026-10-31T23:00:00Z')), ['20261031', '20261101', '20261102'])
+    assert.deepEqual(scoreboardDates(Date.parse('2026-11-01T05:30:00Z')), ['20261101', '20261102', '20261103']) // 1:30am EDT, the day clocks change
+  })
+})
+
+describe('matching a pick to the ESPN game', () => {
+  it('treats "Los Angeles Clippers" (Odds API) and "LA Clippers" (ESPN) as the same team', () => {
+    assert.equal(teamKey('Los Angeles Clippers'), teamKey('LA Clippers'))
+    assert.ok(sameMatchup('Los Angeles Clippers @ Boston Celtics', 'LA Clippers', 'Boston Celtics'))
+    assert.ok(sameMatchup('Boston Celtics @ Los Angeles Clippers', 'Boston Celtics', 'LA Clippers'))
+  })
+  it('does not confuse the two Los Angeles teams, home with away, or a malformed label', () => {
+    assert.ok(!sameMatchup('Los Angeles Lakers @ Boston Celtics', 'LA Clippers', 'Boston Celtics'))
+    assert.ok(!sameMatchup('Boston Celtics @ Los Angeles Clippers', 'LA Clippers', 'Boston Celtics'))
+    assert.ok(!sameMatchup('Boston Celtics', 'Boston Celtics', 'Boston Celtics'))
   })
 })

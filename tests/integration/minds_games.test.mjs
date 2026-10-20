@@ -1,0 +1,52 @@
+// Run: npm run test:integration. /api/minds arithmetic, and what Refresh on a game page may spend.
+import assert from 'node:assert/strict'
+import { after, before, describe, it } from 'node:test'
+import { api, start, upstreamReset, upstreamStats } from './harness.mjs'
+
+const TOKEN = 'integration-token'
+const priv = { 'x-capture-token': TOKEN }
+let app
+
+before(async () => {
+  app = await start({
+    extraBindings: [`CAPTURE_TOKEN=${TOKEN}`],
+    seed: (db) => {
+      db.exec('DELETE FROM mind_legs; DELETE FROM mind_bets;')
+      const ins = db.prepare("INSERT INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, status, profit) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      ins.run('a', '2026-10-01', 'sam', 'minds-v1', 'single', 2, 0.6, 0.2, 'won', 1)
+      ins.run('b', '2026-10-01', 'sam', 'minds-v1', 'single', 2, 0.4, -0.2, 'lost', -1)
+      ins.run('c', '2026-10-02', 'sam', 'minds-v1', 'single', 2, 0.9, 0.8, 'push', 0)   // refunded: neither a hit nor a miss
+      ins.run('d', '2026-10-02', 'sam', 'minds-v1', 'single', 2, 0.7, 0.4, 'open', null)
+    },
+  })
+})
+after(async () => { await app?.stop() })
+
+describe('/api/minds', () => {
+  it('compares stated probability and actual hit rate over the same bets (a push is in neither)', async () => {
+    const { status, body } = await api('/minds')
+    assert.equal(status, 200)
+    const sam = body.data.summary.find((s) => s.mind === 'sam')
+    assert.equal(sam.bets, 4)
+    assert.equal(sam.settled, 3)
+    assert.equal(sam.open, 1)
+    assert.ok(Math.abs(sam.statedProb - 0.5) < 1e-9, `statedProb ${sam.statedProb}`)   // (0.6 + 0.4) / 2; the old query also counted the 0.9 push
+    assert.equal(sam.actualRate, 0.5)
+    assert.equal(sam.units, 0)
+  })
+})
+
+describe('Refresh on a game page', () => {
+  it('refreshes the schedule and team odds but never spends the ~24 prop credits', async () => {
+    const list = await api('/games')
+    const id = list.body.data[0].id
+    await api(`/games/${id}`)                       // primes the prop cache the normal way
+    await upstreamReset()
+    const r = await api(`/games/${id}?fresh=1`, { headers: priv })
+    assert.equal(r.status, 200)
+    const spent = await upstreamStats()
+    assert.equal(spent['/odds'], 1, 'team odds are refreshed')
+    assert.equal(spent['/events'] ?? 0, 0)
+    assert.equal(spent['/events/:id/odds'] ?? 0, 0, JSON.stringify(spent))
+  })
+})

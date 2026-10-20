@@ -53,10 +53,10 @@ const { events, stats } = normalizeOddsBlaze(responses)
 console.log(`odds: ${events.length} games, ${stats.kept} quotes from ${responses.length} books`)
 
 const players = d1('SELECT id, name, team FROM players')
-const names = new Set(players.map((p) => normName(p.name)))
+const byName = new Map(players.map((p) => [normName(p.name), p]))
 const wanted = new Set()
 for (const e of events) for (const b of e.bookmakers) for (const m of b.markets) for (const o of m.outcomes) {
-  const p = players.find((x) => normName(x.name) === normName(o.description))
+  const p = byName.get(normName(o.description ?? ''))
   if (p) wanted.add(p.id)
 }
 const dates = [...new Set(events.map((e) => etDate(e.commence_time)))]
@@ -70,7 +70,10 @@ const day = etDate(new Date(now).toISOString())
 // Only tonight's and tomorrow's games: a card made today must be gradeable within a day or two.
 const horizon = now + 36 * 3600_000
 const eligible = picks.filter((p) => { const t = events.find((e) => e.id === p.eventId); return t && Date.parse(t.commence_time) > now && Date.parse(t.commence_time) < horizon })
-const bets = runMinds(eligible, day)
+// A mind that already has a card today keeps it: the card is frozen, and the daily cap holds across repeated runs.
+const done = new Set(d1(`SELECT DISTINCT mind FROM mind_bets WHERE day = '${day}' AND version = '${MINDS_VERSION}'`).map((r) => r.mind))
+if (done.size) console.log(`already carded today, left alone: ${[...done].join(', ')}`)
+const bets = runMinds(eligible, day, done)
 
 const q = (v) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`)
 const lines = []

@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
-import { assessOddsAge, buildPicks, etDate, normName, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
+import { assessOddsAge, buildPicks, etDate, normName, sameMatchup, scoreboardDates, teamKey, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
 
 type Bindings = {
   DB: D1Database
@@ -221,14 +221,13 @@ app.get('/players/:id/log', async (c) => {
 // ---------- schedule (ESPN, keyless) ----------
 
 async function loadGames(env: Bindings, fresh = false) {
-  const fmt = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '')
-  const now = Date.now()
+  const dates = scoreboardDates(Date.now())
   return cachedJson<any[]>('scoreboard', 120, async () => {
     // ESPN rejects date ranges, so fetch one request per day.
     const days = await Promise.all(
-      [0, 1, 2].map(async (i) => {
+      dates.map(async (date) => {
         const res = await fetch(
-          `${env.ESPN_BASE_URL ?? 'https://site.api.espn.com'}/apis/site/v2/sports/basketball/nba/scoreboard?dates=${fmt(new Date(now + i * 86400_000))}`,
+          `${env.ESPN_BASE_URL ?? 'https://site.api.espn.com'}/apis/site/v2/sports/basketball/nba/scoreboard?dates=${date}`,
         )
         if (!res.ok) throw new UpstreamError(`ESPN ${res.status}`)
         return ((await res.json()) as any).events ?? []
@@ -281,9 +280,6 @@ interface GameOdds {
     bestMoneyline: { home: number; away: number } | null
   }
 }
-
-// Odds API and ESPN disagree on a few team names (e.g. "Los Angeles Clippers" vs "LA Clippers").
-const teamKey = (n: string) => n.replace(/^Los Angeles /, 'LA ').toLowerCase()
 
 const median = (xs: number[]) => {
   if (!xs.length) return null
@@ -482,20 +478,21 @@ app.get('/games/:id', async (c) => {
     .filter((p) => p.games > 0)
     .sort((a, b) => b.min - a.min)
 
-  const { picks, configured, meta } = await loadPicks(c.env, fresh)
+  // Props stay cached even on Refresh: a fresh pull is ~24 credits (see Today.tsx). Only the schedule and team odds refresh.
+  const { picks, configured, meta } = await loadPicks(c.env, false)
   const teamOdds = (await loadTeamOdds(c.env, fresh).catch(() => new Map<string, GameOdds>())).get(
     `${teamKey(game.away.name)}@${teamKey(game.home.name)}`,
   )
-  const matchup = `${game.away.name} @ ${game.home.name}`
+  const gamePicks = picks.filter((p) => sameMatchup(p.game, game.away.name, game.home.name))
   return c.json({
     game,
     configured,
     meta,
     odds: teamOdds ?? null,
     teams: teams.map((t) => ({ ...t, players: players.filter((p) => p.team === nbaAbbr(t.abbr)).slice(0, 8) })),
-    picks: picks.filter((p) => p.game === matchup),
+    picks: gamePicks,
     teamPicks: Object.fromEntries(
-      teams.map((t) => [t.abbr, picks.filter((p) => p.game === matchup && p.team === nbaAbbr(t.abbr))]),
+      teams.map((t) => [t.abbr, gamePicks.filter((p) => p.team === nbaAbbr(t.abbr))]),
     ) as Record<string, Pick[]>,
   })
 })
@@ -520,26 +517,25 @@ app.get('/results', async (c) => {
 // The minds' frozen cards and their record. Pure read; cards are written by minds/run.mjs, graded by ingest/sync.py.
 app.get('/minds', async (c) => {
   const db = c.env.DB
-  const miss = (e: unknown) => { console.error(e); return { results: [] as Record<string, unknown>[] } }
   const bets = (await db.prepare(
     `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400`,
-  ).all().catch(miss)).results
+  ).all()).results
   const legs = bets.length ? (await db.prepare(
     `SELECT bet_id AS betId, idx, player, stat, side, line, price, book, game_date AS gameDate, prob, actual, result
      FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
-  ).all().catch(miss)).results : []
+  ).all()).results : []
   const summary = (await db.prepare(
     `SELECT mind, COUNT(*) AS bets,
             SUM(status IN ('won','lost','push')) AS settled, SUM(status = 'won') AS won, SUM(status = 'lost') AS lost,
             SUM(status = 'open') AS open, COALESCE(SUM(profit), 0) AS units,
-            AVG(CASE WHEN status IN ('won','lost','push') THEN prob END) AS statedProb,
+            AVG(CASE WHEN status IN ('won','lost') THEN prob END) AS statedProb,
             AVG(CASE WHEN status IN ('won','lost') THEN (status = 'won') END) AS actualRate,
             AVG(CASE WHEN status IN ('won','lost') THEN ev END) AS statedEv
      FROM mind_bets GROUP BY mind`,
-  ).all().catch(miss)).results
+  ).all()).results
   const curve = (await db.prepare(
     `SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL GROUP BY mind, day ORDER BY day`,
-  ).all().catch(miss)).results
+  ).all()).results
   return c.json({ data: { bets, legs, summary, curve, version: 'minds-v1', minBets: 200 } })
 })
 

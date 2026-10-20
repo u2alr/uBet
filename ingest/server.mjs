@@ -7,6 +7,8 @@ import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { isSafePlayerName } from './playername.mjs'
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const python = join(root, 'ingest', '.venv', 'Scripts', 'python.exe')
 const script = join(root, 'ingest', 'sync.py')
@@ -76,7 +78,7 @@ createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/sync') {
     if (state.running) return json(res, 409, { error: 'A sync is already running', ...state })
     const player = url.searchParams.get('player')
-    if (player !== null && !/^[\p{L}\p{M}.' -]{2,60}$/u.test(player)) return json(res, 400, { error: 'Bad player name' })
+    if (player !== null && !isSafePlayerName(player)) return json(res, 400, { error: 'Bad player name' })
     startSync(player ? 'player' : 'all', player)
     return json(res, 202, { started: true })
   }
