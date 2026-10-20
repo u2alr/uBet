@@ -1,23 +1,35 @@
 // Rule-based "minds": each reads the day's picks and chooses bets in its own style. Pure; frozen config.
-// The rules and why they are what they are: research/PREREG_MINDS.md. Do not edit MINDS_V1 after the first card.
+// What changed from v1 and why: research/PREREG_MINDS_V2.md. Do not edit MINDS_V2 after the first v2 card; a change is minds-v3.
 import type { Pick } from './picks.ts'
 
-export const MINDS_VERSION = 'minds-v1'
-export const MINDS_V1 = {
-  maxBetsPerDay: 5,
+export const MINDS_VERSION = 'minds-v2'
+export const MINDS_V2 = {
+  /** Every mind aims to place exactly this many bets a day (fewer only if the pool cannot supply them). */
+  betsPerDay: 5,
   maxLegs: 5,
+  // Shared gates
   minMarketBooks: 2,
   minSample: 10,
-  sam: { singleProb: 0.68, singles: 3, doubleLegProb: 0.65 },
-  val: { minEv: 0.04, minProb: 0.52, singles: 3, doubleEv: 0.08 },
-  lou: { legProb: 0.4, legPrice: 1.8, minOdds: 8, combos: 2, minLegs: 3 },
-  cat: { minGap: 0.1, minEv: 0.03, singles: 3 },
-  control: { singles: 3 },
+  /** Minutes role: the model does not see minutes or injuries, so players whose role is shaky are left alone. */
+  minRoleMinutes: 18,
+  minutesDropFloor: -4,
+  /** A model/market gap this big (see BIG_GAP) usually means news the model cannot see, not an edge. */
+  maxGap: 0.25,
+  // Diversification, per mind per day
+  maxBetsPerPlayer: 2,
+  maxBetsPerGame: 3,
+  /** Bets where every leg is an Under. The model leans Under (see AUDIT notes), so a card is never all Unders. */
+  maxAllUnder: 3,
+  sam: { singleProb: 0.6, singleEv: 0, singles: 3, doubleLegProb: 0.6, doubles: 2 },
+  val: { minEv: 0.03, minProb: 0.5, singles: 4, doubleLegEv: 0.03, doubleEv: 0.06, doubles: 1 },
+  lou: { legProb: 0.38, legPrice: 1.6, minOdds: 6, minLegs: 3, combos: 5, fillDoubleOdds: 4 },
+  cat: { minGap: 0.1, minEv: 0.02, maxMarketProb: 0.5, singles: 5 },
 } as const
 
-export type MindId = 'sam' | 'val' | 'lou' | 'cat' | 'control'
+export type MindId = 'sam' | 'val' | 'lou' | 'cat'
+export const MIND_IDS: readonly MindId[] = ['sam', 'val', 'lou', 'cat']
 export const MIND_NAMES: Record<MindId, string> = {
-  sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', control: 'Control',
+  sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat',
 }
 
 export interface Bet {
@@ -42,84 +54,109 @@ function bet(mind: MindId, legs: Pick[]): Bet {
 
 /** Picks every mind may use. */
 export function sharedPool(picks: Pick[]): Pick[] {
-  const c = MINDS_V1
-  return picks.filter((p) => p.model === 'gbm-v1' && p.sample >= c.minSample && p.marketBooks >= c.minMarketBooks
-    && Number.isFinite(p.prob) && Number.isFinite(p.ev) && p.price > 1)
+  const c = MINDS_V2
+  return picks.filter((p) =>
+    p.model === 'gbm-v1' && p.sample >= c.minSample && p.marketBooks >= c.minMarketBooks
+    && Number.isFinite(p.prob) && Number.isFinite(p.ev) && p.price > 1
+    && !p.injury                                                         // anyone listed (Out is already gone): leave it
+    && p.role != null && p.role.min10 >= c.minRoleMinutes && (p.role.trend == null || p.role.trend > c.minutesDropFloor)
+    && !p.bigGap
+    && (p.marketProb == null || Math.abs(p.modelProb - p.marketProb) < c.maxGap),
+  )
 }
 
 const byDesc = (f: (p: Pick) => number) => (a: Pick, b: Pick) => f(b) - f(a)
 const noPush = (p: Pick) => p.push === 0
+const gapOf = (p: Pick) => Math.abs(p.modelProb - (p.marketProb ?? p.modelProb))
 
-/** Take legs in order, at most one per player and one per game, up to `n`. */
-function distinct(sorted: Pick[], n: number, used = new Set<string>()): Pick[] {
-  const out: Pick[] = []
-  const games = new Set<string>(), players = new Set<number>()
-  for (const p of sorted) {
-    if (out.length >= n) break
-    if (used.has(legKey(p)) || games.has(p.eventId) || players.has(p.playerId)) continue
-    out.push(p); games.add(p.eventId); players.add(p.playerId)
-  }
-  return out
-}
-
-/** One single per player+stat+line: a mind never takes both sides of the same line. */
-function singles(sorted: Pick[], n: number): Pick[] {
+/** One leg per player+stat+line: a mind never takes both sides of the same line. */
+function dedupeLines(sorted: Pick[]): Pick[] {
   const seen = new Set<string>(), out: Pick[] = []
   for (const p of sorted) {
     const k = `${p.playerId}|${p.stat}|${p.line}`
-    if (out.length >= n) break
     if (seen.has(k)) continue
     seen.add(k); out.push(p)
   }
   return out
 }
 
-export function mulberry32(seed: number) {
-  let a = seed >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+/** Disjoint pairs, two legs from different games and players, taken greedily down the sorted list. */
+function pairUp(sorted: Pick[]): Pick[][] {
+  const pairs: Pick[][] = []
+  const taken = new Set<string>()
+  for (let i = 0; i < sorted.length; i++) {
+    if (taken.has(legKey(sorted[i]))) continue
+    for (let j = i + 1; j < sorted.length; j++) {
+      const a = sorted[i], b = sorted[j]
+      if (taken.has(legKey(b)) || a.eventId === b.eventId || a.playerId === b.playerId) continue
+      pairs.push([a, b]); taken.add(legKey(a)); taken.add(legKey(b))
+      break
+    }
   }
+  return pairs
 }
-export const seedFromString = (s: string) => [...s].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0, 7)
 
 /**
- * `done` lists the minds that already have a card for `day`: they are skipped, so running the job again never adds
- * bets past the daily cap or rewrites a card that was supposed to be frozen.
+ * Walk the candidates in the mind's own order and keep each bet that does not overload one player or one game.
+ * This is what stops a mind from putting its whole card on the same two players.
  */
-export function runMinds(allPicks: Pick[], day: string, done: ReadonlySet<string> = new Set()): Bet[] {
-  const c = MINDS_V1
+function pickDiverse(candidates: Bet[], n: number): Bet[] {
+  const c = MINDS_V2
+  const out: Bet[] = []
+  const players = new Map<number, number>(), games = new Map<string, number>()
+  let allUnder = 0
+  for (const b of candidates) {
+    if (out.length >= n) break
+    const under = b.legs.every((l) => l.side === 'under')
+    if (under && allUnder >= c.maxAllUnder) continue
+    const ps = new Set(b.legs.map((l) => l.playerId)), gs = new Set(b.legs.map((l) => l.eventId))
+    if ([...ps].some((id) => (players.get(id) ?? 0) >= c.maxBetsPerPlayer)) continue
+    if ([...gs].some((g) => (games.get(g) ?? 0) >= c.maxBetsPerGame)) continue
+    out.push(b)
+    if (under) allUnder++
+    ps.forEach((id) => players.set(id, (players.get(id) ?? 0) + 1))
+    gs.forEach((g) => games.set(g, (games.get(g) ?? 0) + 1))
+  }
+  return out
+}
+
+/** The first `quota` of each class, then whatever is left of either, so a thin class never leaves the card short. */
+function fill(classes: Bet[][], quotas: number[], n: number): Bet[] {
+  const head = classes.flatMap((list, i) => list.slice(0, quotas[i]))
+  const rest = classes.flatMap((list, i) => list.slice(quotas[i]))
+  return pickDiverse([...head, ...rest], n)
+}
+
+/** `done` lists the minds that already have a card for the day: they are skipped, so a re-run cannot add bets or rewrite a card. */
+export function runMinds(allPicks: Pick[], _day: string, done: ReadonlySet<string> = new Set()): Bet[] {
+  const c = MINDS_V2
   const pool = sharedPool(allPicks)
   const bets: Bet[] = []
-  const cap = (mind: MindId, list: Bet[]) => { if (!done.has(mind)) bets.push(...list.slice(0, c.maxBetsPerDay)) }
+  const add = (mind: MindId, list: Bet[]) => { if (!done.has(mind)) bets.push(...list.slice(0, c.betsPerDay)) }
 
-  // Safe Sam
+  // Safe Sam: the likeliest outcomes, as singles and doubles of the likeliest pairs.
   {
-    const out = singles(pool.filter((p) => p.prob >= c.sam.singleProb).sort(byDesc((p) => p.prob)), c.sam.singles).map((p) => bet('sam', [p]))
-    const dbl = distinct(pool.filter((p) => p.prob >= c.sam.doubleLegProb && noPush(p)).sort(byDesc((p) => p.prob)), 2)
-    if (dbl.length === 2) out.push(bet('sam', dbl))
-    cap('sam', out)
+    const legs = dedupeLines(pool.filter((p) => p.prob >= c.sam.singleProb && p.ev >= c.sam.singleEv).sort(byDesc((p) => p.prob)))
+    const singles = legs.map((p) => bet('sam', [p]))
+    const doubles = pairUp(legs.filter((p) => p.prob >= c.sam.doubleLegProb && noPush(p))).map((l) => bet('sam', l)).sort((a, b) => b.prob - a.prob)
+    add('sam', fill([singles, doubles], [c.sam.singles, c.sam.doubles], c.betsPerDay))
   }
-  // Value Val
+  // Value Val: the biggest expected profit per unit, as singles and one double of the best pair.
   {
-    const ok = pool.filter((p) => p.ev >= c.val.minEv && p.prob >= c.val.minProb)
-    const out = singles(ok.sort(byDesc((p) => p.ev)), c.val.singles).map((p) => bet('val', [p]))
-    const dbl = distinct(ok.filter(noPush).sort(byDesc((p) => p.ev)), 2)
-    if (dbl.length === 2) { const b = bet('val', dbl); if (b.ev >= c.val.doubleEv) out.push(b) }
-    cap('val', out)
+    const ok = dedupeLines(pool.filter((p) => p.ev >= c.val.minEv && p.prob >= c.val.minProb).sort(byDesc((p) => p.ev)))
+    const singles = ok.map((p) => bet('val', [p]))
+    const doubles = pairUp(ok.filter((p) => p.ev >= c.val.doubleLegEv && noPush(p))).map((l) => bet('val', l)).filter((b) => b.ev >= c.val.doubleEv).sort((a, b) => b.ev - a.ev)
+    add('val', fill([singles, doubles], [c.val.singles, c.val.doubles], c.betsPerDay))
   }
-  // Longshot Lou
+  // Longshot Lou: parlays of 3 to 5 legs, each leg used once across the card.
   {
-    const ok = pool.filter((p) => p.prob >= c.lou.legProb && p.price >= c.lou.legPrice && noPush(p)).sort(byDesc((p) => p.ev))
-    const used = new Set<string>(), out: Bet[] = []
-    for (let i = 0; i < c.lou.combos; i++) {
+    const ok = dedupeLines(pool.filter((p) => p.prob >= c.lou.legProb && p.price >= c.lou.legPrice && noPush(p)).sort(byDesc((p) => p.ev)))
+    const used = new Set<string>(), combos: Bet[] = []
+    for (let k = 0; k < c.lou.combos; k++) {
       const legs: Pick[] = []
       const games = new Set<string>(), players = new Set<number>()
       for (const p of ok) {
-        if (legs.length >= MINDS_V1.maxLegs) break
+        if (legs.length >= c.maxLegs) break
         if (used.has(legKey(p)) || games.has(p.eventId) || players.has(p.playerId)) continue
         legs.push(p); games.add(p.eventId); players.add(p.playerId)
         if (legs.length >= c.lou.minLegs && legs.reduce((a, l) => a * l.price, 1) >= c.lou.minOdds) break
@@ -127,22 +164,17 @@ export function runMinds(allPicks: Pick[], day: string, done: ReadonlySet<string
       const b = bet('lou', legs)
       if (legs.length < c.lou.minLegs || b.odds < c.lou.minOdds) break
       legs.forEach((l) => used.add(legKey(l)))
-      out.push(b)
+      combos.push(b)
     }
-    cap('lou', out)
+    // If the pool cannot supply five parlays, the card is topped up with 2-leg longshots that still pay well.
+    const doubles = pairUp(ok.filter((p) => !used.has(legKey(p)))).map((l) => bet('lou', l)).filter((b) => b.odds >= c.lou.fillDoubleOdds).sort((a, b) => b.ev - a.ev)
+    add('lou', pickDiverse([...combos, ...doubles], c.betsPerDay))
   }
-  // Contrarian Cat
+  // Contrarian Cat: takes the side the market thinks LESS likely (below 50%) when the model rates it clearly higher. The
+  // biggest gaps are the model's likeliest mistakes, so the shared gate caps them (maxGap) and a value floor still applies.
   {
-    const gap = (p: Pick) => Math.abs(p.modelProb - (p.marketProb ?? p.modelProb))
-    const ok = pool.filter((p) => p.marketProb !== null && gap(p) >= c.cat.minGap && p.ev >= c.cat.minEv).sort(byDesc(gap))
-    cap('cat', singles(ok, c.cat.singles).map((p) => bet('cat', [p])))
-  }
-  // Control: random singles from the pool, deterministic per day
-  {
-    const rng = mulberry32(seedFromString(day))
-    const shuffled = [...pool].sort((a, b) => legKey(a).localeCompare(legKey(b)))
-    for (let i = shuffled.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]] }
-    cap('control', singles(shuffled, c.control.singles).map((p) => bet('control', [p])))
+    const ok = dedupeLines(pool.filter((p) => p.marketProb !== null && p.marketProb < c.cat.maxMarketProb && p.modelProb - p.marketProb >= c.cat.minGap && p.ev >= c.cat.minEv).sort(byDesc(gapOf)))
+    add('cat', pickDiverse(ok.map((p) => bet('cat', [p])), c.betsPerDay))
   }
   return bets
 }

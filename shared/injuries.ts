@@ -69,3 +69,23 @@ export function roleFromMinutes(minutes: number[]): Role | null {
   const trend = m.length >= 8 ? mean(m.slice(0, 5)) - mean(m.slice(5, 15)) : null
   return { label, min10, trend, games: m.length }
 }
+
+/** Minutes by player from box-score rows (newest first): regular-season games, or preseason only if that is all there is. */
+export function rolesByPlayer(history: { player_id: number; type: string; minutes?: number }[]): Map<number, Role | null> {
+  const minutes = new Map<number, { regular: number[]; any: number[] }>()
+  for (const r of history) {
+    if (typeof r.minutes !== 'number') continue
+    const e = minutes.get(r.player_id) ?? minutes.set(r.player_id, { regular: [], any: [] }).get(r.player_id)!
+    e.any.push(r.minutes)
+    if (r.type !== 'preseason') e.regular.push(r.minutes)
+  }
+  return new Map([...minutes].map(([id, m]) => [id, roleFromMinutes(m.regular.length >= 3 ? m.regular : m.any)]))
+}
+
+/** Attach role and availability to picks (the Worker and the minds runner both use this, so they cannot disagree). */
+export function enrichPicks<P extends { playerId: number; player: string; role?: Role | null; injury?: Injury | null }>(
+  picks: P[], history: { player_id: number; type: string; minutes?: number }[], injuries: Map<string, Injury> | null,
+): { picks: P[]; dropped: string[] } {
+  const roles = rolesByPlayer(history)
+  return annotateInjuries(picks.map((p) => ({ ...p, role: roles.get(p.playerId) ?? null })), injuries ?? new Map())
+}

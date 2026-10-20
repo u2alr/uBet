@@ -38,7 +38,7 @@ export default function MindsCharts({ bets, legs, pick }: { bets: Bet[]; legs: L
   }))
 
   // 3. What each mind bets on.
-  const mix = ORDER.map((m) => {
+  const mix = ORDER.filter((m) => legs.some((l) => byBet.get(l.betId)?.mind === m)).map((m) => {
     const ls = legs.filter((l) => byBet.get(l.betId)?.mind === m)
     const row: Record<string, number | string> = { mind: NAMES[m], under: ls.filter((l) => l.side === 'under').length, over: ls.filter((l) => l.side === 'over').length }
     for (const s of STAT_ORDER) row[s] = ls.filter((l) => l.stat === s).length

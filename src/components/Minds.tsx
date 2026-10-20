@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { MINDS_V1 } from '../../shared/minds'
+import { MINDS_V2 } from '../../shared/minds'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import Headshot from './Headshot'
@@ -21,7 +21,7 @@ interface Sum {
   staked: number | null; avgOdds: number | null; avgEv: number | null; combos: number; singles: number; days: number
   bestWin: number | null; worstLoss: number | null
 }
-interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number } }
+interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string }[] } }
 
 const NAMES: Record<string, string> = { sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', control: 'Control (random)' }
 const STYLE: Record<string, string> = {
@@ -31,37 +31,35 @@ const STYLE: Record<string, string> = {
   cat: 'bets where the model and the market disagree',
   control: 'random picks from the same pool: the benchmark to beat',
 }
-const c = MINDS_V1
+const c = MINDS_V2
 const p0 = (x: number) => `${Math.round(x * 100)}%`
 // The rules, read from the frozen config so this text can never drift from what the minds actually do.
 const RULES: Record<string, string[]> = {
   sam: [
-    `Up to ${c.sam.singles} singles with a win chance of ${p0(c.sam.singleProb)} or more, most likely first.`,
-    `Plus one double: two legs from different games, each ${p0(c.sam.doubleLegProb)} or more.`,
+    `${c.sam.singles} singles with a win chance of ${p0(c.sam.singleProb)} or more and no negative expected value, likeliest first.`,
+    `Plus ${c.sam.doubles} doubles: two such legs from different games, each ${p0(c.sam.doubleLegProb)} or more.`,
   ],
   val: [
-    `Up to ${c.val.singles} singles with expected value of +${p0(c.val.minEv)} or more and a win chance of ${p0(c.val.minProb)} or more, best value first.`,
-    `Plus a double of the top two such legs (different games) if the pair's combined EV is +${p0(c.val.doubleEv)} or more.`,
+    `${c.val.singles} singles with expected value of +${p0(c.val.minEv)} or more and a win chance of ${p0(c.val.minProb)} or more, best value first.`,
+    `Plus ${c.val.doubles} double of two legs (different games) each worth +${p0(c.val.doubleLegEv)} or more, if the pair is worth +${p0(c.val.doubleEv)} or more combined.`,
   ],
   lou: [
-    `Up to ${c.lou.combos} combos of ${c.lou.minLegs} to ${c.maxLegs} legs from different games and players.`,
-    `Each leg needs a win chance of ${p0(c.lou.legProb)} or more and a price of ${c.lou.legPrice.toFixed(1)} or more; the combo must pay ${c.lou.minOdds}x or more.`,
+    `Up to ${c.lou.combos} parlays of ${c.lou.minLegs} to ${c.maxLegs} legs from different games and players; each leg ${p0(c.lou.legProb)}+ and priced ${c.lou.legPrice.toFixed(1)} or more, every leg used once, paying ${c.lou.minOdds}x or more.`,
+    `If five parlays cannot be built, it is topped up with 2-leg longshots paying ${c.lou.fillDoubleOdds}x or more.`,
   ],
   cat: [
-    `Up to ${c.cat.singles} singles where our model and the books differ by ${p0(c.cat.minGap)} or more, with EV of +${p0(c.cat.minEv)} or more. Biggest disagreement first.`,
-    'It bets either side: our model can be more or less bullish than the market.',
+    `${c.cat.singles} singles on the side the market rates below ${p0(c.cat.maxMarketProb)}, where our model is higher by ${p0(c.cat.minGap)} or more and the bet has +${p0(c.cat.minEv)} EV or more. Biggest disagreement first.`,
+    'Gaps of 25 points or more are skipped: those are usually something the model cannot see.',
   ],
-  control: [
-    `${c.control.singles} random singles from the same pool the others use, chosen with a seed from the date.`,
-    'It has no opinion. A mind that cannot beat it, on both profit and closing-line value, has shown no skill.',
-  ],
+  control: ['Version 1 only: 3 random singles from the same pool, as a benchmark. Removed in version 2.'],
 }
 const SHARED = [
-  `Every mind: fresh boosted-model projection, ${c.minSample}+ games of history, ${c.minMarketBooks}+ books quoting both sides of the line.`,
-  `Flat 1 unit per bet, at most ${c.maxBetsPerDay} bets per mind per day, a combo has at most ${c.maxLegs} legs. A mind may pass.`,
-  'Combo legs are treated as independent. A pushed or voided leg is dropped from a combo.',
+  `Every mind places ${c.betsPerDay} bets a day if enough candidates pass its floors (it never lowers a floor to reach ${c.betsPerDay}).`,
+  `Shared gates: fresh boosted-model projection, ${c.minSample}+ games of history, ${c.minMarketBooks}+ books quoting both sides, not on the injury list, a steady minutes role (${c.minRoleMinutes}+ min, no big drop), no model/market gap over ${p0(c.maxGap)}.`,
+  `Diversified: at most ${c.maxBetsPerPlayer} bets per player, ${c.maxBetsPerGame} per game, and ${c.maxAllUnder} all-Under bets per card.`,
+  'Flat 1 unit per bet. Combo legs are treated as independent. A pushed or voided leg is dropped from a combo.',
 ]
-const ORDER = ['sam', 'val', 'lou', 'cat', 'control']
+const BASE = ['sam', 'val', 'lou', 'cat']
 const STATUS: Record<string, string> = { open: 'Open', won: 'Won', lost: 'Lost', push: 'Push', void: 'Void' }
 const settledStatus = new Set(['won', 'lost', 'push'])
 const signed = (n: number, d = 2) => `${n > 0 ? '+' : ''}${n.toFixed(d)}`
@@ -72,8 +70,10 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const [error, setError] = useState('')
   const [pick, setPick] = useState<string | null>(null)
   const [show, setShow] = useState<'all' | 'open' | 'settled'>('all')
-  useEffect(() => { api<Res>('/minds').then(setRes).catch((e) => setError(e.message)) }, [refreshKey])
+  const [version, setVersion] = useState<string | null>(null)
+  useEffect(() => { api<Res>(`/minds${version ? `?version=${version}` : ''}`).then(setRes).catch((e) => setError(e.message)) }, [refreshKey, version])
 
+  const ORDER = useMemo(() => [...BASE, ...(res?.data.summary.some((s) => s.mind === 'control') ? ['control'] : [])], [res])
   const series = useMemo(() => {
     if (!res) return []
     const days = [...new Set(res.data.curve.map((x) => x.day))].sort()
@@ -84,7 +84,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       for (const m of ORDER) if (m in run) row[m] = Number(run[m].toFixed(2))
       return row
     })
-  }, [res])
+  }, [res, ORDER])
 
   if (error) return <p className="text-sm text-neutral-500">{error}</p>
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
@@ -102,11 +102,27 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   return (
     <div className="space-y-3">
       <p className="rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
-        Five rule-based pickers. Each card is frozen when it is made and graded from box scores. No mind gets a verdict before {minBets} settled bets:
+        {ORDER.length} rule-based pickers, {res.data.version === res.data.current ? `${c.betsPerDay} bets each a day` : 'an archived rule set'}. Each card is frozen when it is made and graded from box scores. No mind gets a verdict before {minBets} settled bets:
         until then, treat every number below as noise. Click a mind to see only its bets and its rules.
       </p>
+      {res.data.versions.length > 1 && (
+        <div className="flex items-center gap-2 text-xs text-neutral-500">
+          Rule set:
+          <div className="flex overflow-hidden rounded-md bg-neutral-900">
+            {res.data.versions.map((v) => (
+              <button key={v.version} onClick={() => { setVersion(v.version); setPick(null) }}
+                className={`px-3 py-1 ${v.version === res.data.version ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400 hover:text-neutral-200'}`}
+                title={`${v.bets} bets since ${v.since}, ${v.settled} settled`}>
+                {v.version.replace('minds-', '')}{v.version === res.data.current ? ' (current)' : ' (archived)'}
+              </button>
+            ))}
+          </div>
+          <span>Versions use different rules and are never added together.</span>
+        </div>
+      )}
 
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+
+      <div className={`grid gap-2 sm:grid-cols-2 ${ORDER.length > 4 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
         {ORDER.map((m) => {
           const s = sum(m)
           const settled = s?.settled ?? 0

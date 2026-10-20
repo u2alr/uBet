@@ -1,7 +1,8 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
-import { annotateInjuries, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
+import { enrichPicks, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
+import { MINDS_VERSION } from '../../shared/minds.ts'
 import { assessOddsAge, buildPicks, etDate, normName, sameMatchup, scoreboardDates, teamKey, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
 
 type Bindings = {
@@ -449,17 +450,9 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
   const built = buildPicks({ events: odds, players, history, projections, now, fallback: env.FALLBACK_MODEL === 'v3' ? 'v3' : 'v2' })
   const d = built.diagnostics
 
-  // Role: minutes over the last 10 games (preseason only if that is all there is). History is newest first.
-  const minutesBy = new Map<number, { regular: number[]; any: number[] }>()
-  for (const r of history) {
-    const e = minutesBy.get(r.player_id) ?? minutesBy.set(r.player_id, { regular: [], any: [] }).get(r.player_id)!
-    if (typeof r.minutes === 'number') { e.any.push(r.minutes); if (r.type !== 'preseason') e.regular.push(r.minutes) }
-  }
+  // Role (minutes over the last 10 games) and availability; history is newest first.
   const injuries = await loadInjuries(env, fresh)
-  const annotated = annotateInjuries(built.picks.map((p) => {
-    const m = minutesBy.get(p.playerId)
-    return { ...p, role: m ? roleFromMinutes(m.regular.length >= 3 ? m.regular : m.any) : null } as Pick
-  }), injuries ?? new Map())
+  const annotated = enrichPicks(built.picks, history, injuries)
   const picks = annotated.picks
 
   if (d.fallbackLines > 0)
@@ -611,16 +604,23 @@ async function recentBefore(db: D1Database, legs: { playerId: number; stat: stri
 }
 
 // The minds' frozen cards and their record. Pure read; cards are written by minds/run.mjs, graded by ingest/sync.py.
+// ?version=minds-v1 shows an archived rule set; the default is the current one. Versions never mix in one record.
 app.get('/minds', async (c) => {
   const db = c.env.DB
-  const bets = (await db.prepare(
-    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400`,
+  const asked = c.req.query('version')
+  if (asked !== undefined && !/^minds-v\d{1,3}$/.test(asked)) return c.json({ error: 'bad version' }, 400)
+  const version = asked ?? MINDS_VERSION
+  const versions = (await db.prepare(
+    `SELECT version, COUNT(*) AS bets, SUM(status IN ('won','lost','push')) AS settled, MIN(day) AS since FROM mind_bets GROUP BY version ORDER BY version DESC`,
   ).all()).results
+  const bets = (await db.prepare(
+    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 400`,
+  ).bind(version).all()).results
   const legs = bets.length ? (await db.prepare(
     `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob,
             model_prob AS modelProb, market_prob AS marketProb, actual, result
-     FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
-  ).all()).results : []
+     FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
+  ).bind(version).all()).results : []
   // Each leg's last 10 regular-season games BEFORE its game date (what was known when the bet was made), oldest first.
   const recent = await recentBefore(db, legs as { playerId: number; stat: string; gameDate: string }[])
   legs.forEach((l, i) => { l.recent = recent[i] })
@@ -634,12 +634,12 @@ app.get('/minds', async (c) => {
             SUM(CASE WHEN status IN ('won','lost','push') THEN stake END) AS staked,
             AVG(odds) AS avgOdds, AVG(ev) AS avgEv, SUM(kind = 'combo') AS combos, SUM(kind = 'single') AS singles,
             COUNT(DISTINCT day) AS days, MAX(profit) AS bestWin, MIN(profit) AS worstLoss
-     FROM mind_bets GROUP BY mind`,
-  ).all()).results
+     FROM mind_bets WHERE version = ? GROUP BY mind`,
+  ).bind(version).all()).results
   const curve = (await db.prepare(
-    `SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL GROUP BY mind, day ORDER BY day`,
-  ).all()).results
-  return c.json({ data: { bets, legs, summary, curve, version: 'minds-v1', minBets: 200 } })
+    `SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? GROUP BY mind, day ORDER BY day`,
+  ).bind(version).all()).results
+  return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200 } })
 })
 
 // Manual prediction logging from the player page. Writes to the database, so it is not public.

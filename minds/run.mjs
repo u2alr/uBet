@@ -2,17 +2,20 @@
 //   node minds/run.mjs [--remote] [--dry] [--books draftkings,fanatics,caesars]
 // Reads ODDSBLAZE_KEY from .dev.vars or the environment. Heavy (8-11 MB per book), so it runs here, not in the Worker.
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { buildPicks, etDate, normName } from '../shared/picks.ts'
 import { normalizeOddsBlaze, TWO_WAY_BOOKS } from '../shared/oddsblaze.ts'
+import { enrichPicks, parseInjuries } from '../shared/injuries.ts'
 import { runMinds, legKey, MINDS_VERSION } from '../shared/minds.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const remote = args.includes('--remote')
 const dry = args.includes('--dry')
+// --cache reuses the last odds download for up to 3 hours, so tuning rules does not spend OddsBlaze requests. Never with real runs.
+const useCache = args.includes('--cache') && dry
 const bi = args.indexOf('--books')
 const books = bi >= 0 ? args[bi + 1].split(',') : TWO_WAY_BOOKS
 const MARKETS = 'Player Points,Player Rebounds,Player Assists,Player Threes Made'
@@ -44,8 +47,15 @@ async function fetchBook(k, book) {
 const now = Date.now()
 const k = key()
 const responses = []
-for (const b of books) {
-  try { responses.push(await fetchBook(k, b)) } catch (e) { console.error('skip', String(e.message).replace(k, '***')) }
+const cacheFile = path.join(ROOT, 'minds', 'out', 'odds_cache.json')
+if (useCache && existsSync(cacheFile) && Date.now() - statSync(cacheFile).mtimeMs < 3 * 3600_000) {
+  responses.push(...JSON.parse(readFileSync(cacheFile, 'utf8')))
+  console.log('using cached odds')
+} else {
+  for (const b of books) {
+    try { responses.push(await fetchBook(k, b)) } catch (e) { console.error('skip', String(e.message).replace(k, '***')) }
+  }
+  if (dry && responses.length) { mkdirSync(path.dirname(cacheFile), { recursive: true }); writeFileSync(cacheFile, JSON.stringify(responses)) }
 }
 if (!responses.length) { console.error('no odds fetched'); process.exit(1) }
 
@@ -61,10 +71,15 @@ for (const e of events) for (const b of e.bookmakers) for (const m of b.markets)
 }
 const dates = [...new Set(events.map((e) => etDate(e.commence_time)))]
 const projections = dates.length ? d1(`SELECT player_id, game_date, stat, mean, alpha, model, created_at FROM projections WHERE game_date IN (${dates.map((d) => `'${d}'`).join(',')})`) : []
-const history = wanted.size ? d1(`SELECT pg.player_id, g.game_type AS type, pg.pts, pg.reb, pg.ast, pg.fg3m FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.player_id IN (${[...wanted].join(',')}) ORDER BY g.date DESC`) : []
+const history = wanted.size ? d1(`SELECT pg.player_id, g.game_type AS type, pg.pts, pg.reb, pg.ast, pg.fg3m, pg.minutes FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.player_id IN (${[...wanted].join(',')}) ORDER BY g.date DESC`) : []
 
-const { picks, diagnostics } = buildPicks({ events, players, history, projections, now, selection: 'all' })
-console.log(`picks: ${picks.length}`, JSON.stringify(diagnostics).slice(0, 300))
+const built = buildPicks({ events, players, history, projections, now, selection: 'all' })
+// Availability from ESPN (keyless), and a minutes role: the same enrichment the app applies before showing picks.
+let injuries = null
+try { const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries'); if (r.ok) injuries = parseInjuries(await r.json()) } catch { /* handled below */ }
+if (!injuries) console.error('WARNING: ESPN injuries unavailable; the minds will not know who is listed')
+const { picks, dropped } = enrichPicks(built.picks, history, injuries)
+console.log(`picks: ${picks.length} (${dropped.length} players listed Out removed)`, JSON.stringify(built.diagnostics).slice(0, 200))
 
 const day = etDate(new Date(now).toISOString())
 // Only tonight's and tomorrow's games: a card made today must be gradeable within a day or two.
