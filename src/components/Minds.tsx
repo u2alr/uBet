@@ -4,12 +4,15 @@ import { MINDS_V1 } from '../../shared/minds'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import Headshot from './Headshot'
+import { PickBars, PickSpark } from './PickSpark'
 import MindsCharts from './MindsCharts'
 
 interface Bet { id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null }
 interface Leg {
   betId: number; idx: number; playerId: number; player: string; stat: string; side: string; line: number; price: number
   book: string | null; gameDate: string; prob: number; modelProb: number | null; marketProb: number | null; actual: number | null; result: string | null
+  /** The player's last 10 regular-season games before this bet, oldest first. */
+  recent: number[]
 }
 interface Sum {
   mind: string; bets: number; settled: number; won: number; lost: number; open: number; units: number
@@ -212,23 +215,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
                   <span className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[b.mind] }} />{NAMES[b.mind] ?? b.mind}
                 </span>
                 <div className="min-w-0 flex-1 space-y-0.5">
-                  {legsOf(b.id).map((l) => {
-                    const gap = l.modelProb != null && l.marketProb != null ? l.modelProb - l.marketProb : null
-                    return (
-                      <div key={l.idx} className="flex flex-wrap items-center gap-x-2 text-neutral-300">
-                        <Headshot id={l.playerId} name={l.player} size={34} />
-                        <span className="text-neutral-100">{l.player}</span>
-                        <span className="text-neutral-400">{l.side === 'over' ? 'Over' : 'Under'} {l.line} {STAT_LABEL[l.stat] ?? l.stat}</span>
-                        <span className="tabular-nums text-neutral-500">
-                          @ {l.price.toFixed(2)}{l.book ? ` ${l.book}` : ''} · model {pct(l.modelProb)} · market {pct(l.marketProb)}
-                          {gap != null && ` (${gap > 0 ? '+' : ''}${Math.round(gap * 100)})`} · blended {pct(l.prob)}
-                        </span>
-                        {l.actual != null && (
-                          <span className={l.result === 'won' ? 'text-neutral-100' : 'text-neutral-500'}>· got {l.actual} ({l.result})</span>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {legsOf(b.id).map((l) => <LegRow key={l.idx} l={l} />)}
                 </div>
                 <div className="text-right tabular-nums text-neutral-400">
                   {b.kind === 'combo' ? `${legsOf(b.id).length}-leg ` : 'single '}{b.odds.toFixed(2)}x · says {p0(b.prob)} · EV {signed(b.ev * 100, 1)}%
@@ -239,6 +226,34 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function LegRow({ l }: { l: Leg }) {
+  const [open, setOpen] = useState(false)
+  const gap = l.modelProb != null && l.marketProb != null ? l.modelProb - l.marketProb : null
+  const hits = l.recent.filter((v) => (l.side === 'over' ? v > l.line : v < l.line)).length
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-x-2 text-neutral-300">
+        <Headshot id={l.playerId} name={l.player} size={34} />
+        <span className="text-neutral-100">{l.player}</span>
+        <span className="text-neutral-400">{l.side === 'over' ? 'Over' : 'Under'} {l.line} {STAT_LABEL[l.stat] ?? l.stat}</span>
+        <button className="block" onClick={() => setOpen(!open)} aria-expanded={open}
+          title={l.recent.length ? `Last ${l.recent.length} games before this bet: ${hits} landed. Click to enlarge.` : 'No earlier games stored'}>
+          <PickSpark p={l} />
+        </button>
+        <span className="tabular-nums text-neutral-500">
+          @ {l.price.toFixed(2)}{l.book ? ` ${l.book}` : ''} · model {pct(l.modelProb)} · market {pct(l.marketProb)}
+          {gap != null && ` (${gap > 0 ? '+' : ''}${Math.round(gap * 100)})`} · blended {pct(l.prob)}
+          {l.recent.length > 0 && ` · hit ${hits}/${l.recent.length} lately`}
+        </span>
+        {l.actual != null && (
+          <span className={l.result === 'won' ? 'text-neutral-100' : 'text-neutral-500'}>· got {l.actual} ({l.result})</span>
+        )}
+      </div>
+      {open && <PickBars p={l} />}
     </div>
   )
 }

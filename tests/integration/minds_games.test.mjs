@@ -5,7 +5,7 @@ import { api, start, upstreamReset, upstreamStats } from './harness.mjs'
 
 const TOKEN = 'integration-token'
 const priv = { 'x-capture-token': TOKEN }
-let app
+let app, curryId, cutoff
 
 before(async () => {
   app = await start({
@@ -17,6 +17,11 @@ before(async () => {
       ins.run('b', '2026-10-01', 'sam', 'minds-v1', 'single', 2, 0.4, -0.2, 'lost', -1)
       ins.run('c', '2026-10-02', 'sam', 'minds-v1', 'single', 2, 0.9, 0.8, 'push', 0)   // refunded: neither a hit nor a miss
       ins.run('d', '2026-10-02', 'sam', 'minds-v1', 'single', 2, 0.7, 0.4, 'open', null)
+      // A leg whose "recent games" we can recompute independently: Curry's points before a cutoff date.
+      curryId = db.prepare("SELECT id FROM players WHERE name = 'Stephen Curry'").get().id
+      cutoff = db.prepare("SELECT g.date AS d FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.player_id = ? AND g.game_type = 'regular' ORDER BY g.date DESC LIMIT 1 OFFSET 3").get(curryId).d
+      const betId = ins.run('e', '2026-10-03', 'val', 'minds-v1', 'single', 2, 0.6, 0.1, 'open', null).lastInsertRowid
+      db.prepare("INSERT INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, game_date, prob) VALUES (?, 0, ?, 'Stephen Curry', 'pts', 'over', 20.5, 2, ?, 0.6)").run(betId, curryId, cutoff)
     },
   })
 })
@@ -33,6 +38,25 @@ describe('/api/minds', () => {
     assert.ok(Math.abs(sam.statedProb - 0.5) < 1e-9, `statedProb ${sam.statedProb}`)   // (0.6 + 0.4) / 2; the old query also counted the 0.9 push
     assert.equal(sam.actualRate, 0.5)
     assert.equal(sam.units, 0)
+  })
+})
+
+describe('each leg carries the games that were known when the bet was made', () => {
+  it('is the last 10 regular-season games strictly before the game date, oldest first', async () => {
+    const { body } = await api('/minds')
+    const leg = body.data.legs.find((l) => l.playerId === curryId)
+    assert.ok(leg, 'seeded leg returned')
+    const { openScratch } = await import('./harness.mjs')
+    const db = openScratch()
+    try {
+      const expected = db.prepare("SELECT pg.pts AS v FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.player_id = ? AND g.game_type = 'regular' AND g.date < ? ORDER BY g.date DESC LIMIT 10").all(curryId, cutoff).map((r) => r.v).reverse()
+      assert.equal(expected.length, 10)
+      assert.deepEqual(leg.recent, expected)
+    } finally { db.close() }
+  })
+  it('a leg with no history gets an empty list rather than an error', async () => {
+    const { body } = await api('/minds')
+    assert.ok(body.data.legs.every((l) => Array.isArray(l.recent)))
   })
 })
 

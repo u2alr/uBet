@@ -514,6 +514,25 @@ app.get('/results', async (c) => {
   return c.json({ data: results, summary })
 })
 
+const LEG_STATS = ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk']
+async function recentBefore(db: D1Database, legs: { playerId: number; stat: string; gameDate: string }[]): Promise<number[][]> {
+  const ids = [...new Set(legs.map((l) => l.playerId).filter((n) => Number.isInteger(n)))]
+  if (!ids.length) return legs.map(() => [])
+  const newest = legs.reduce((m, l) => (l.gameDate > m ? l.gameDate : m), '')
+  const { results } = await db.prepare(
+    `SELECT pg.player_id AS playerId, g.date, pg.pts, pg.reb, pg.ast, pg.fg3m, pg.stl, pg.blk
+     FROM player_games pg JOIN games g ON g.id = pg.game_id
+     WHERE pg.player_id IN (${ids.join(',')}) AND g.game_type = 'regular' AND g.date < ? AND g.date >= date(?, '-400 days')
+     ORDER BY g.date DESC`,
+  ).bind(newest, newest).all<Record<string, number | string>>()
+  const byPlayer = new Map<number, Record<string, number | string>[]>()
+  for (const r of results) (byPlayer.get(r.playerId as number) ?? byPlayer.set(r.playerId as number, []).get(r.playerId as number)!).push(r)
+  return legs.map((l) => {
+    if (!LEG_STATS.includes(l.stat)) return []
+    return (byPlayer.get(l.playerId) ?? []).filter((r) => (r.date as string) < l.gameDate).slice(0, 10).map((r) => r[l.stat] as number).reverse()
+  })
+}
+
 // The minds' frozen cards and their record. Pure read; cards are written by minds/run.mjs, graded by ingest/sync.py.
 app.get('/minds', async (c) => {
   const db = c.env.DB
@@ -525,6 +544,9 @@ app.get('/minds', async (c) => {
             model_prob AS modelProb, market_prob AS marketProb, actual, result
      FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
   ).all()).results : []
+  // Each leg's last 10 regular-season games BEFORE its game date (what was known when the bet was made), oldest first.
+  const recent = await recentBefore(db, legs as { playerId: number; stat: string; gameDate: string }[])
+  legs.forEach((l, i) => { l.recent = recent[i] })
   const summary = (await db.prepare(
     `SELECT mind, COUNT(*) AS bets,
             SUM(status IN ('won','lost','push')) AS settled, SUM(status = 'won') AS won, SUM(status = 'lost') AS lost,
