@@ -3,6 +3,7 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { MINDS_V3 } from '../../shared/minds'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
+import { teamByName } from '../lib/teams'
 import Headshot from './Headshot'
 import LazyMount from './LazyMount'
 import { PickBars, PickSpark } from './PickSpark'
@@ -16,6 +17,9 @@ interface Leg {
   recent: number[]
   eventId: string | null
   team: string | null
+  tipOff: string | null
+  homeTeam: string | null
+  awayTeam: string | null
 }
 interface Sum {
   mind: string; bets: number; settled: number; won: number; lost: number; open: number; units: number
@@ -72,6 +76,8 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const [error, setError] = useState('')
   const [pick, setPick] = useState<string | null>(null)
   const [show, setShow] = useState<'all' | 'open' | 'settled'>('all')
+  const [view, setView] = useState<'game' | 'mind'>('game')
+  const [dayPick, setDayPick] = useState<string | null>(null)
   const [version, setVersion] = useState<string | null>(null)
   useEffect(() => { api<Res>(`/minds${version ? `?version=${version}` : ''}`).then(setRes).catch((e) => setError(e.message)) }, [refreshKey, version])
 
@@ -100,6 +106,8 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
 
   const visible = bets.filter((b) =>
     (!pick || b.mind === pick) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
+  const days = [...new Set(bets.map((b) => b.day))].sort().reverse()
+  const selDay = dayPick && days.includes(dayPick) ? dayPick : days[0]
   const byDay = new Map<string, Bet[]>()
   for (const b of visible) (byDay.get(b.day) ?? byDay.set(b.day, []).get(b.day)!).push(b)
 
@@ -208,9 +216,21 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
 
       <LazyMount height={560}><MindsCharts bets={bets} legs={legs} pick={pick} /></LazyMount>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm text-neutral-300">Bets{pick ? `: ${NAMES[pick]}` : ''} <span className="text-xs text-neutral-600">{visible.length}</span></h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="mr-2 text-sm text-neutral-300">Bets{pick ? `: ${NAMES[pick]}` : ''} <span className="text-xs text-neutral-600">{visible.length}</span></h2>
         <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
+          {([['game', 'By game'], ['mind', 'By mind']] as const).map(([v, label]) => (
+            <button key={v} onClick={() => setView(v)} className={`px-3 py-1 ${view === v ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{label}</button>
+          ))}
+        </div>
+        {view === 'game' && days.length > 1 && (
+          <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
+            {days.slice(0, 7).map((d) => (
+              <button key={d} onClick={() => setDayPick(d)} className={`px-3 py-1 ${d === selDay ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{dayLabel(d)}</button>
+            ))}
+          </div>
+        )}
+        <div className="ml-auto flex overflow-hidden rounded-md bg-neutral-900 text-xs">
           {(['all', 'open', 'settled'] as const).map((v) => (
             <button key={v} onClick={() => setShow(v)} className={`px-3 py-1 capitalize ${show === v ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{v}</button>
           ))}
@@ -222,9 +242,9 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           {bets.length === 0 ? <>No cards yet. Run <code className="text-neutral-300">node minds/run.mjs</code> to generate today's bets.</> : 'No bets match this filter.'}
         </p>
       )}
-      {[...byDay].map(([day, list]) => (
-        <DaySection key={day} day={day} list={list} order={ORDER} legsOf={legsOf} />
-      ))}
+      {view === 'game'
+        ? <ScheduleView bets={visible.filter((b) => b.day === selDay)} legsOf={legsOf} />
+        : [...byDay].map(([day, list]) => <DaySection key={day} day={day} list={list} order={ORDER} legsOf={legsOf} />)}
     </div>
   )
 }
@@ -318,6 +338,129 @@ function BetRow({ b, legs }: { b: Bet; legs: Leg[] }) {
       <div className="text-right tabular-nums text-neutral-400">
         {b.kind === 'combo' ? `${legs.length}-leg ` : 'single '}{b.odds.toFixed(2)}x · says {p0(b.prob)} · EV {signed(b.ev * 100, 1)}%
         <div className="text-neutral-200">{STATUS[b.status]}{b.profit != null ? ` ${signed(b.profit)}` : ''}</div>
+      </div>
+    </div>
+  )
+}
+
+// ---------- by schedule ----------
+
+const tipLabel = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'time unknown')
+const abbr = (name: string | null) => (name ? teamByName(name)?.[0] ?? name : '?')
+const STATE_COLOR: Record<string, string> = { won: '#0ca30c', lost: '#d03b3b' }
+const statusText = (b: Bet) => (b.status === 'open' ? 'open' : `${STATUS[b.status]}${b.profit != null ? ` ${signed(b.profit)}` : ''}`)
+
+interface GameGroup { key: string; tip: string | null; home: string | null; away: string | null; bets: Bet[] }
+
+/** The day's bets as a grid of game cards in tip-off order, so a night's slate reads like a schedule instead of a long list. */
+function ScheduleView({ bets, legsOf }: { bets: Bet[]; legsOf: (id: number) => Leg[] }) {
+  const singles = bets.filter((b) => b.kind === 'single')
+  const combos = bets.filter((b) => b.kind === 'combo')
+  const groups = new Map<string, GameGroup>()
+  for (const b of singles) {
+    const l = legsOf(b.id)[0]
+    if (!l) continue
+    const key = l.eventId ?? `${l.gameDate}|${l.team ?? '?'}`
+    const g = groups.get(key) ?? groups.set(key, { key, tip: l.tipOff, home: l.homeTeam, away: l.awayTeam, bets: [] }).get(key)!
+    g.bets.push(b)
+  }
+  const games = [...groups.values()].sort((a, b) => (a.tip ?? '9').localeCompare(b.tip ?? '9') || a.key.localeCompare(b.key))
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+        {games.map((g) => <GameCard key={g.key} g={g} legsOf={legsOf} />)}
+      </div>
+      {combos.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-xs uppercase tracking-widest text-neutral-500">Doubles and parlays <span className="normal-case tracking-normal text-neutral-600">{combos.length}</span></div>
+          <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+            {combos.map((b) => <ComboCard key={b.id} b={b} legs={legsOf(b.id)} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GameCard({ g, legsOf }: { g: GameGroup; legsOf: (id: number) => Leg[] }) {
+  const done = g.bets.filter((b) => b.status !== 'open')
+  const net = done.reduce((a, b) => a + (b.profit ?? 0), 0)
+  // away team's bets first, then the home team's
+  const byTeam = new Map<string, Bet[]>()
+  for (const b of g.bets) { const t = legsOf(b.id)[0]?.team ?? '?'; (byTeam.get(t) ?? byTeam.set(t, []).get(t)!).push(b) }
+  const awayAbbr = abbr(g.away)
+  const teams = [...byTeam].sort((a, b) => (a[0] === awayAbbr ? -1 : b[0] === awayAbbr ? 1 : 0))
+  return (
+    <div className="rounded-lg bg-neutral-900">
+      <div className="flex items-baseline gap-2 border-b border-neutral-800 px-3 py-1.5">
+        <span className="text-sm text-neutral-100">{g.away ? `${abbr(g.away)} @ ${abbr(g.home)}` : 'Game unknown'}</span>
+        <span className="text-xs text-neutral-500">{tipLabel(g.tip)}</span>
+        <span className="ml-auto text-[11px] tabular-nums text-neutral-500">{g.bets.length} bets{done.length > 0 && ` · ${done.length} settled · ${signed(net)}`}</span>
+      </div>
+      <div className="px-1 py-1">
+        {teams.map(([team, bs]) => (
+          <div key={team}>
+            <div className="px-2 pt-1 text-[10px] uppercase tracking-widest text-neutral-600">{team}</div>
+            {mergeSame(bs, legsOf).map((m) => <MiniBet key={m.bets[0].id} bets={m.bets} l={m.leg} />)}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** When several minds make the same bet (same player, line and side) it is one row with a dot per mind, not three copies. */
+function mergeSame(bs: Bet[], legsOf: (id: number) => Leg[]): { bets: Bet[]; leg: Leg }[] {
+  const by = new Map<string, { bets: Bet[]; leg: Leg }>()
+  for (const b of [...bs].sort((x, y) => y.ev - x.ev)) {
+    const l = legsOf(b.id)[0]
+    const k = `${l.playerId}|${l.stat}|${l.line}|${l.side}`
+    const e = by.get(k)
+    if (e) e.bets.push(b); else by.set(k, { bets: [b], leg: l })
+  }
+  return [...by.values()]
+}
+
+/** One single on one line; click it for the full numbers and the player's recent games. */
+function MiniBet({ bets, l }: { bets: Bet[]; l: Leg }) {
+  const [open, setOpen] = useState(false)
+  const b = bets[0]
+  return (
+    <div>
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 rounded px-2 py-0.5 text-left text-xs hover:bg-neutral-800/60">
+        <span className="flex w-6 shrink-0 gap-0.5" title={bets.map((x) => NAMES[x.mind]).join(', ')}>
+          {bets.map((x) => <span key={x.id} className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[x.mind] }} />)}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-neutral-100">{l.player}</span>
+        <span className="shrink-0 text-neutral-400">{l.side === 'over' ? 'O' : 'U'} {l.line} {STAT_LABEL[l.stat] ?? l.stat}</span>
+        <span className="w-10 shrink-0 text-right tabular-nums text-neutral-300">{l.price.toFixed(2)}</span>
+        <span className="w-12 shrink-0 text-right tabular-nums text-neutral-500">{signed(b.ev * 100, 1)}%</span>
+        <span className="w-14 shrink-0 text-right tabular-nums" style={{ color: STATE_COLOR[b.status] ?? '#737373' }}>{statusText(b)}</span>
+      </button>
+      {open && <div className="mx-2 mb-1 rounded bg-neutral-950/60 px-2 py-1.5"><LegRow l={l} /></div>}
+    </div>
+  )
+}
+
+function ComboCard({ b, legs }: { b: Bet; legs: Leg[] }) {
+  return (
+    <div className="rounded-lg bg-neutral-900 px-3 py-2 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[b.mind] }} />
+        <span className="text-neutral-200">{NAMES[b.mind]}</span>
+        <span className="text-neutral-500">{legs.length}-leg</span>
+        <span className="ml-auto tabular-nums text-neutral-400">{b.odds.toFixed(2)}x · says {p0(b.prob)} · EV {signed(b.ev * 100, 1)}%</span>
+        <span className="w-16 text-right tabular-nums" style={{ color: STATE_COLOR[b.status] ?? '#737373' }}>{statusText(b)}</span>
+      </div>
+      <div className="mt-1 space-y-0.5">
+        {legs.map((l) => (
+          <div key={l.idx} className="flex items-center gap-2 text-neutral-300">
+            <span className="min-w-0 flex-1 truncate text-neutral-100">{l.player}</span>
+            <span className="shrink-0 text-neutral-400">{l.side === 'over' ? 'O' : 'U'} {l.line} {STAT_LABEL[l.stat] ?? l.stat}</span>
+            <span className="w-10 shrink-0 text-right tabular-nums">{l.price.toFixed(2)}</span>
+            <span className="w-24 shrink-0 text-right text-[11px] text-neutral-600">{l.awayTeam ? `${abbr(l.awayTeam)} @ ${abbr(l.homeTeam)} ${tipLabel(l.tipOff)}` : ''}</span>
+          </div>
+        ))}
       </div>
     </div>
   )

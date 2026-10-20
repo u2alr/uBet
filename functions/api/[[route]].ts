@@ -618,7 +618,7 @@ app.get('/minds', async (c) => {
   ).bind(version).all()).results
   const legs = bets.length ? (await db.prepare(
     `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob,
-            model_prob AS modelProb, market_prob AS marketProb, actual, result, event_id AS eventId,
+            model_prob AS modelProb, market_prob AS marketProb, actual, result, event_id AS eventId, tip_off AS tipOff, home_team AS homeTeam, away_team AS awayTeam,
             (SELECT team FROM players WHERE id = mind_legs.player_id) AS team
      FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000)) ORDER BY bet_id, idx`,
   ).bind(version).all()).results : []

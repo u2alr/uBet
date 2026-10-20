@@ -91,14 +91,15 @@ const done = new Set(d1(`SELECT DISTINCT mind FROM mind_bets WHERE day = '${day}
 if (done.size) console.log(`already carded today, left alone: ${[...done].join(', ')}`)
 const bets = runMinds(eligible, day, done)
 
+const gameOf = (id) => events.find((e) => e.id === id)
 const q = (v) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`)
 const lines = []
 for (const b of bets) {
   const betKey = [day, b.mind, MINDS_VERSION, ...b.legs.map(legKey).sort()].join('|')
   lines.push(`INSERT OR IGNORE INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev) VALUES (${q(betKey)}, ${q(day)}, ${q(b.mind)}, ${q(MINDS_VERSION)}, ${q(b.kind)}, ${b.odds}, ${b.prob}, ${b.ev});`)
   b.legs.forEach((l, i) => lines.push(
-    `INSERT OR IGNORE INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, book, odds_id, event_id, game_date, prob, model_prob, market_prob) ` +
-    `SELECT id, ${i}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${l.price}, ${q(l.book)}, ${q(l.oddsId)}, ${q(l.eventId)}, ${q(l.gameDate)}, ${l.prob}, ${l.modelProb}, ${q(l.marketProb)} FROM mind_bets WHERE bet_key = ${q(betKey)};`))
+    `INSERT OR IGNORE INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, book, odds_id, event_id, game_date, prob, model_prob, market_prob, tip_off, home_team, away_team) ` +
+    `SELECT id, ${i}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${l.price}, ${q(l.book)}, ${q(l.oddsId)}, ${q(l.eventId)}, ${q(l.gameDate)}, ${l.prob}, ${l.modelProb}, ${q(l.marketProb)}, ${q(gameOf(l.eventId)?.commence_time)}, ${q(gameOf(l.eventId)?.home_team)}, ${q(gameOf(l.eventId)?.away_team)} FROM mind_bets WHERE bet_key = ${q(betKey)};`))
 }
 console.log(`bets: ${bets.length}`, Object.entries(bets.reduce((a, b) => ((a[b.mind] = (a[b.mind] ?? 0) + 1), a), {})).map(([m, n]) => `${m}=${n}`).join(' '))
 for (const b of bets) console.log(`  ${b.mind.padEnd(7)} ${b.kind.padEnd(6)} ${b.odds.toFixed(2)}x p=${(b.prob * 100).toFixed(0)}% ev=${(b.ev * 100).toFixed(1)}%  ${b.legs.map((l) => `${l.player} ${l.side} ${l.line} ${l.stat}`).join(' + ')}`)
