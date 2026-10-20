@@ -10,5 +10,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["shared", "tests"]
+  "include": ["shared", "tests", "src/lib/propViews.ts", "src/lib/propViews.test.ts", "src/lib/teams.ts", "src/lib/stats.ts"]
 }
