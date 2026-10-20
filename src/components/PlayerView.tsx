@@ -133,7 +133,7 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
       {player && (
         <section className="space-y-5">
           <div className="flex flex-wrap items-center gap-3">
-            <Headshot id={player.id} name={player.name} size={56} />
+            <Headshot id={player.id} name={player.name} size={104} />
             <div>
               <h2 className="text-xl text-neutral-100">{player.name}</h2>
               {player.team && <div className="text-xs text-neutral-500">{player.team}</div>}

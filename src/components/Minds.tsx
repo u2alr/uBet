@@ -119,7 +119,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
             <div className="min-w-0 flex-1 space-y-0.5">
               {legsOf(b.id).map((l) => (
                 <div key={l.idx} className="flex items-center gap-2 text-neutral-300">
-                  <Headshot id={l.playerId} name={l.player} size={22} />
+                  <Headshot id={l.playerId} name={l.player} size={38} />
                   <span>{l.player} <span className="text-neutral-500">{l.side} {l.line} {STAT_LABEL[l.stat as keyof typeof STAT_LABEL] ?? l.stat}</span>
                   <span className="ml-2 text-xs text-neutral-500">
                     {l.price.toFixed(2)}{l.book ? ` ${l.book}` : ''}{l.actual != null ? ` · got ${l.actual} (${l.result})` : ''}

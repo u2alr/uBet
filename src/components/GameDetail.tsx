@@ -88,7 +88,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
               <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
                 <div className="flex items-center justify-between">
                   <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
-                    <Headshot id={p.playerId} name={p.player} size={32} />{p.player}
+                    <Headshot id={p.playerId} name={p.player} size={56} />{p.player}
                   </button>
                   <span className="flex items-center gap-2">
                     <RiskBadge risk={p.risk} />
@@ -135,7 +135,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
               <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
                 <div className="flex items-center justify-between">
                   <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
-                    <Headshot id={p.playerId} name={p.player} size={32} />{p.player}
+                    <Headshot id={p.playerId} name={p.player} size={56} />{p.player}
                   </button>
                   <span className="flex items-center gap-2">
                     <RiskBadge risk={p.risk} />
