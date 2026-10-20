@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api } from '../lib/format'
+import Headshot from './Headshot'
 
 interface Bet { id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null }
-interface Leg { betId: number; idx: number; player: string; stat: string; side: string; line: number; price: number; book: string | null; gameDate: string; actual: number | null; result: string | null }
+interface Leg { betId: number; idx: number; playerId: number; player: string; stat: string; side: string; line: number; price: number; book: string | null; gameDate: string; actual: number | null; result: string | null }
 interface Sum { mind: string; bets: number; settled: number; won: number; lost: number; open: number; units: number; statedProb: number | null; actualRate: number | null; statedEv: number | null }
 interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number } }
 
@@ -117,11 +118,12 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
             </span>
             <div className="min-w-0 flex-1 space-y-0.5">
               {legsOf(b.id).map((l) => (
-                <div key={l.idx} className="text-neutral-300">
-                  {l.player} <span className="text-neutral-500">{l.side} {l.line} {STAT_LABEL[l.stat as keyof typeof STAT_LABEL] ?? l.stat}</span>
+                <div key={l.idx} className="flex items-center gap-2 text-neutral-300">
+                  <Headshot id={l.playerId} name={l.player} size={22} />
+                  <span>{l.player} <span className="text-neutral-500">{l.side} {l.line} {STAT_LABEL[l.stat as keyof typeof STAT_LABEL] ?? l.stat}</span>
                   <span className="ml-2 text-xs text-neutral-500">
                     {l.price.toFixed(2)}{l.book ? ` ${l.book}` : ''}{l.actual != null ? ` · got ${l.actual} (${l.result})` : ''}
-                  </span>
+                  </span></span>
                 </div>
               ))}
             </div>

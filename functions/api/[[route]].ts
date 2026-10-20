@@ -521,7 +521,7 @@ app.get('/minds', async (c) => {
     `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400`,
   ).all()).results
   const legs = bets.length ? (await db.prepare(
-    `SELECT bet_id AS betId, idx, player, stat, side, line, price, book, game_date AS gameDate, prob, actual, result
+    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob, actual, result
      FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
   ).all()).results : []
   const summary = (await db.prepare(

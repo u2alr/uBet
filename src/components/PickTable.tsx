@@ -3,6 +3,7 @@ import { STAT_LABEL, fmt, pct } from '../lib/format'
 import type { Risk } from '../../shared/baseline'
 import { groupByGame, type Pick } from '../lib/picks'
 import { useSlip } from '../lib/slipContext'
+import Headshot from './Headshot'
 
 const RISK: Record<Risk, { label: string; cls: string }> = {
   safe: { label: 'Safe', cls: 'bg-neutral-200 text-neutral-900' },
@@ -76,7 +77,9 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
   return (
     <tr className="border-t border-neutral-800/60 hover:bg-neutral-800/60">
       <td className="px-4 py-2.5">
-        <button className="text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>{p.player}</button>
+        <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
+          <Headshot id={p.playerId} name={p.player} />{p.player}
+        </button>
       </td>
       <td className="px-2 py-2.5 tabular-nums">
         <span className="text-neutral-100">{p.side === 'over' ? 'O' : 'U'} {p.line}</span>{' '}

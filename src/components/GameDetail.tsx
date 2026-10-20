@@ -1,3 +1,4 @@
+import Headshot from './Headshot'
 import { useEffect, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { INK, STAT_COLOR } from '../lib/colors'
@@ -85,8 +86,10 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {list.map((p) => (
               <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
-                <div className="flex items-baseline justify-between">
-                  <button className="text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>{p.player}</button>
+                <div className="flex items-center justify-between">
+                  <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
+                    <Headshot id={p.playerId} name={p.player} size={32} />{p.player}
+                  </button>
                   <span className="flex items-center gap-2">
                     <RiskBadge risk={p.risk} />
                     <span className="text-sm tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
@@ -130,8 +133,10 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {rest.map((p) => (
               <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
-                <div className="flex items-baseline justify-between">
-                  <button className="text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>{p.player}</button>
+                <div className="flex items-center justify-between">
+                  <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
+                    <Headshot id={p.playerId} name={p.player} size={32} />{p.player}
+                  </button>
                   <span className="flex items-center gap-2">
                     <RiskBadge risk={p.risk} />
                     <span className="text-sm tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
@@ -209,7 +214,9 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                     {t.players.map((p) => (
                       <tr key={p.id} className="hover:bg-neutral-800/60">
                         <td className="px-4 py-2">
-                          <button className="text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.id)}>{p.name}</button>
+                          <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.id)}>
+                            <Headshot id={p.id} name={p.name} />{p.name}
+                          </button>
                         </td>
                         <td className="px-2 py-2 text-right tabular-nums text-neutral-400">{fmt(p.min, 0)}</td>
                         <td className="px-2 py-2 text-right tabular-nums text-neutral-100">{fmt(p.pts)}</td>

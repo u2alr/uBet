@@ -5,7 +5,9 @@ import { helperStatus, helperSync } from '../lib/helper'
 import type { GameRow } from '../lib/stats'
 import GameLog from './GameLog'
 import GameTypeSplit from './GameTypeSplit'
+import Headshot from './Headshot'
 import PlayerCharts from './PlayerCharts'
+import PlayerProps from './PlayerProps'
 
 interface Player { id: number; name: string; team: string | null; position: string | null }
 interface StatsResponse {
@@ -116,7 +118,10 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
         <ul className="divide-y divide-neutral-800 rounded-lg bg-neutral-900">
           {results.map((p) => (
             <li key={p.id}>
-              <button className="w-full px-4 py-2.5 text-left text-sm hover:bg-neutral-800" onClick={() => open(p)}>{p.name}</button>
+              <button className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-neutral-800" onClick={() => open(p)}>
+                <Headshot id={p.id} name={p.name} />{p.name}
+                {p.team && <span className="ml-auto text-xs text-neutral-600">{p.team}</span>}
+              </button>
             </li>
           ))}
         </ul>
@@ -128,7 +133,11 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
       {player && (
         <section className="space-y-5">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-xl text-neutral-100">{player.name}</h2>
+            <Headshot id={player.id} name={player.name} size={56} />
+            <div>
+              <h2 className="text-xl text-neutral-100">{player.name}</h2>
+              {player.team && <div className="text-xs text-neutral-500">{player.team}</div>}
+            </div>
             {helperOn && (
               <button className="mr-auto rounded-md bg-neutral-900 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800" onClick={syncPlayer}>
                 Sync player
@@ -149,6 +158,9 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
               ))}
             </div>
           </div>
+
+          <PlayerProps key={player.id} playerId={player.id} refreshKey={refreshKey}
+            onPick={(s, l) => { setStat(s); setLine(String(l)); load(player, s, String(l), kind) }} />
 
           {data && (
             <>
