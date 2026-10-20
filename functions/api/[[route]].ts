@@ -521,7 +521,8 @@ app.get('/minds', async (c) => {
     `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400`,
   ).all()).results
   const legs = bets.length ? (await db.prepare(
-    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob, actual, result
+    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob,
+            model_prob AS modelProb, market_prob AS marketProb, actual, result
      FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
   ).all()).results : []
   const summary = (await db.prepare(
@@ -530,7 +531,10 @@ app.get('/minds', async (c) => {
             SUM(status = 'open') AS open, COALESCE(SUM(profit), 0) AS units,
             AVG(CASE WHEN status IN ('won','lost') THEN prob END) AS statedProb,
             AVG(CASE WHEN status IN ('won','lost') THEN (status = 'won') END) AS actualRate,
-            AVG(CASE WHEN status IN ('won','lost') THEN ev END) AS statedEv
+            AVG(CASE WHEN status IN ('won','lost') THEN ev END) AS statedEv,
+            SUM(CASE WHEN status IN ('won','lost','push') THEN stake END) AS staked,
+            AVG(odds) AS avgOdds, AVG(ev) AS avgEv, SUM(kind = 'combo') AS combos, SUM(kind = 'single') AS singles,
+            COUNT(DISTINCT day) AS days, MAX(profit) AS bestWin, MIN(profit) AS worstLoss
      FROM mind_bets GROUP BY mind`,
   ).all()).results
   const curve = (await db.prepare(
