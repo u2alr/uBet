@@ -8,7 +8,7 @@ const ws = new WebSocket(t.find((x) => x.type === 'page').webSocketDebuggerUrl);
 let id = 0; const pend = new Map(); ws.onmessage = (m) => { const d = JSON.parse(m.data); pend.get(d.id)?.(d) }
 const send = (method, params = {}) => new Promise((res) => { const i = ++id; pend.set(i, res); ws.send(JSON.stringify({ id: i, method, params })) })
 const js = async (e) => (await send('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true })).result.result.value
-const state = () => js(`({ hash: location.hash, active: [...document.querySelectorAll('nav button')].find((b) => b.className.includes('bg-neutral-800'))?.textContent?.replace(/\d+$/, '') })`)
+const state = () => js(`({ hash: location.hash, active: [...document.querySelectorAll('nav button')].find((b) => b.className.includes('bg-neutral-800'))?.textContent?.replace(/[0-9]+$/, '') })`)
 const click = (name) => js(`[...document.querySelectorAll('nav button')].find((b) => b.textContent.startsWith('${name}')).click()`)
 let ok = true
 const expect = (label, got, want) => { const pass = JSON.stringify(got) === JSON.stringify(want); ok &&= pass; console.log(pass ? 'PASS' : 'FAIL', label, pass ? '' : `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`) }
