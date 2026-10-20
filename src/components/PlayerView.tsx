@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { STATS, type Prediction, type Stat } from '../../shared/baseline'
+import type { Prediction, Stat } from '../../shared/baseline'
 import type { Injury, Role } from '../../shared/injuries'
-import { STAT_LABEL, api, fmt, pct } from '../lib/format'
+import { api, fmt, pct } from '../lib/format'
 import { helperStatus, helperSync } from '../lib/helper'
 import type { GameRow } from '../lib/stats'
 import { InjuryTag, RoleTag } from './Availability'
@@ -10,6 +10,8 @@ import GameTypeSplit from './GameTypeSplit'
 import Headshot from './Headshot'
 import PlayerCharts from './PlayerCharts'
 import PlayerProps from './PlayerProps'
+import PropCard from './PropCard'
+import { usePlayerPicks } from '../lib/usePlayerPicks'
 
 interface Player { id: number; name: string; team: string | null; position: string | null }
 interface StatsResponse {
@@ -22,7 +24,6 @@ interface StatsResponse {
 }
 
 type Kind = 'regular' | 'playoffs' | 'preseason' | 'all'
-const KINDS: [Kind, string][] = [['regular', 'Regular'], ['playoffs', 'Playoffs'], ['preseason', 'Preseason'], ['all', 'All']]
 
 // The shape of the numbers behind the averages: a player who scores 20 every night and one who swings 8 to 38 average the same.
 function Spread({ games, line }: { games: StatsResponse['games']; line: number | null }) {
@@ -55,6 +56,7 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
   const [log, setLog] = useState<GameRow[]>([])
   const [status, setStatus] = useState('')
   const [kind, setKind] = useState<Kind>('regular')
+  const props = usePlayerPicks(player?.id ?? null, refreshKey)
 
   const load = useCallback(async (p: Player, s: Stat, l: string, k: Kind) => {
     const qs = new URLSearchParams({ stat: s })
@@ -174,22 +176,14 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
               </button>
             )}
             {!helperOn && <span className="mr-auto" />}
-            <select className={input} value={stat} onChange={(e) => { const s = e.target.value as Stat; setStat(s); load(player, s, line, kind) }}>
-              {STATS.map((s) => <option key={s} value={s}>{STAT_LABEL[s]}</option>)}
-            </select>
-            <input className={`${input} w-24`} placeholder="Line" inputMode="decimal" value={line}
-              onChange={(e) => setLine(e.target.value)} onBlur={() => load(player, stat, line, kind)} />
-            <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
-              {KINDS.map(([k, label]) => (
-                <button key={k} onClick={() => { setKind(k); load(player, stat, line, k) }}
-                  className={`px-3 py-2 ${kind === k ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>
-                  {label}
-                </button>
-              ))}
-            </div>
           </div>
 
-          <PlayerProps key={player.id} playerId={player.id} refreshKey={refreshKey}
+          <PropCard key={player.id} playerId={player.id} picks={props.picks} stat={stat} line={line} kind={kind}
+            onStat={(s) => { setStat(s); load(player, s, line, kind) }}
+            onLine={(l, commit) => { setLine(l); if (commit) load(player, stat, l, kind) }}
+            onKind={(k) => { setKind(k); load(player, stat, line, k) }} />
+
+          <PlayerProps picks={props.picks} note={props.note} loading={props.loading}
             onPick={(s, l) => { setStat(s); setLine(String(l)); load(player, s, String(l), kind) }} />
 
           {data && (

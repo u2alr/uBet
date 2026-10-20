@@ -1,26 +1,14 @@
-import { useEffect, useState } from 'react'
 import type { Stat } from '../../shared/baseline'
-import { STAT_LABEL, api, pct } from '../lib/format'
+import { STAT_LABEL, pct } from '../lib/format'
 import type { Pick } from '../lib/picks'
 import { PickSpark } from './PickSpark'
 import { RiskBadge, SlipButton } from './PickTable'
 
 // Every prop line the books are offering for this one player, both sides, with our chance and the best price.
-export default function PlayerProps({ playerId, refreshKey, onPick }: {
-  playerId: number; refreshKey: number; onPick: (stat: Stat, line: number) => void
+export default function PlayerProps({ picks, note, loading, onPick }: {
+  picks: Pick[]; note: string; loading: boolean; onPick: (stat: Stat, line: number) => void
 }) {
-  const [picks, setPicks] = useState<Pick[] | null>(null)
-  const [note, setNote] = useState('')
-
-  useEffect(() => {
-    let live = true
-    api<{ configured: boolean; data: Pick[] }>('/picks')
-      .then((r) => { if (live) { setPicks(r.data.filter((p) => p.playerId === playerId)); setNote(r.configured ? '' : 'Odds are not set up.') } })
-      .catch((e) => { if (live) { setPicks([]); setNote(e.message) } })
-    return () => { live = false }
-  }, [playerId, refreshKey])
-
-  if (picks === null) return <p className="text-sm text-neutral-500">Loading props…</p>
+  if (loading) return <p className="text-sm text-neutral-500">Loading props…</p>
   if (picks.length === 0)
     return <p className="rounded-lg bg-neutral-900 px-4 py-3 text-sm text-neutral-500">{note || 'No prop lines posted for this player in the next games.'}</p>
 

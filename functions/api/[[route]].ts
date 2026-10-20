@@ -210,16 +210,50 @@ app.get('/players/:id/stats', async (c) => {
   })
 })
 
-// Full box-score history for the detailed player page, newest first.
+/**
+ * "Without X": this player's games in which teammate X did not play, counted only while X belonged to the team,
+ * i.e. X has a game for that team on or before this date AND on or after it. That keeps games from before X arrived,
+ * and after X was traded away for good, out of the split.
+ */
+const WITHOUT_SQL = `AND NOT EXISTS (SELECT 1 FROM player_games x WHERE x.player_id = ? AND x.game_id = pg.game_id)
+  AND EXISTS (SELECT 1 FROM player_games x JOIN games xg ON xg.id = x.game_id WHERE x.player_id = ? AND x.team_id = pg.team_id AND xg.date <= g.date)
+  AND EXISTS (SELECT 1 FROM player_games x JOIN games xg ON xg.id = x.game_id WHERE x.player_id = ? AND x.team_id = pg.team_id AND xg.date >= g.date)`
+const WITH_SQL = 'AND EXISTS (SELECT 1 FROM player_games x WHERE x.player_id = ? AND x.game_id = pg.game_id AND x.team_id = pg.team_id)'
+
+// Full box-score history for the detailed player page, newest first. ?with=ID / ?without=ID filters by a teammate.
 app.get('/players/:id/log', async (c) => {
   const id = parseId(c.req.param('id'))
   if (id === null) return c.json({ error: 'bad player id' }, 400)
+  const withQ = c.req.query('with'), withoutQ = c.req.query('without')
+  const mate = withQ !== undefined ? parseId(withQ) : withoutQ !== undefined ? parseId(withoutQ) : undefined
+  if (mate === null || (withQ !== undefined && withoutQ !== undefined)) return c.json({ error: 'bad teammate id' }, 400)
+  const filter = mate === undefined ? '' : withQ !== undefined ? WITH_SQL : WITHOUT_SQL
+  const binds = mate === undefined ? [id] : withQ !== undefined ? [id, mate] : [id, mate, mate, mate]
   const { results } = await c.env.DB.prepare(
-    `SELECT g.date, g.season, g.game_type AS gameType, pg.opp, pg.is_home AS home, pg.won, pg.minutes,
+    `SELECT g.date, g.id AS gameId, g.season, g.game_type AS gameType, pg.opp, pg.is_home AS home, pg.won, pg.minutes,
             pg.pts, pg.reb, pg.ast, pg.fg3m, pg.stl, pg.blk, pg.fgm, pg.fga, pg.fg3a, pg.ftm, pg.fta,
             pg.oreb, pg.dreb, pg.tov, pg.pf, pg.plus_minus AS plusMinus
      FROM player_games pg JOIN games g ON g.id = pg.game_id
-     WHERE pg.player_id = ? ORDER BY g.date DESC`,
+     WHERE pg.player_id = ? ${filter} ORDER BY g.date DESC`,
+  ).bind(...binds).all()
+  return c.json({ data: results })
+})
+
+// Current teammates this player has played games without, most-missed first: the choices for the "without" filter.
+app.get('/players/:id/teammates', async (c) => {
+  const id = parseId(c.req.param('id'))
+  if (id === null) return c.json({ error: 'bad player id' }, 400)
+  const { results } = await c.env.DB.prepare(
+    `SELECT t.id, t.name, COUNT(DISTINCT pg.game_id) AS missed
+     FROM players me
+     JOIN players t ON t.team = me.team AND t.id != me.id
+     JOIN player_games pg ON pg.player_id = me.id
+     JOIN games g ON g.id = pg.game_id
+     WHERE me.id = ?
+       AND NOT EXISTS (SELECT 1 FROM player_games x WHERE x.player_id = t.id AND x.game_id = pg.game_id)
+       AND EXISTS (SELECT 1 FROM player_games x JOIN games xg ON xg.id = x.game_id WHERE x.player_id = t.id AND x.team_id = pg.team_id AND xg.date <= g.date)
+       AND EXISTS (SELECT 1 FROM player_games x JOIN games xg ON xg.id = x.game_id WHERE x.player_id = t.id AND x.team_id = pg.team_id AND xg.date >= g.date)
+     GROUP BY t.id, t.name HAVING missed > 0 ORDER BY missed DESC LIMIT 30`,
   ).bind(id).all()
   return c.json({ data: results })
 })
