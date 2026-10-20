@@ -13,16 +13,17 @@ before(async () => {
     seed: (db) => {
       db.exec('DELETE FROM mind_legs; DELETE FROM mind_bets;')
       const ins = db.prepare("INSERT INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, status, profit) VALUES (?,?,?,?,?,?,?,?,?,?)")
-      ins.run('a', '2026-10-01', 'sam', 'minds-v2', 'single', 2, 0.6, 0.2, 'won', 1)
-      ins.run('b', '2026-10-01', 'sam', 'minds-v2', 'single', 2, 0.4, -0.2, 'lost', -1)
-      ins.run('c', '2026-10-02', 'sam', 'minds-v2', 'single', 2, 0.9, 0.8, 'push', 0)   // refunded: neither a hit nor a miss
-      ins.run('d', '2026-10-02', 'sam', 'minds-v2', 'single', 2, 0.7, 0.4, 'open', null)
+      ins.run('a', '2026-10-01', 'sam', 'minds-v3', 'single', 2, 0.6, 0.2, 'won', 1)
+      ins.run('b', '2026-10-01', 'sam', 'minds-v3', 'single', 2, 0.4, -0.2, 'lost', -1)
+      ins.run('c', '2026-10-02', 'sam', 'minds-v3', 'single', 2, 0.9, 0.8, 'push', 0)   // refunded: neither a hit nor a miss
+      ins.run('d', '2026-10-02', 'sam', 'minds-v3', 'single', 2, 0.7, 0.4, 'open', null)
       // An archived version-1 bet, which must never mix into version 2's record.
       ins.run('v1a', '2026-10-01', 'control', 'minds-v1', 'single', 2, 0.9, 0.8, 'lost', -1)
+      ins.run('v2a', '2026-10-01', 'sam', 'minds-v2', 'single', 2, 0.6, 0.2, 'won', 1)
       // A leg whose "recent games" we can recompute independently: Curry's points before a cutoff date.
       curryId = db.prepare("SELECT id FROM players WHERE name = 'Stephen Curry'").get().id
       cutoff = db.prepare("SELECT g.date AS d FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.player_id = ? AND g.game_type = 'regular' ORDER BY g.date DESC LIMIT 1 OFFSET 3").get(curryId).d
-      const betId = ins.run('e', '2026-10-03', 'val', 'minds-v2', 'single', 2, 0.6, 0.1, 'open', null).lastInsertRowid
+      const betId = ins.run('e', '2026-10-03', 'val', 'minds-v3', 'single', 2, 0.6, 0.1, 'open', null).lastInsertRowid
       db.prepare("INSERT INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, game_date, prob) VALUES (?, 0, ?, 'Stephen Curry', 'pts', 'over', 20.5, 2, ?, 0.6)").run(betId, curryId, cutoff)
     },
   })
@@ -46,11 +47,11 @@ describe('/api/minds', () => {
 describe('rule-set versions', () => {
   it('default to the current version and keep archived versions out of its record', async () => {
     const { body } = await api('/minds')
-    assert.equal(body.data.version, 'minds-v2')
-    assert.equal(body.data.current, 'minds-v2')
-    assert.ok(body.data.bets.every((b) => b.version === 'minds-v2'))
+    assert.equal(body.data.version, 'minds-v3')
+    assert.equal(body.data.current, 'minds-v3')
+    assert.ok(body.data.bets.every((b) => b.version === 'minds-v3'))
     assert.equal(body.data.summary.find((s) => s.mind === 'control'), undefined)
-    assert.deepEqual(body.data.versions.map((v) => v.version).sort(), ['minds-v1', 'minds-v2'])
+    assert.deepEqual(body.data.versions.map((v) => v.version).sort(), ['minds-v1', 'minds-v2', 'minds-v3'])
   })
   it('an archived version can be read on its own', async () => {
     const { body } = await api('/minds?version=minds-v1')

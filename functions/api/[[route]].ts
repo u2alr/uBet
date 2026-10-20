@@ -614,12 +614,13 @@ app.get('/minds', async (c) => {
     `SELECT version, COUNT(*) AS bets, SUM(status IN ('won','lost','push')) AS settled, MIN(day) AS since FROM mind_bets GROUP BY version ORDER BY version DESC`,
   ).all()).results
   const bets = (await db.prepare(
-    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 400`,
+    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000`,
   ).bind(version).all()).results
   const legs = bets.length ? (await db.prepare(
     `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob,
-            model_prob AS modelProb, market_prob AS marketProb, actual, result
-     FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
+            model_prob AS modelProb, market_prob AS marketProb, actual, result, event_id AS eventId,
+            (SELECT team FROM players WHERE id = mind_legs.player_id) AS team
+     FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000)) ORDER BY bet_id, idx`,
   ).bind(version).all()).results : []
   // Each leg's last 10 regular-season games BEFORE its game date (what was known when the bet was made), oldest first.
   const recent = await recentBefore(db, legs as { playerId: number; stat: string; gameDate: string }[])

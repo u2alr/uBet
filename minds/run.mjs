@@ -44,13 +44,14 @@ async function fetchBook(k, book) {
   return r.json()
 }
 
-const now = Date.now()
+let now = Date.now()
 const k = key()
 const responses = []
 const cacheFile = path.join(ROOT, 'minds', 'out', 'odds_cache.json')
 if (useCache && existsSync(cacheFile) && Date.now() - statSync(cacheFile).mtimeMs < 3 * 3600_000) {
   responses.push(...JSON.parse(readFileSync(cacheFile, 'utf8')))
-  console.log('using cached odds')
+  now = statSync(cacheFile).mtimeMs   // judge the cached lines as of when they were downloaded
+  console.log('using cached odds from', new Date(now).toLocaleTimeString())
 } else {
   for (const b of books) {
     try { responses.push(await fetchBook(k, b)) } catch (e) { console.error('skip', String(e.message).replace(k, '***')) }

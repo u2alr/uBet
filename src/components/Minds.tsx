@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { MINDS_V2 } from '../../shared/minds'
+import { MINDS_V3 } from '../../shared/minds'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import Headshot from './Headshot'
@@ -14,6 +14,8 @@ interface Leg {
   book: string | null; gameDate: string; prob: number; modelProb: number | null; marketProb: number | null; actual: number | null; result: string | null
   /** The player's last 10 regular-season games before this bet, oldest first. */
   recent: number[]
+  eventId: string | null
+  team: string | null
 }
 interface Sum {
   mind: string; bets: number; settled: number; won: number; lost: number; open: number; units: number
@@ -31,32 +33,32 @@ const STYLE: Record<string, string> = {
   cat: 'bets where the model and the market disagree',
   control: 'random picks from the same pool: the benchmark to beat',
 }
-const c = MINDS_V2
+const c = MINDS_V3
 const p0 = (x: number) => `${Math.round(x * 100)}%`
 // The rules, read from the frozen config so this text can never drift from what the minds actually do.
 const RULES: Record<string, string[]> = {
   sam: [
-    `${c.sam.singles} singles with a win chance of ${p0(c.sam.singleProb)} or more and no negative expected value, likeliest first.`,
-    `Plus ${c.sam.doubles} doubles: two such legs from different games, each ${p0(c.sam.doubleLegProb)} or more.`,
+    `Up to ${c.betsPerTeamPerGame} singles for each team in each game: win chance ${p0(c.sam.singleProb)} or more and no negative expected value, likeliest first.`,
+    `Plus up to ${c.samDoubles} doubles a day: two such legs from different games, each ${p0(c.sam.doubleLegProb)} or more.`,
   ],
   val: [
-    `${c.val.singles} singles with expected value of +${p0(c.val.minEv)} or more and a win chance of ${p0(c.val.minProb)} or more, best value first.`,
-    `Plus ${c.val.doubles} double of two legs (different games) each worth +${p0(c.val.doubleLegEv)} or more, if the pair is worth +${p0(c.val.doubleEv)} or more combined.`,
+    `Up to ${c.betsPerTeamPerGame} singles for each team in each game: expected value of +${p0(c.val.minEv)} or more and a win chance of ${p0(c.val.minProb)} or more, best value first.`,
+    `Plus ${c.valDoubles} double a day of two legs (different games), each worth +${p0(c.val.doubleLegEv)} or more, if the pair is worth +${p0(c.val.doubleEv)} or more combined.`,
   ],
   lou: [
-    `Up to ${c.lou.combos} parlays of ${c.lou.minLegs} to ${c.maxLegs} legs from different games and players; each leg ${p0(c.lou.legProb)}+ and priced ${c.lou.legPrice.toFixed(1)} or more, every leg used once, paying ${c.lou.minOdds}x or more.`,
+    `Up to ${c.louCombos} parlays a day of ${c.lou.minLegs} to ${c.maxLegs} legs from different games and players; each leg ${p0(c.lou.legProb)}+ and priced ${c.lou.legPrice.toFixed(1)} or more, every leg used once, paying ${c.lou.minOdds}x or more.`,
     `If five parlays cannot be built, it is topped up with 2-leg longshots paying ${c.lou.fillDoubleOdds}x or more.`,
   ],
   cat: [
-    `${c.cat.singles} singles on the side the market rates below ${p0(c.cat.maxMarketProb)}, where our model is higher by ${p0(c.cat.minGap)} or more and the bet has +${p0(c.cat.minEv)} EV or more. Biggest disagreement first.`,
+    `Up to ${c.betsPerTeamPerGame} singles for each team in each game, on the side the market rates below ${p0(c.cat.maxMarketProb)}, where our model is higher by ${p0(c.cat.minGap)} or more and the bet has +${p0(c.cat.minEv)} EV or more. Biggest disagreement first.`,
     'Gaps of 25 points or more are skipped: those are usually something the model cannot see.',
   ],
   control: ['Version 1 only: 3 random singles from the same pool, as a benchmark. Removed in version 2.'],
 }
 const SHARED = [
-  `Every mind places ${c.betsPerDay} bets a day if enough candidates pass its floors (it never lowers a floor to reach ${c.betsPerDay}).`,
-  `Shared gates: fresh boosted-model projection, ${c.minSample}+ games of history, ${c.minMarketBooks}+ books quoting both sides, not on the injury list, a steady minutes role (${c.minRoleMinutes}+ min, no big drop), no model/market gap over ${p0(c.maxGap)}.`,
-  `Diversified: at most ${c.maxBetsPerPlayer} bets per player, ${c.maxBetsPerGame} per game, and ${c.maxAllUnder} all-Under bets per card.`,
+  `Starters and stars only: a team's top ${c.starterTopN} players by recent minutes, averaging ${c.minRoleMinutes}+ with no big drop. Their minutes, and so their props, are the most predictable.`,
+  `Also required: fresh boosted-model projection, ${c.minSample}+ games of history, ${c.minMarketBooks}+ books quoting both sides, not on the injury list, no model/market gap over ${p0(c.maxGap)}.`,
+  `A mind never lowers a floor to fill a quota: a team with fewer qualifying lines simply gets fewer bets. At most ${c.maxBetsPerPlayer} bets per player a day, and ${c.maxAllUnder} all-Under bets per team-game.`,
   'Flat 1 unit per bet. Combo legs are treated as independent. A pushed or voided leg is dropped from a combo.',
 ]
 const BASE = ['sam', 'val', 'lou', 'cat']
@@ -90,19 +92,21 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
   const { bets, legs, summary, minBets } = res.data
   const sum = (m: string) => summary.find((s) => s.mind === m)
-  const legsOf = (id: number) => legs.filter((l) => l.betId === id)
+  const legMap = new Map<number, Leg[]>()
+  for (const l of legs) (legMap.get(l.betId) ?? legMap.set(l.betId, []).get(l.betId)!).push(l)
+  const legsOf = (id: number) => legMap.get(id) ?? []
   // What the bets were *expected* to earn, to set beside what they did: the honest comparison.
   const expectedUnits = (m: string) => bets.filter((b) => b.mind === m && settledStatus.has(b.status)).reduce((a, b) => a + b.ev, 0)
 
   const visible = bets.filter((b) =>
     (!pick || b.mind === pick) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
   const byDay = new Map<string, Bet[]>()
-  for (const b of visible.slice(0, 120)) byDay.set(b.day, [...(byDay.get(b.day) ?? []), b])
+  for (const b of visible) (byDay.get(b.day) ?? byDay.set(b.day, []).get(b.day)!).push(b)
 
   return (
     <div className="space-y-3">
       <p className="rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
-        {ORDER.length} rule-based pickers, {res.data.version === res.data.current ? `${c.betsPerDay} bets each a day` : 'an archived rule set'}. Each card is frozen when it is made and graded from box scores. No mind gets a verdict before {minBets} settled bets:
+        {ORDER.length} rule-based pickers, {res.data.version === res.data.current ? `up to ${c.betsPerTeamPerGame} bets per team per game` : 'an archived rule set'}. Each card is frozen when it is made and graded from box scores. No mind gets a verdict before {minBets} settled bets:
         until then, treat every number below as noise. Click a mind to see only its bets and its rules.
       </p>
       {res.data.versions.length > 1 && (
@@ -218,31 +222,9 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           {bets.length === 0 ? <>No cards yet. Run <code className="text-neutral-300">node minds/run.mjs</code> to generate today's bets.</> : 'No bets match this filter.'}
         </p>
       )}
-      {[...byDay].map(([day, list]) => {
-        const done = list.filter((b) => b.status !== 'open')
-        const net = done.reduce((a, b) => a + (b.profit ?? 0), 0)
-        return (
-          <div key={day} className="space-y-1">
-            <div className="text-xs text-neutral-500">
-              {dayLabel(day)} · {list.length} bets · {done.length} settled{done.length > 0 && <> · <span className="tabular-nums text-neutral-300">{signed(net)} units</span></>}
-            </div>
-            {list.map((b) => (
-              <div key={b.id} className="flex flex-wrap items-start gap-x-4 gap-y-0.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs">
-                <span className="flex w-32 shrink-0 items-center gap-2 text-neutral-200">
-                  <span className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[b.mind] }} />{NAMES[b.mind] ?? b.mind}
-                </span>
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  {legsOf(b.id).map((l) => <LegRow key={l.idx} l={l} />)}
-                </div>
-                <div className="text-right tabular-nums text-neutral-400">
-                  {b.kind === 'combo' ? `${legsOf(b.id).length}-leg ` : 'single '}{b.odds.toFixed(2)}x · says {p0(b.prob)} · EV {signed(b.ev * 100, 1)}%
-                  <div className="text-neutral-200">{STATUS[b.status]}{b.profit != null ? ` ${signed(b.profit)}` : ''}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      })}
+      {[...byDay].map(([day, list]) => (
+        <DaySection key={day} day={day} list={list} order={ORDER} legsOf={legsOf} />
+      ))}
     </div>
   )
 }
@@ -271,6 +253,72 @@ function LegRow({ l }: { l: Leg }) {
         )}
       </div>
       {open && <PickBars p={l} />}
+    </div>
+  )
+}
+
+const betsSettled = (l: Bet[]) => l.filter((b) => b.status !== 'open')
+
+/** One day's bets, a section per mind. A section renders its bets only once opened: a day can hold hundreds. */
+function DaySection({ day, list, order, legsOf }: { day: string; list: Bet[]; order: string[]; legsOf: (id: number) => Leg[] }) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const done = betsSettled(list)
+  const net = done.reduce((a, b) => a + (b.profit ?? 0), 0)
+  const toggle = (m: string) => setOpen((o) => { const n = new Set(o); if (n.has(m)) n.delete(m); else n.add(m); return n })
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-neutral-500">
+        {dayLabel(day)} · {list.length} bets · {done.length} settled{done.length > 0 && <> · <span className="tabular-nums text-neutral-300">{signed(net)} units</span></>}
+      </div>
+      {order.map((m) => {
+        const mine = list.filter((b) => b.mind === m)
+        if (!mine.length) return null
+        const mDone = betsSettled(mine)
+        const mNet = mDone.reduce((a, b) => a + (b.profit ?? 0), 0)
+        const isOpen = open.has(m)
+        // singles by the player's team, combos together
+        const groups = new Map<string, Bet[]>()
+        if (isOpen) for (const b of mine) {
+          const key = b.kind === 'combo' ? 'Doubles and parlays' : legsOf(b.id)[0]?.team ?? 'Other'
+          ;(groups.get(key) ?? groups.set(key, []).get(key)!).push(b)
+        }
+        return (
+          <div key={m} className="rounded-lg bg-neutral-900">
+            <button onClick={() => toggle(m)} aria-expanded={isOpen} className="flex w-full items-center gap-3 px-3 py-2 text-left text-xs">
+              <span className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[m] }} />
+              <span className="w-32 text-neutral-200">{NAMES[m] ?? m}</span>
+              <span className="tabular-nums text-neutral-400">{mine.length} bets</span>
+              <span className="tabular-nums text-neutral-500">{mine.filter((b) => b.kind === 'combo').length} combos</span>
+              <span className="tabular-nums text-neutral-500">{mDone.length} settled{mDone.length > 0 && ` · ${signed(mNet)} units`}</span>
+              <span className="ml-auto text-neutral-500">{isOpen ? 'Hide' : 'Show'}</span>
+            </button>
+            {isOpen && (
+              <div className="space-y-1 px-2 pb-2">
+                {[...groups].map(([team, bs]) => (
+                  <div key={team} className="space-y-1">
+                    <div className="px-1 pt-1 text-[11px] uppercase tracking-widest text-neutral-500">{team} <span className="normal-case tracking-normal text-neutral-600">{bs.length} bets</span></div>
+                    {bs.map((b) => <BetRow key={b.id} b={b} legs={legsOf(b.id)} />)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function BetRow({ b, legs }: { b: Bet; legs: Leg[] }) {
+  return (
+    <div className="flex flex-wrap items-start gap-x-4 gap-y-0.5 rounded-md bg-neutral-950/50 px-3 py-1.5 text-xs">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        {legs.map((l) => <LegRow key={l.idx} l={l} />)}
+      </div>
+      <div className="text-right tabular-nums text-neutral-400">
+        {b.kind === 'combo' ? `${legs.length}-leg ` : 'single '}{b.odds.toFixed(2)}x · says {p0(b.prob)} · EV {signed(b.ev * 100, 1)}%
+        <div className="text-neutral-200">{STATUS[b.status]}{b.profit != null ? ` ${signed(b.profit)}` : ''}</div>
+      </div>
     </div>
   )
 }
