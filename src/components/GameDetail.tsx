@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Cell, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { INK, STAT_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
 import type { PicksMeta } from '../../shared/picks.ts'
 import { pickKey, type Pick } from '../lib/picks'
@@ -31,7 +32,8 @@ interface Detail {
   teamPicks: Record<string, Pick[]>
 }
 
-const C = { grid: '#262626', axis: '#525252', hi: '#e5e5e5', mid: '#a3a3a3', lo: '#525252' }
+// A recent game 'landed' if it ended on the side the pick bets on.
+const landed = (p: Pick, v: number) => (p.side === 'over' ? v > p.line : v < p.line)
 const tip = {
   cursor: { fill: '#262626' },
   contentStyle: { background: '#171717', border: '1px solid #262626', borderRadius: 6, fontSize: 12 },
@@ -101,8 +103,10 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                       <XAxis dataKey="i" hide />
                       <YAxis hide domain={[0, 'dataMax + 2']} />
                       <Tooltip {...tip} formatter={(v) => [v, STAT_LABEL[p.stat]]} labelFormatter={() => 'Recent game'} />
-                      <Bar dataKey="v" fill={C.lo} radius={[2, 2, 0, 0]} />
-                      <ReferenceLine y={p.line} stroke={C.hi} strokeDasharray="3 3" />
+                      <Bar dataKey="v" radius={[2, 2, 0, 0]}>
+                        {p.recent.map((v, i) => <Cell key={i} fill={landed(p, v) ? STAT_COLOR[p.stat] : INK.miss} />)}
+                      </Bar>
+                      <ReferenceLine y={p.line} stroke={INK.reference} strokeDasharray="3 3" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -144,8 +148,10 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                       <XAxis dataKey="i" hide />
                       <YAxis hide domain={[0, 'dataMax + 2']} />
                       <Tooltip {...tip} formatter={(v) => [v, STAT_LABEL[p.stat]]} labelFormatter={() => 'Recent game'} />
-                      <Bar dataKey="v" fill={C.lo} radius={[2, 2, 0, 0]} />
-                      <ReferenceLine y={p.line} stroke={C.hi} strokeDasharray="3 3" />
+                      <Bar dataKey="v" radius={[2, 2, 0, 0]}>
+                        {p.recent.map((v, i) => <Cell key={i} fill={landed(p, v) ? STAT_COLOR[p.stat] : INK.miss} />)}
+                      </Bar>
+                      <ReferenceLine y={p.line} stroke={INK.reference} strokeDasharray="3 3" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -174,14 +180,14 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
               <div className="h-60 rounded-lg bg-neutral-900 p-4">
                 <ResponsiveContainer>
                   <BarChart data={t.players.map((p) => ({ name: last(p.name), PTS: +p.pts.toFixed(1), REB: +p.reb.toFixed(1), AST: +p.ast.toFixed(1) }))}>
-                    <CartesianGrid stroke={C.grid} vertical={false} />
-                    <XAxis dataKey="name" stroke={C.axis} tickLine={false} fontSize={11} interval={0} />
-                    <YAxis stroke={C.axis} tickLine={false} axisLine={false} fontSize={11} />
+                    <CartesianGrid stroke={INK.grid} vertical={false} />
+                    <XAxis dataKey="name" stroke={INK.axis} tickLine={false} fontSize={11} interval={0} />
+                    <YAxis stroke={INK.axis} tickLine={false} axisLine={false} fontSize={11} />
                     <Tooltip {...tip} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="PTS" fill={C.hi} radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="REB" fill={C.mid} radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="AST" fill={C.lo} radius={[2, 2, 0, 0]} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v) => <span style={{ color: INK.legend }}>{v}</span>} />
+                    <Bar dataKey="PTS" fill={STAT_COLOR.pts} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="REB" fill={STAT_COLOR.reb} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="AST" fill={STAT_COLOR.ast} radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -215,7 +221,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                             <ResponsiveContainer>
                               <BarChart data={p.recent.pts.map((v, i) => ({ i, v }))}>
                                 <YAxis hide domain={[0, 'dataMax']} />
-                                <Bar dataKey="v" fill={C.lo} />
+                                <Bar dataKey="v" fill={STAT_COLOR.pts} />
                               </BarChart>
                             </ResponsiveContainer>
                           </div>
