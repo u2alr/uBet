@@ -4,6 +4,7 @@ import { MINDS_V1 } from '../../shared/minds'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import Headshot from './Headshot'
+import MindsCharts from './MindsCharts'
 
 interface Bet { id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null }
 interface Leg {
@@ -180,6 +181,8 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           </div>
         )}
       </div>
+
+      <MindsCharts bets={bets} legs={legs} pick={pick} />
 
       <div className="flex items-center justify-between">
         <h2 className="text-sm text-neutral-300">Bets{pick ? `: ${NAMES[pick]}` : ''} <span className="text-xs text-neutral-600">{visible.length}</span></h2>
