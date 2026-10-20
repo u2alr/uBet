@@ -47,7 +47,7 @@ function Spread({ games, line }: { games: StatsResponse['games']; line: number |
   )
 }
 
-export default function PlayerView({ initialId, refreshKey }: { initialId: number | null; refreshKey: number }) {
+export default function PlayerView({ initialId, refreshKey, onSelect }: { initialId: number | null; refreshKey: number; onSelect: (id: number) => void }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Player[]>([])
   const [player, setPlayer] = useState<Player | null>(null)
@@ -146,7 +146,7 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
         <ul className="divide-y divide-neutral-800 rounded-lg bg-neutral-900">
           {results.map((p) => (
             <li key={p.id}>
-              <button className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-neutral-800" onClick={() => open(p)}>
+              <button className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-neutral-800" onClick={() => onSelect(p.id)}>
                 <Headshot id={p.id} name={p.name} />{p.name}
                 {p.team && <span className="ml-auto text-xs text-neutral-600">{p.team}</span>}
               </button>
