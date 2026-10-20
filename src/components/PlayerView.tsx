@@ -6,6 +6,7 @@ import { helperStatus, helperSync } from '../lib/helper'
 import type { GameRow } from '../lib/stats'
 import { InjuryTag, RoleTag } from './Availability'
 import GameLog from './GameLog'
+import LazyMount from './LazyMount'
 import GameTypeSplit from './GameTypeSplit'
 import Headshot from './Headshot'
 import PlayerCharts from './PlayerCharts'
@@ -214,9 +215,9 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
           )}
           {shown.length > 0 && (
             <>
-              <GameTypeSplit games={log} stat={stat} line={line ? Number(line) : null} />
-              <PlayerCharts games={shown} stat={stat} line={line ? Number(line) : null} />
-              <GameLog games={shown} />
+              <LazyMount height={220}><GameTypeSplit games={log} stat={stat} line={line ? Number(line) : null} /></LazyMount>
+              <LazyMount height={900}><PlayerCharts games={shown} stat={stat} line={line ? Number(line) : null} /></LazyMount>
+              <LazyMount height={400}><GameLog games={shown} /></LazyMount>
             </>
           )}
           {shown.length === 0 && data && (

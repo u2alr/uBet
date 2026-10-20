@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Bar, BarChart, Cell, LabelList, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import { INK, STAT_COLOR } from '../lib/colors'
 import { STAT_LABEL } from '../lib/format'
@@ -12,21 +13,21 @@ const landed = (p: Pick, v: number) => (p.side === 'over' ? v > p.line : v < p.l
 const color = (p: Pick) => STAT_COLOR[p.stat as Stat] ?? INK.reference
 const fill = (p: Pick, v: number) => (landed(p, v) ? color(p) : INK.miss)
 
-/** Last games as small bars against the line: bright bars cleared it for this side. Fixed size, so a table of them stays cheap. */
-export function PickSpark({ p, w = 92, h = 26 }: { p: Pick; w?: number; h?: number }) {
-  if (p.recent.length === 0) return <span className="text-neutral-700">–</span>
+/** Last games as small bars against the line: bright bars cleared it for this side. Plain SVG, so a table of 80 stays cheap. */
+export const PickSpark = memo(function PickSpark({ p, w = 92, h = 26 }: { p: Pick; w?: number; h?: number }) {
+  const n = p.recent.length
+  if (n === 0) return <span className="text-neutral-700">–</span>
   const top = Math.max(p.line, ...p.recent) * 1.1 || 1
+  const slot = w / n
+  const bw = Math.max(1, slot - 1)
+  const y = (v: number) => h - (Math.max(0, v) / top) * h
   return (
-    <BarChart width={w} height={h} data={p.recent.map((v, i) => ({ i, v }))} margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barCategoryGap={1}>
-      <XAxis dataKey="i" hide />
-      <YAxis hide domain={[0, top]} />
-      <ReferenceLine y={p.line} stroke={INK.reference} strokeDasharray="2 2" strokeOpacity={0.7} />
-      <Bar dataKey="v" isAnimationActive={false}>
-        {p.recent.map((v, i) => <Cell key={i} fill={fill(p, v)} />)}
-      </Bar>
-    </BarChart>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`Last ${n} games against ${p.line}`}>
+      {p.recent.map((v, i) => <rect key={i} x={i * slot} y={y(v)} width={bw} height={Math.max(1, h - y(v))} fill={fill(p, v)} />)}
+      <line x1={0} x2={w} y1={y(p.line)} y2={y(p.line)} stroke={INK.reference} strokeOpacity={0.7} strokeDasharray="2 2" />
+    </svg>
   )
-}
+})
 
 /** The same games large, with each value labelled, for the row that opens under a pick. */
 export function PickBars({ p }: { p: Pick }) {

@@ -4,6 +4,7 @@ import { MINDS_V1 } from '../../shared/minds'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import Headshot from './Headshot'
+import LazyMount from './LazyMount'
 import { PickBars, PickSpark } from './PickSpark'
 import MindsCharts from './MindsCharts'
 
@@ -185,7 +186,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
         )}
       </div>
 
-      <MindsCharts bets={bets} legs={legs} pick={pick} />
+      <LazyMount height={560}><MindsCharts bets={bets} legs={legs} pick={pick} /></LazyMount>
 
       <div className="flex items-center justify-between">
         <h2 className="text-sm text-neutral-300">Bets{pick ? `: ${NAMES[pick]}` : ''} <span className="text-xs text-neutral-600">{visible.length}</span></h2>
