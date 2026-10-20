@@ -30,3 +30,4 @@ research/data/
 research/out/
 __pycache__/
 *.pyc
+minds/out/
