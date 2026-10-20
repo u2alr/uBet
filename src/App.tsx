@@ -31,8 +31,8 @@ function Shell() {
   const openPlayer = (id: number) => { setPlayerId(id); setTab('Players') }
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-8 lg:px-12">
-      <header className="mb-8 flex items-baseline justify-between">
+    <div className="mx-auto max-w-screen-2xl px-3 py-4 sm:px-5 lg:px-8">
+      <header className="mb-4 flex items-baseline justify-between">
         <h1 className="text-lg font-medium tracking-tight text-neutral-100">uBet</h1>
         <nav className="flex gap-1 text-sm">
           {TABS.map((t) => (

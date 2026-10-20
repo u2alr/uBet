@@ -22,7 +22,7 @@ export default function Results({ refreshKey }: { refreshKey: number }) {
 
   const s = res.summary
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div className="grid grid-cols-4 gap-px overflow-hidden rounded-lg bg-neutral-800 text-center">
         {([['Won', s?.won], ['Lost', s?.lost], ['Push', s?.pushed], ['Units', s?.units == null ? 0 : Number(s.units.toFixed(1))]] as const).map(([label, n]) => (
           <div key={label} className="bg-neutral-900 py-4">
@@ -33,7 +33,7 @@ export default function Results({ refreshKey }: { refreshKey: number }) {
       </div>
 
       {res.data.length === 0 ? (
-        <p className="rounded-lg bg-neutral-900 px-4 py-6 text-sm text-neutral-500">
+        <p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">
           Nothing graded yet. Suggested bets are logged when you open Today, then graded after the game once you
           re-run <code className="text-neutral-300">ingest/sync.py</code> to pull the box scores.
         </p>

@@ -10,7 +10,7 @@ export default function Slip() {
 
   if (legs.length === 0)
     return (
-      <p className="rounded-lg bg-neutral-900 px-4 py-6 text-sm text-neutral-500">
+      <p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">
         Your slip is empty. Press <b className="text-neutral-300">+</b> on any pick, or add a suggested parlay from Today.
       </p>
     )
@@ -24,7 +24,7 @@ export default function Slip() {
   const samePlayer = new Set(legs.map((l) => l.playerId)).size < legs.length
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <ul className="divide-y divide-neutral-800 rounded-lg bg-neutral-900">
         {legs.map((l) => (
           <li key={`${l.playerId}${l.stat}${l.side}${l.line}`} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
@@ -49,7 +49,7 @@ export default function Slip() {
         <Stat label="Expected value" value={`${ev > 0 ? '+' : ''}${(ev * 100).toFixed(0)}%`} />
       </div>
 
-      <div className="flex items-center gap-3 rounded-lg bg-neutral-900 p-4 text-sm">
+      <div className="flex items-center gap-3 rounded-lg bg-neutral-900 p-3 text-sm">
         <label className="text-neutral-500" htmlFor="stake">Stake</label>
         <input
           id="stake"

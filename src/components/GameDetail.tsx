@@ -59,7 +59,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
   const when = new Date(d.game.date).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {back}
       <header>
         <h2 className="text-xl text-neutral-100">{away.name} <span className="text-neutral-600">@</span> {home.name}</h2>
@@ -76,16 +76,16 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
         ) : d.picks.length === 0 ? (
           <Note>No prop lines for this game yet, or none of its players are synced.</Note>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-3">
             {d.teams.map((t) => {
               const list = d.teamPicks[t.abbr] ?? []
               if (list.length === 0) return null
               return (
                 <div key={t.abbr}>
                   <div className="mb-2 text-sm text-neutral-400">{t.name}</div>
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {list.map((p) => (
-              <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
+              <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-3">
                 <div className="flex items-center justify-between">
                   <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
                     <Headshot id={p.playerId} name={p.player} size={56} />{p.player}
@@ -130,9 +130,9 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
               return rest.length > 0 && (
                 <div>
                   <div className="mb-2 text-sm text-neutral-400">Other</div>
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {rest.map((p) => (
-              <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-4">
+              <div key={pickKey(p)} className="rounded-lg bg-neutral-900 p-3">
                 <div className="flex items-center justify-between">
                   <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
                     <Headshot id={p.playerId} name={p.player} size={56} />{p.player}
@@ -182,7 +182,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
             <Note>No synced players for {t.abbr}. Run <code className="text-neutral-300">ingest/sync.py --all-active</code>.</Note>
           ) : (
             <>
-              <div className="h-60 rounded-lg bg-neutral-900 p-4">
+              <div className="h-60 rounded-lg bg-neutral-900 p-3">
                 <ResponsiveContainer>
                   <BarChart data={t.players.map((p) => ({ name: last(p.name), PTS: +p.pts.toFixed(1), REB: +p.reb.toFixed(1), AST: +p.ast.toFixed(1) }))}>
                     <CartesianGrid stroke={INK.grid} vertical={false} />
@@ -247,7 +247,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
 }
 
 function Note({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-lg bg-neutral-900 px-4 py-6 text-sm text-neutral-500">{children}</p>
+  return <p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">{children}</p>
 }
 
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n}`

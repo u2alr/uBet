@@ -20,6 +20,27 @@ interface StatsResponse {
 type Kind = 'regular' | 'playoffs' | 'preseason' | 'all'
 const KINDS: [Kind, string][] = [['regular', 'Regular'], ['playoffs', 'Playoffs'], ['preseason', 'Preseason'], ['all', 'All']]
 
+// The shape of the numbers behind the averages: a player who scores 20 every night and one who swings 8 to 38 average the same.
+function Spread({ games, line }: { games: StatsResponse['games']; line: number | null }) {
+  if (games.length === 0) return null
+  const v = games.map((g) => g.value)
+  const sorted = [...v].sort((a, b) => a - b)
+  const mean = v.reduce((a, b) => a + b, 0) / v.length
+  const sd = v.length > 1 ? Math.sqrt(v.reduce((a, x) => a + (x - mean) ** 2, 0) / (v.length - 1)) : null
+  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+  const mins = games.reduce((a, g) => a + g.minutes, 0) / games.length
+  const items: [string, string][] = [
+    ['Games', String(v.length)], ['Median', fmt(median)], ['High', String(sorted[sorted.length - 1])], ['Low', String(sorted[0])],
+    ['Spread (SD)', sd == null ? '–' : fmt(sd)], ['Minutes', fmt(mins)],
+    ...(line != null ? [['Over line', String(v.filter((x) => x > line).length)], ['Under line', String(v.filter((x) => x < line).length)], ['Exactly', String(v.filter((x) => x === line).length)]] as [string, string][] : []),
+  ]
+  return (
+    <div className="flex flex-wrap gap-x-5 gap-y-1 rounded-lg bg-neutral-900 px-3 py-2 text-xs">
+      {items.map(([k, val]) => <span key={k} className="text-neutral-500">{k} <b className="font-normal tabular-nums text-neutral-100">{val}</b></span>)}
+    </div>
+  )
+}
+
 export default function PlayerView({ initialId, refreshKey }: { initialId: number | null; refreshKey: number }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Player[]>([])
@@ -108,7 +129,7 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
   const input = 'rounded-md bg-neutral-900 px-3 py-2 text-sm placeholder:text-neutral-600 outline-none focus:ring-1 focus:ring-neutral-600'
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); search() }}>
         <input className={`${input} flex-1`} placeholder="Search players you've synced…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button className="rounded-md bg-neutral-200 px-4 py-2 text-sm text-neutral-900 hover:bg-white">Search</button>
@@ -131,7 +152,7 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
       )}
 
       {player && (
-        <section className="space-y-5">
+        <section className="space-y-3">
           <div className="flex flex-wrap items-center gap-3">
             <Headshot id={player.id} name={player.name} size={104} />
             <div>
@@ -166,16 +187,18 @@ export default function PlayerView({ initialId, refreshKey }: { initialId: numbe
             <>
               <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg bg-neutral-800 text-center">
                 {(['last5', 'last10', 'season'] as const).map((k) => (
-                  <div key={k} className="bg-neutral-900 py-4">
+                  <div key={k} className="bg-neutral-900 py-2">
                     <div className="text-xs uppercase tracking-widest text-neutral-500">{k.replace('last', 'Last ')}</div>
-                    <div className="text-2xl tabular-nums text-neutral-100">{fmt(data.averages[k])}</div>
+                    <div className="text-xl tabular-nums text-neutral-100">{fmt(data.averages[k])}</div>
                     {data.hitRate && <div className="text-xs text-neutral-500">over {pct(data.hitRate[k])}</div>}
                   </div>
                 ))}
               </div>
 
+              <Spread games={data.games} line={line ? Number(line) : null} />
+
               {data.prediction && (
-                <div className="flex items-center justify-between rounded-lg bg-neutral-900 px-4 py-3 text-sm">
+                <div className="flex items-center justify-between rounded-lg bg-neutral-900 px-3 py-2 text-sm">
                   <span className="text-neutral-400">
                     Projection <b className="text-neutral-100">{fmt(data.prediction.predicted)}</b> ±{fmt(data.prediction.stdDev)} ·
                     over {line} <b className="text-neutral-100">{pct(data.prediction.pOver)}</b>

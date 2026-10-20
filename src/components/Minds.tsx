@@ -44,8 +44,8 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const legsOf = (id: number) => legs.filter((l) => l.betId === id)
 
   return (
-    <div className="space-y-6">
-      <p className="rounded-lg bg-neutral-900 px-4 py-3 text-sm text-neutral-400">
+    <div className="space-y-3">
+      <p className="rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
         Five rule-based pickers. Each card is frozen when it is made and graded from box scores. Flat 1 unit per bet, at most 5 bets a day each.
         No mind gets a verdict before {minBets} settled bets: until then, treat every number below as noise.
       </p>
@@ -56,7 +56,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           const settled = s?.settled ?? 0
           const units = s?.units ?? 0
           return (
-            <div key={m} className="rounded-lg bg-neutral-900 p-4">
+            <div key={m} className="rounded-lg bg-neutral-900 p-3">
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: MIND_COLOR[m] }} />
                 <span className="text-sm font-medium text-neutral-100">{NAMES[m]}</span>
@@ -81,12 +81,12 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
         })}
       </div>
 
-      <div className="rounded-lg bg-neutral-900 p-4">
-        <h2 className="mb-2 text-sm text-neutral-300">Units by day (cumulative)</h2>
+      <div className="rounded-lg bg-neutral-900 p-3">
+        <h2 className="mb-1 text-sm text-neutral-300">Units by day (cumulative)</h2>
         {series.length < 2 ? (
           <p className="py-8 text-center text-sm text-neutral-500">The chart starts once two days of bets have settled.</p>
         ) : (
-          <div className="h-64">
+          <div className="h-52">
             <ResponsiveContainer>
               <LineChart data={series}>
                 <CartesianGrid stroke={INK.grid} vertical={false} />
@@ -104,7 +104,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
         )}
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1">
         <h2 className="text-sm text-neutral-300">Cards</h2>
         {bets.length === 0 && (
           <p className="rounded-lg bg-neutral-900 px-4 py-6 text-sm text-neutral-500">
@@ -112,7 +112,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           </p>
         )}
         {bets.slice(0, 60).map((b) => (
-          <div key={b.id} className="flex flex-wrap items-start gap-x-4 gap-y-1 rounded-lg bg-neutral-900 px-4 py-3 text-sm">
+          <div key={b.id} className="flex flex-wrap items-start gap-x-4 gap-y-0.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs">
             <span className="flex w-36 items-center gap-2 text-neutral-200">
               <span className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[b.mind] }} />{NAMES[b.mind] ?? b.mind}
             </span>

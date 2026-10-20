@@ -5,14 +5,14 @@ import { useSlip } from '../lib/slipContext'
 export default function Parlays({ parlays, onOpenSlip }: { parlays: Parlay[]; onOpenSlip: () => void }) {
   const slip = useSlip()
   if (parlays.length === 0)
-    return <p className="rounded-lg bg-neutral-900 px-4 py-6 text-sm text-neutral-500">Not enough picks yet to build parlays.</p>
+    return <p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">Not enough picks yet to build parlays.</p>
 
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
+    <div className="grid gap-2 sm:grid-cols-3">
       {parlays.map((p) => {
         const { odds, prob, ev } = combine(p.legs)
         return (
-          <div key={p.name} className="flex flex-col rounded-lg bg-neutral-900 p-4">
+          <div key={p.name} className="flex flex-col rounded-lg bg-neutral-900 p-3">
             <div className="flex items-baseline justify-between">
               <h3 className="text-neutral-100">{p.name}</h3>
               <span className="text-lg tabular-nums text-neutral-100">{odds.toFixed(2)}x</span>
