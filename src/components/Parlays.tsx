@@ -1,6 +1,6 @@
 import { STAT_LABEL, pct } from '../lib/format'
 import { combine, type Parlay } from '../lib/picks'
-import { useSlip } from '../lib/slip'
+import { useSlip } from '../lib/slipContext'
 
 export default function Parlays({ parlays, onOpenSlip }: { parlays: Parlay[]; onOpenSlip: () => void }) {
   const slip = useSlip()

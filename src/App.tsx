@@ -5,7 +5,8 @@ import Results from './components/Results'
 import Slip from './components/Slip'
 import SyncBar from './components/SyncBar'
 import Today from './components/Today'
-import { SlipProvider, useSlip } from './lib/slip'
+import { SlipProvider } from './lib/slip'
+import { useSlip } from './lib/slipContext'
 
 const TABS = ['Today', 'Slip', 'Results', 'Players'] as const
 type Tab = (typeof TABS)[number]

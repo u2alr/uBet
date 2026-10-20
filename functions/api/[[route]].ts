@@ -1,65 +1,103 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
-import { BIG_GAP, STATS, blendProb, hitRate, nbPOver, predict, riskTier, type GameType, type Risk, type Stat } from '../../shared/baseline'
+import { LIMITS, STATS, hitRate, predict, type GameType, type Stat } from '../../shared/baseline.ts'
+import { buildPicks, etDate, normName, type HistoryRow, type OddsEvent, type Pick, type ProjectionRow } from '../../shared/picks.ts'
 
-type Env = { Bindings: { DB: D1Database; ODDS_API_KEY?: string; CAPTURE_TOKEN?: string; ODDS_REGIONS?: string; ODDS_MARKETS?: string; ODDS_HOURS?: string; ODDS_BOOKS?: string } }
+type Bindings = {
+  DB: D1Database
+  ODDS_API_KEY?: string
+  /** If set, privileged routes need this in the x-capture-token header; if not, they only work from localhost. */
+  CAPTURE_TOKEN?: string
+  /** Only for tests: point the Worker at a fake provider (tests/integration). */
+  ODDS_BASE_URL?: string
+  ODDS_REGIONS?: string
+  ODDS_MARKETS?: string
+  ODDS_HOURS?: string
+  ODDS_BOOKS?: string
+}
+type Env = { Bindings: Bindings }
+type Ctx = Context<Env>
 
 const app = new Hono<Env>().basePath('/api')
-app.onError((err, c) => c.json({ error: err.message }, 500))
 
-// ---------- helpers ----------
+class UpstreamError extends Error {}
 
-const ODDS = 'https://api.the-odds-api.com/v4/sports/basketball_nba'
-const MARKETS: Record<string, Stat> = {
-  player_points: 'pts',
-  player_rebounds: 'reb',
-  player_assists: 'ast',
-  player_threes: 'fg3m',
+// Clients get a generic message; the detail goes to the server log only (it can name internal tables or providers).
+app.onError((err, c) => {
+  console.error('api error', c.req.method, new URL(c.req.url).pathname, err instanceof Error ? err.message : String(err))
+  return err instanceof UpstreamError
+    ? c.json({ error: 'A data provider is unavailable. Try again later.' }, 502)
+    : c.json({ error: 'Internal error.' }, 500)
+})
+
+// ---------- access control ----------
+
+function timingSafeEqual(a: string, b: string) {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
 }
+
+/**
+ * Routes that spend metered provider credits or write to the database are not public.
+ * With CAPTURE_TOKEN set, the caller must send it; without one, only localhost may call them.
+ */
+function privileged(c: Ctx) {
+  if (c.env.CAPTURE_TOKEN) return timingSafeEqual(c.req.header('x-capture-token') ?? '', c.env.CAPTURE_TOKEN)
+  const host = new URL(c.req.url).hostname
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]'
+}
+
+/** ?fresh=1 means "skip the cache", which costs provider credits, so only privileged callers get it. */
+const wantsFresh = (c: Ctx) => c.req.query('fresh') === '1' && privileged(c)
+
+// ---------- input validation ----------
+
+const parseId = (v: string) => (/^\d{1,12}$/.test(v) ? Number(v) : null)
+const parseLine = (v: string) => {
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(v)) return null
+  const n = Number(v)
+  return n <= LIMITS.maxLine ? n : null
+}
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&')
+const GAME_TYPES = ['regular', 'playoffs', 'preseason']
+
+// ---------- provider access ----------
+
+const ODDS_DEFAULT = 'https://api.the-odds-api.com/v4/sports/basketball_nba'
 // The free plan is ~500 credits/month; one event costs (markets x regions) credits, so cache hard.
 const ODDS_TTL = 8 * 60 * 60 // seconds
+const MAX_ODDS_AGE_HOURS = 9 // just beyond the cache lifetime: older than this means the cache logic failed, so show nothing
+const WARN_ODDS_AGE_HOURS = 4
 const MAX_EVENTS = 8
-
-const normName = (s: string) =>
-  s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z ]/g, '')
-    .replace(/\b(jr|sr|ii|iii|iv)\b/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
 
 // ESPN team abbreviations that differ from NBA.com's (what ingest/sync.py stores).
 const ESPN_TO_NBA: Record<string, string> = { GS: 'GSW', SA: 'SAS', NY: 'NYK', NO: 'NOP', WSH: 'WAS', UTAH: 'UTA' }
 const nbaAbbr = (a: string) => ESPN_TO_NBA[a] ?? a
 
-const TEAM_NAMES: Record<string, string> = {
-  ATL: 'Atlanta Hawks', BOS: 'Boston Celtics', BKN: 'Brooklyn Nets', CHA: 'Charlotte Hornets', CHI: 'Chicago Bulls',
-  CLE: 'Cleveland Cavaliers', DAL: 'Dallas Mavericks', DEN: 'Denver Nuggets', DET: 'Detroit Pistons',
-  GSW: 'Golden State Warriors', HOU: 'Houston Rockets', IND: 'Indiana Pacers', LAC: 'LA Clippers',
-  LAL: 'Los Angeles Lakers', MEM: 'Memphis Grizzlies', MIA: 'Miami Heat', MIL: 'Milwaukee Bucks',
-  MIN: 'Minnesota Timberwolves', NOP: 'New Orleans Pelicans', NYK: 'New York Knicks', OKC: 'Oklahoma City Thunder',
-  ORL: 'Orlando Magic', PHI: 'Philadelphia 76ers', PHX: 'Phoenix Suns', POR: 'Portland Trail Blazers',
-  SAC: 'Sacramento Kings', SAS: 'San Antonio Spurs', TOR: 'Toronto Raptors', UTA: 'Utah Jazz', WAS: 'Washington Wizards',
-}
+interface Cached<T> { fetchedAt: number | null; data: T }
 
-const etDate = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
-
-async function cachedJson<T>(key: string, ttl: number, load: () => Promise<T>, fresh = false): Promise<T> {
+/** Cache API with the fetch time stored alongside the data, so the age of what we show is always known. */
+async function cachedMeta<T>(key: string, ttl: number, load: () => Promise<T>, fresh = false): Promise<Cached<T>> {
   const cache = (caches as unknown as { default: Cache }).default
   const req = new Request(`https://cache.ubet.local/${key}`)
   const hit = fresh ? undefined : await cache.match(req)
-  if (hit) return hit.json()
-  const data = await load()
-  await cache.put(req, new Response(JSON.stringify(data), { headers: { 'Cache-Control': `max-age=${ttl}` } }))
-  return data
+  if (hit) {
+    const body = (await hit.json()) as any
+    if (body && typeof body === 'object' && 'fetchedAt' in body && 'data' in body) return body as Cached<T>
+    return { fetchedAt: null, data: body as T } // written by an older version: age unknown
+  }
+  const entry: Cached<T> = { fetchedAt: Date.now(), data: await load() }
+  await cache.put(req, new Response(JSON.stringify(entry), { headers: { 'Cache-Control': `max-age=${ttl}` } }))
+  return entry
 }
+const cachedJson = async <T>(key: string, ttl: number, load: () => Promise<T>, fresh = false) => (await cachedMeta(key, ttl, load, fresh)).data
 
-async function oddsFetch<T>(env: Env['Bindings'], path: string, params: Record<string, string> = {}): Promise<T> {
+async function oddsFetch<T>(env: Bindings, path: string, params: Record<string, string> = {}): Promise<T> {
   const qs = new URLSearchParams({ apiKey: env.ODDS_API_KEY!, ...params })
-  const res = await fetch(`${ODDS}${path}?${qs}`)
-  if (!res.ok) throw new Error(`The Odds API ${res.status}`)
+  const res = await fetch(`${env.ODDS_BASE_URL ?? ODDS_DEFAULT}${path}?${qs}`)
+  if (!res.ok) throw new UpstreamError(`The Odds API ${res.status}`)
   const body = await res.text()
   // Keep every odds response exactly as received (the API key is never stored) so closing lines can be
   // reconstructed later. A storage failure must never break the request.
@@ -72,16 +110,12 @@ async function oddsFetch<T>(env: Env['Bindings'], path: string, params: Record<s
 // ---------- odds capture (for closing-line analysis) ----------
 
 // Fetches fresh prop and team odds for games starting within `hours` and stores the raw responses.
-// This spends Odds API credits (markets x events), so it is not public: it needs CAPTURE_TOKEN, or must
-// be called from localhost when no token is configured.
 app.get('/capture', async (c) => {
-  const host = new URL(c.req.url).hostname
-  const local = host === 'localhost' || host === '127.0.0.1'
-  if (c.env.CAPTURE_TOKEN ? c.req.header('x-capture-token') !== c.env.CAPTURE_TOKEN : !local)
-    return c.json({ error: 'Forbidden' }, 403)
+  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
   if (!c.env.ODDS_API_KEY) return c.json({ error: 'ODDS_API_KEY not set' }, 400)
 
-  const hours = Math.min(Number(c.req.query('hours') ?? 3), 12)
+  const asked = Number(c.req.query('hours') ?? 3)
+  const hours = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 12) : 3
   const events = await oddsFetch<any[]>(c.env, '/events')
   const soon = events.filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + hours * 3600_000)
   const regions = c.env.ODDS_REGIONS ?? 'us'
@@ -110,33 +144,39 @@ app.get('/status', async (c) => {
 // Players are loaded into D1 by ingest/sync.py, so search only covers synced players.
 app.get('/players', async (c) => {
   const q = c.req.query('search')?.trim()
+  if (q && q.length > 64) return c.json({ error: 'search is too long' }, 400)
   const { results } = q
-    ? await c.env.DB.prepare('SELECT id, name, team, position FROM players WHERE name LIKE ? ORDER BY name LIMIT 15')
-        .bind(`%${q}%`).all()
+    ? await c.env.DB.prepare("SELECT id, name, team, position FROM players WHERE name LIKE ? ESCAPE '\\' ORDER BY name LIMIT 15")
+        .bind(`%${escapeLike(q)}%`).all()
     : await c.env.DB.prepare('SELECT id, name, team, position FROM players ORDER BY name LIMIT 50').all()
   return c.json({ data: results })
 })
 
 app.get('/players/:id', async (c) => {
-  const p = await c.env.DB.prepare('SELECT id, name, team, position FROM players WHERE id = ?').bind(Number(c.req.param('id'))).first()
+  const id = parseId(c.req.param('id'))
+  if (id === null) return c.json({ error: 'bad player id' }, 400)
+  const p = await c.env.DB.prepare('SELECT id, name, team, position FROM players WHERE id = ?').bind(id).first()
   return p ? c.json({ data: p }) : c.json({ error: 'Player not found' }, 404)
 })
 
 app.get('/players/:id/stats', async (c) => {
-  const id = Number(c.req.param('id'))
+  const id = parseId(c.req.param('id'))
+  if (id === null) return c.json({ error: 'bad player id' }, 400)
   const stat = (c.req.query('stat') ?? 'pts') as Stat
   if (!STATS.includes(stat)) return c.json({ error: 'bad stat' }, 400)
   const lineQ = c.req.query('line')
-  const line = lineQ ? Number(lineQ) : null
-  const type = c.req.query('type') // 'regular' | 'playoffs' | omitted = all
-  const typeSql = type === 'regular' || type === 'playoffs' || type === 'preseason' ? ' AND g.game_type = ?' : ''
+  const line = lineQ ? parseLine(lineQ) : null
+  if (lineQ && line === null) return c.json({ error: 'line must be a number from 0 to 300' }, 400)
+  const type = c.req.query('type') // 'regular' | 'playoffs' | 'preseason' | omitted = all
+  if (type && !GAME_TYPES.includes(type)) return c.json({ error: 'bad type' }, 400)
+  const typeSql = type ? ' AND g.game_type = ?' : ''
 
   // `stat` is validated against the whitelist above, so interpolation is safe.
   const { results } = await c.env.DB.prepare(
     `SELECT g.date, g.id AS gameId, g.game_type AS type, pg.minutes, pg.${stat} AS value
      FROM player_games pg JOIN games g ON g.id = pg.game_id
      WHERE pg.player_id = ?${typeSql} ORDER BY g.date DESC`,
-  ).bind(...(typeSql ? [id, type] : [id])).all<{ date: string; gameId: number; type: GameType; minutes: number; value: number }>()
+  ).bind(...(type ? [id, type] : [id])).all<{ date: string; gameId: number; type: GameType; minutes: number; value: number }>()
 
   const values = results.map((r) => r.value)
   const avg = (n: number) => {
@@ -156,13 +196,15 @@ app.get('/players/:id/stats', async (c) => {
 
 // Full box-score history for the detailed player page, newest first.
 app.get('/players/:id/log', async (c) => {
+  const id = parseId(c.req.param('id'))
+  if (id === null) return c.json({ error: 'bad player id' }, 400)
   const { results } = await c.env.DB.prepare(
     `SELECT g.date, g.season, g.game_type AS gameType, pg.opp, pg.is_home AS home, pg.won, pg.minutes,
             pg.pts, pg.reb, pg.ast, pg.fg3m, pg.stl, pg.blk, pg.fgm, pg.fga, pg.fg3a, pg.ftm, pg.fta,
             pg.oreb, pg.dreb, pg.tov, pg.pf, pg.plus_minus AS plusMinus
      FROM player_games pg JOIN games g ON g.id = pg.game_id
      WHERE pg.player_id = ? ORDER BY g.date DESC`,
-  ).bind(Number(c.req.param('id'))).all()
+  ).bind(id).all()
   return c.json({ data: results })
 })
 
@@ -178,7 +220,7 @@ async function loadGames(fresh = false) {
         const res = await fetch(
           `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${fmt(new Date(now + i * 86400_000))}`,
         )
-        if (!res.ok) throw new Error(`ESPN ${res.status}`)
+        if (!res.ok) throw new UpstreamError(`ESPN ${res.status}`)
         return ((await res.json()) as any).events ?? []
       }),
     )
@@ -198,11 +240,16 @@ async function loadGames(fresh = false) {
 }
 
 app.get('/games', async (c) => {
-  // ?fresh=1 skips the cache (the Refresh button). Costs ~3 Odds API credits for team odds.
-  const fresh = c.req.query('fresh') === '1'
-  const [games, odds] = await Promise.all([loadGames(fresh), loadTeamOdds(c.env, fresh).catch(() => new Map<string, GameOdds>())])
+  // ?fresh=1 skips the cache (the Refresh button) but is honoured only for privileged callers (it spends credits).
+  const fresh = wantsFresh(c)
+  const [games, odds] = await Promise.all([loadGames(fresh), loadTeamOdds(c.env, fresh).catch((e) => {
+    console.error('team odds unavailable', e instanceof Error ? e.message : String(e))
+    return null
+  })])
   return c.json({
-    data: games.map((g) => ({ ...g, odds: odds.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)?.summary ?? null })),
+    data: games.map((g) => ({ ...g, odds: odds?.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)?.summary ?? null })),
+    // Say so when the odds could not be loaded, instead of silently showing games with no odds.
+    meta: { oddsAvailable: odds !== null, freshRequested: c.req.query('fresh') === '1', freshHonored: fresh },
   })
 })
 
@@ -246,11 +293,11 @@ function parseGameOdds(ev: any): GameOdds {
       } else if (m.key === 'spreads') {
         const home = m.outcomes.find((x: any) => x.name === ev.home_team)
         const away = m.outcomes.find((x: any) => x.name === ev.away_team)
-        if (home && away) o.spread = { point: home.point, home: home.price, away: away.price }
+        if (home && away && Number.isFinite(home.point)) o.spread = { point: home.point, home: home.price, away: away.price }
       } else if (m.key === 'totals') {
         const over = m.outcomes.find((x: any) => x.name === 'Over')
         const under = m.outcomes.find((x: any) => x.name === 'Under')
-        if (over && under) o.total = { point: over.point, over: over.price, under: under.price }
+        if (over && under && Number.isFinite(over.point)) o.total = { point: over.point, over: over.price, under: under.price }
       }
     }
     books.push(o)
@@ -270,7 +317,7 @@ function parseGameOdds(ev: any): GameOdds {
 }
 
 // One call covers every game, so team odds are cheap (markets x regions credits in total).
-async function loadTeamOdds(env: Env['Bindings'], fresh = false): Promise<Map<string, GameOdds>> {
+async function loadTeamOdds(env: Bindings, fresh = false): Promise<Map<string, GameOdds>> {
   if (!env.ODDS_API_KEY) return new Map()
   const params: Record<string, string> = {
     regions: env.ODDS_REGIONS ?? 'us', markets: 'h2h,spreads,totals', oddsFormat: 'decimal',
@@ -282,78 +329,53 @@ async function loadTeamOdds(env: Env['Bindings'], fresh = false): Promise<Map<st
 
 // ---------- picks (The Odds API + model) ----------
 
-interface Pick {
-  playerId: number
-  player: string
-  /** NBA.com abbreviation of the player's current team, e.g. BOS. */
-  team: string | null
-  teamName: string | null
-  stat: Stat
-  side: 'over' | 'under'
-  line: number
-  price: number
-  book: string
-  /** Best price per book for this exact bet, highest first. */
-  prices: { book: string; price: number }[]
-  modelProb: number
-  marketProb: number | null
-  /** Model blended with the market. This is the probability we trust. */
-  prob: number
-  impliedProb: number
-  /** Expected profit per 1 staked, using the blended probability. */
-  ev: number
-  risk: Risk
-  /** Which model produced the projection: the boosted model ('gbm-v1') or the fallback ('baseline-v2'). */
-  model: string
-  /** True when the model and market disagree wildly, which usually means the model is missing news. */
-  bigGap: boolean
-  confidence: number
-  projection: number
-  hitRate10: number | null
-  recent: number[]
-  sample: number
-  game: string
-  gameDate: string
+export interface Warning { code: string; message: string }
+export interface PicksMeta {
+  generatedAt: string
+  /** Time of the OLDEST odds snapshot behind the picks; null if unknown. */
+  oddsAsOf: string | null
+  warnings: Warning[]
 }
 
-// Roughly mid-April to June is playoff time.
-function isPlayoffDate(etDay: string) {
-  const [, m, d] = etDay.split('-').map(Number)
-  return (m === 4 && d >= 16) || m === 5 || m === 6
-}
+async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: boolean; picks: Pick[]; meta: PicksMeta }> {
+  const now = Date.now()
+  const meta: PicksMeta = { generatedAt: new Date(now).toISOString(), oddsAsOf: null, warnings: [] }
+  if (!env.ODDS_API_KEY) return { configured: false, picks: [], meta }
 
-async function loadPicks(env: Env['Bindings']): Promise<{ configured: boolean; picks: Pick[] }> {
-  if (!env.ODDS_API_KEY) return { configured: false, picks: [] }
-
-  const events = await cachedJson<any[]>('odds-events', 30 * 60, () => oddsFetch(env, '/events'))
+  const events = await cachedJson<any[]>('odds-events', 30 * 60, () => oddsFetch(env, '/events'), fresh)
   const upcoming = events
-    .filter((e) => Date.parse(e.commence_time) < Date.now() + Number(env.ODDS_HOURS ?? 40) * 3600_000 && Date.parse(e.commence_time) > Date.now())
+    .filter((e) => Date.parse(e.commence_time) < now + Number(env.ODDS_HOURS ?? 40) * 3600_000 && Date.parse(e.commence_time) > now)
     .slice(0, MAX_EVENTS)
 
   const regions = env.ODDS_REGIONS ?? 'us'
   const markets = env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists'
-  const odds = await Promise.all(
+  const fetched = await Promise.all(
     upcoming.map((e) =>
-      cachedJson<any>(`odds-${e.id}-${regions}-${markets}`, ODDS_TTL, () =>
+      cachedMeta<OddsEvent>(`odds-${e.id}-${regions}-${markets}`, ODDS_TTL, () =>
         oddsFetch(env, `/events/${e.id}/odds`, { regions, markets, oddsFormat: 'decimal' }),
-      ),
+      fresh),
     ),
   )
 
+  // How old is what we are about to show? Lines move before tip-off, so the age is part of the answer.
+  const times = fetched.map((f) => f.fetchedAt)
+  const known = times.filter((t): t is number => t !== null)
+  if (known.length) meta.oddsAsOf = new Date(Math.min(...known)).toISOString()
+  if (times.some((t) => t === null) && upcoming.length)
+    meta.warnings.push({ code: 'odds_age_unknown', message: 'Some odds were cached by an older version, so their age is unknown.' })
+  const oldest = known.length ? (now - Math.min(...known)) / 3600_000 : 0
+  if (oldest > MAX_ODDS_AGE_HOURS) {
+    meta.warnings.push({ code: 'odds_too_old', message: `Odds are ${oldest.toFixed(0)} hours old, which is past the limit, so no picks are shown.` })
+    return { configured: true, picks: [], meta }
+  }
+  if (oldest > WARN_ODDS_AGE_HOURS)
+    meta.warnings.push({ code: 'odds_old', message: `Odds were fetched ${oldest.toFixed(0)} hours ago. Lines move before tip-off, so check the book's current price.` })
+
+  const odds = fetched.map((f) => f.data)
   const { results: players } = await env.DB.prepare('SELECT id, name, team FROM players').all<{ id: number; name: string; team: string | null }>()
   const byName = new Map(players.map((p) => [normName(p.name), p]))
 
-  // Boosted-model projections written by research/project.py. Missing rows fall back to the older model.
-  const dates = [...new Set(odds.map((o) => etDate(o.commence_time)))]
-  const { results: projRows } = dates.length
-    ? await env.DB.prepare(
-        `SELECT player_id, game_date, stat, mean, alpha, model FROM projections WHERE game_date IN (${dates.map(() => '?').join(',')})`,
-      ).bind(...dates).all<{ player_id: number; game_date: string; stat: string; mean: number; alpha: number; model: string }>()
-        .catch(() => ({ results: [] as { player_id: number; game_date: string; stat: string; mean: number; alpha: number; model: string }[] }))
-    : { results: [] }
-  const projections = new Map(projRows.map((r) => [`${r.player_id}|${r.game_date}|${r.stat}`, r]))
-
-  // One query for every matched player's history (regular season, playoffs and preseason).
+  // Players the odds mention that we hold history for.
   const wanted = new Set<number>()
   for (const o of odds)
     for (const b of o.bookmakers ?? [])
@@ -362,117 +384,78 @@ async function loadPicks(env: Env['Bindings']): Promise<{ configured: boolean; p
           const p = byName.get(normName(out.description ?? ''))
           if (p) wanted.add(p.id)
         }
-  if (!wanted.size) return { configured: true, picks: [] }
 
-  const { results: logs } = await env.DB.prepare(
-    `SELECT pg.player_id, g.game_type AS type, pg.pts, pg.reb, pg.ast, pg.fg3m
-     FROM player_games pg JOIN games g ON g.id = pg.game_id
-     WHERE pg.player_id IN (${[...wanted].join(',')}) ORDER BY g.date DESC`,
-  ).all<any>()
-  const history = new Map<number, any[]>()
-  for (const r of logs) (history.get(r.player_id) ?? history.set(r.player_id, []).get(r.player_id)!).push(r)
+  const dates = [...new Set(odds.map((o) => etDate(o.commence_time)))]
+  const projections = dates.length
+    ? (await env.DB.prepare(
+        `SELECT player_id, game_date, stat, mean, alpha, model, created_at FROM projections WHERE game_date IN (${dates.map(() => '?').join(',')})`,
+      ).bind(...dates).all<ProjectionRow>().catch(() => ({ results: [] as ProjectionRow[] }))).results
+    : []
+  const history = wanted.size
+    ? (await env.DB.prepare(
+        `SELECT pg.player_id, g.game_type AS type, pg.pts, pg.reb, pg.ast, pg.fg3m
+         FROM player_games pg JOIN games g ON g.id = pg.game_id
+         WHERE pg.player_id IN (${[...wanted].join(',')}) ORDER BY g.date DESC`,
+      ).all<HistoryRow>()).results
+    : []
 
-  type Quote = { book: string; price: number }
-  type Line = { pl: { id: number; name: string; team: string | null }; stat: Stat; point: number; over: Quote[]; under: Quote[] }
-  const picks: Pick[] = []
+  const { picks, diagnostics: d } = buildPicks({ events: odds, players, history, projections, now })
 
-  for (const o of odds) {
-    const game = `${o.away_team} @ ${o.home_team}`
-    const gameDate = etDate(o.commence_time)
-    const upcomingType: GameType = isPlayoffDate(gameDate) ? 'playoffs' : 'regular'
+  if (d.fallbackLines > 0)
+    meta.warnings.push({
+      code: 'fallback_model',
+      message: `${d.fallbackLines} line${d.fallbackLines === 1 ? '' : 's'} use the simpler average model because no fresh projection exists` +
+        (d.staleProjectionPlayers.length ? ` (stale projections: ${d.staleProjectionPlayers.slice(0, 5).join(', ')}${d.staleProjectionPlayers.length > 5 ? '…' : ''})` : '') + '.',
+    })
+  if (d.unmatchedPlayers.length)
+    meta.warnings.push({ code: 'unmatched_players', message: `${d.unmatchedPlayers.length} players in the odds are not synced, so they have no pick.` })
+  if (d.invalidQuotes)
+    meta.warnings.push({ code: 'invalid_quotes', message: `${d.invalidQuotes} malformed price${d.invalidQuotes === 1 ? '' : 's'} from the provider were ignored.` })
+  meta.warnings.push({ code: 'no_injury_data', message: 'Injuries and lineup news are not modelled. Check the injury report before betting.' })
 
-    // Group every book's Over/Under for the same player, stat and line.
-    const lines = new Map<string, Line>()
-    for (const b of o.bookmakers ?? [])
-      for (const m of b.markets) {
-        const stat = MARKETS[m.key]
-        if (!stat) continue
-        for (const out of m.outcomes) {
-          const pl = byName.get(normName(out.description ?? ''))
-          if (!pl || !history.has(pl.id)) continue
-          const k = `${pl.id}|${stat}|${out.point}`
-          const L = lines.get(k) ?? lines.set(k, { pl, stat, point: out.point, over: [], under: [] }).get(k)!
-          ;(out.name === 'Over' ? L.over : L.under).push({ book: b.title, price: out.price })
-        }
-      }
+  // Are the box scores behind every projection current?
+  const sync = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_sync'").first<{ value: string }>().catch(() => null)
+  const newest = await env.DB.prepare('SELECT MAX(date) AS d FROM games').first<{ d: string | null }>().catch(() => null)
+  const inSeason = newest?.d ? now - Date.parse(`${newest.d}T12:00:00Z`) < 14 * 86400_000 : false
+  const syncAge = sync ? (now - Date.parse(`${sync.value.replace(' ', 'T')}Z`)) / 3600_000 : Infinity
+  if (inSeason && syncAge > 48)
+    meta.warnings.push({ code: 'boxscores_stale', message: sync ? `Box scores were last synced ${Math.round(syncAge / 24)} days ago.` : 'Box scores have never been synced.' })
 
-    for (const L of lines.values()) {
-      const rows = history.get(L.pl.id)!
-      const samples = rows.map((r) => ({ value: r[L.stat] as number, type: r.type as GameType }))
-      const pred = predict(samples, L.point, upcomingType)
-      if (!pred) continue
-      // Prefer the boosted model's mean and a negative-binomial tail; keep the older model's confidence and sample size.
-      const proj = projections.get(`${L.pl.id}|${gameDate}|${L.stat}`)
-      const pOver = proj ? nbPOver(L.point, proj.mean, proj.alpha) : pred.pOver
-      const projected = proj ? proj.mean : pred.predicted
-      const modelName = proj ? proj.model : pred.model
-      const played = samples.filter((s) => s.type !== 'preseason').map((s) => s.value)
-
-      // Market view with the book margin removed, averaged over books that quote both sides.
-      const books = new Map<string, { o?: number; u?: number }>()
-      for (const x of L.over) books.set(x.book, { ...books.get(x.book), o: Math.max(x.price, books.get(x.book)?.o ?? 0) })
-      for (const x of L.under) books.set(x.book, { ...books.get(x.book), u: Math.max(x.price, books.get(x.book)?.u ?? 0) })
-      const both = [...books.values()].filter((v) => v.o && v.u)
-      const marketOver = both.length ? both.reduce((a, v) => a + 1 / v.o! / (1 / v.o! + 1 / v.u!), 0) / both.length : null
-
-      for (const side of ['over', 'under'] as const) {
-        const quotes = side === 'over' ? L.over : L.under
-        if (!quotes.length) continue
-        const sorted = [...new Map(quotes.map((x) => [x.book, x.price])).entries()]
-          .map(([book, price]) => ({ book, price }))
-          .sort((a, b) => b.price - a.price)
-        const best = sorted[0]
-        const modelProb = side === 'over' ? pOver : 1 - pOver
-        const marketProb = marketOver == null ? null : side === 'over' ? marketOver : 1 - marketOver
-        const prob = blendProb(modelProb, marketProb, pred.confidence)
-        const over10 = hitRate(played, L.point, 10)
-        picks.push({
-          playerId: L.pl.id, player: L.pl.name, team: L.pl.team, teamName: L.pl.team ? TEAM_NAMES[L.pl.team] ?? null : null, stat: L.stat, side, line: L.point, price: best.price, book: best.book,
-          prices: sorted.slice(0, 5), modelProb, marketProb, prob, impliedProb: 1 / best.price,
-          ev: prob * best.price - 1, risk: riskTier(prob), model: modelName, bigGap: marketProb != null && Math.abs(modelProb - marketProb) > BIG_GAP, confidence: pred.confidence, projection: projected,
-          hitRate10: over10 == null ? null : side === 'over' ? over10 : 1 - over10,
-          recent: played.slice(0, 10).reverse(), sample: pred.sample, game, gameDate,
-        })
-      }
-    }
-  }
-
-  // Keep each player's best-value side and their safest side; the UI slices these into tabs.
-  const keep = new Map<string, Pick>()
-  const groups = new Map<string, Pick[]>()
-  for (const p of picks) {
-    const k = `${p.playerId}|${p.stat}`
-    groups.set(k, [...(groups.get(k) ?? []), p])
-  }
-  for (const group of groups.values()) {
-    const value = group.reduce((a, b) => (b.ev > a.ev ? b : a))
-    const safe = group.reduce((a, b) => (b.prob > a.prob ? b : a))
-    for (const p of [value, safe]) keep.set(`${p.playerId}|${p.stat}|${p.side}|${p.line}`, p)
-  }
-  return { configured: true, picks: [...keep.values()].sort((a, b) => b.ev - a.ev).slice(0, 80) }
+  return { configured: true, picks, meta }
 }
 
 app.get('/picks', async (c) => {
-  const { configured, picks } = await loadPicks(c.env)
-  const worth = picks.filter((p) => p.ev > 0 || p.risk === 'safe').slice(0, 40)
-  if (worth.length)
-    await c.env.DB.batch(
-      worth.map((p) =>
-        c.env.DB.prepare(
-          `INSERT OR IGNORE INTO predictions (player_id,stat,line,predicted,p_over,model,game_date,side,price,book)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        ).bind(
-          p.playerId, p.stat, p.line, p.projection, p.side === 'over' ? p.prob : 1 - p.prob,
-          p.model, p.gameDate, p.side, p.price, p.book,
-        ),
-      ),
-    )
-  return c.json({ configured, data: picks })
+  const { configured, picks, meta } = await loadPicks(c.env, wantsFresh(c))
+  await logPicks(c.env, picks).catch((e) => console.error('pick logging failed', e instanceof Error ? e.message : String(e)))
+  return c.json({ configured, data: picks, meta })
 })
+
+/**
+ * Freeze the picks as they were shown, for forward evaluation (INSERT OR IGNORE keeps the first price and model).
+ * Throttled so repeated page loads cannot turn into a stream of database writes.
+ */
+async function logPicks(env: Bindings, picks: Pick[]) {
+  const worth = picks.filter((p) => p.ev > 0 || p.risk === 'safe').slice(0, 40)
+  if (!worth.length) return
+  const last = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_pick_log'").first<{ value: string }>().catch(() => null)
+  if (last && Date.now() - Number(last.value) < 10 * 60_000) return
+  await env.DB.batch([
+    ...worth.map((p) =>
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO predictions (player_id,stat,line,predicted,p_over,model,game_date,side,price,book,model_prob,market_prob,push)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(
+        p.playerId, p.stat, p.line, p.projection, p.side === 'over' ? p.prob : 1 - p.prob,
+        p.model, p.gameDate, p.side, p.price, p.book, p.modelProb, p.marketProb, p.push,
+      ),
+    ),
+    env.DB.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_pick_log', ?)").bind(String(Date.now())),
+  ])
+}
 
 // Everything for one game: key players on each team (recent form) plus suggested bets.
 app.get('/games/:id', async (c) => {
-  const fresh = c.req.query('fresh') === '1'
+  const fresh = wantsFresh(c)
   const game = (await loadGames(fresh)).find((g) => g.id === c.req.param('id'))
   if (!game) return c.json({ error: 'Game not found' }, 404)
 
@@ -505,7 +488,7 @@ app.get('/games/:id', async (c) => {
     .filter((p) => p.games > 0)
     .sort((a, b) => b.min - a.min)
 
-  const { picks, configured } = await loadPicks(c.env)
+  const { picks, configured, meta } = await loadPicks(c.env, fresh)
   const teamOdds = (await loadTeamOdds(c.env, fresh).catch(() => new Map<string, GameOdds>())).get(
     `${teamKey(game.away.name)}@${teamKey(game.home.name)}`,
   )
@@ -513,6 +496,7 @@ app.get('/games/:id', async (c) => {
   return c.json({
     game,
     configured,
+    meta,
     odds: teamOdds ?? null,
     teams: teams.map((t) => ({ ...t, players: players.filter((p) => p.team === nbaAbbr(t.abbr)).slice(0, 8) })),
     picks: picks.filter((p) => p.game === matchup),
@@ -522,29 +506,10 @@ app.get('/games/:id', async (c) => {
   })
 })
 
-// ---------- results: grade logged picks against box scores ----------
+// ---------- results ----------
 
-async function gradePicks(db: D1Database) {
-  await db.batch([
-    ...STATS.map((s) =>
-      db.prepare(
-        `UPDATE predictions SET actual = (
-           SELECT pg.${s} FROM player_games pg JOIN games g ON g.id = pg.game_id
-           WHERE pg.player_id = predictions.player_id AND g.date = predictions.game_date)
-         WHERE actual IS NULL AND stat = '${s}' AND game_date IS NOT NULL`,
-      ),
-    ),
-    // 1 = won, 0 = lost, 2 = push
-    db.prepare(
-      `UPDATE predictions SET hit = CASE WHEN actual = line THEN 2
-         WHEN (side = 'over' AND actual > line) OR (side = 'under' AND actual < line) THEN 1 ELSE 0 END
-       WHERE actual IS NOT NULL AND hit IS NULL AND side IS NOT NULL`,
-    ),
-  ])
-}
-
+// Pure read. Picks are graded against box scores by ingest/sync.py (see GRADE_SQL there), not by page views.
 app.get('/results', async (c) => {
-  await gradePicks(c.env.DB)
   const { results } = await c.env.DB.prepare(
     `SELECT p.name AS player, pr.stat, pr.side, pr.line, pr.price, pr.book, pr.actual, pr.hit, pr.game_date AS gameDate
      FROM predictions pr JOIN players p ON p.id = pr.player_id
@@ -558,13 +523,26 @@ app.get('/results', async (c) => {
   return c.json({ data: results, summary })
 })
 
-// Manual prediction logging from the player page.
+// Manual prediction logging from the player page. Writes to the database, so it is not public.
 app.post('/predictions', async (c) => {
-  const b = await c.req.json<{ playerId: number; stat: Stat; line: number; predicted: number; pOver: number; model: string }>()
-  if (!STATS.includes(b.stat)) return c.json({ error: 'bad stat' }, 400)
+  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
+  let b: Record<string, unknown>
+  try {
+    b = await c.req.json()
+  } catch {
+    return c.json({ error: 'body must be JSON' }, 400)
+  }
+  const num = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null)
+  const playerId = num(b.playerId, 1, 1e12)
+  const line = num(b.line, 0, LIMITS.maxLine)
+  const predicted = num(b.predicted, 0, LIMITS.maxMean)
+  const pOver = num(b.pOver, 0, 1)
+  const model = typeof b.model === 'string' && /^[\w.-]{1,32}$/.test(b.model) ? b.model : null
+  if (playerId === null || !Number.isInteger(playerId) || !STATS.includes(b.stat as Stat) || line === null || predicted === null || pOver === null || model === null)
+    return c.json({ error: 'invalid prediction' }, 400)
   await c.env.DB.prepare(
     'INSERT INTO predictions (player_id,stat,line,predicted,p_over,model) VALUES (?,?,?,?,?,?)',
-  ).bind(b.playerId, b.stat, b.line, b.predicted, b.pOver, b.model).run()
+  ).bind(playerId, b.stat, line, predicted, pOver, model).run()
   return c.json({ ok: true })
 })
 

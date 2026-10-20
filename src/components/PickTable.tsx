@@ -2,7 +2,7 @@ import { Fragment } from 'react'
 import { STAT_LABEL, fmt, pct } from '../lib/format'
 import type { Risk } from '../../shared/baseline'
 import { groupByGame, type Pick } from '../lib/picks'
-import { useSlip } from '../lib/slip'
+import { useSlip } from '../lib/slipContext'
 
 const RISK: Record<Risk, { label: string; cls: string }> = {
   safe: { label: 'Safe', cls: 'bg-neutral-200 text-neutral-900' },

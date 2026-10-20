@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { STAT_LABEL, pct } from '../lib/format'
 import { combine } from '../lib/picks'
-import { useSlip } from '../lib/slip'
+import { useSlip } from '../lib/slipContext'
 
 export default function Slip() {
   const slip = useSlip()

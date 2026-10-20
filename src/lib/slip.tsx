@@ -1,17 +1,8 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { pickKey, type Pick } from './picks'
-
-interface Slip {
-  legs: Pick[]
-  has: (p: Pick) => boolean
-  toggle: (p: Pick) => void
-  addAll: (ps: Pick[]) => void
-  remove: (p: Pick) => void
-  clear: () => void
-}
+import { SlipContext, type Slip } from './slipContext'
 
 const KEY = 'ubet-slip'
-const Ctx = createContext<Slip | null>(null)
 
 export function SlipProvider({ children }: { children: ReactNode }) {
   const [legs, setLegs] = useState<Pick[]>(() => {
@@ -28,11 +19,5 @@ export function SlipProvider({ children }: { children: ReactNode }) {
     remove: (p) => setLegs((ls) => ls.filter((l) => pickKey(l) !== pickKey(p))),
     clear: () => setLegs([]),
   }
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
-}
-
-export function useSlip() {
-  const s = useContext(Ctx)
-  if (!s) throw new Error('useSlip must be used inside SlipProvider')
-  return s
+  return <SlipContext.Provider value={value}>{children}</SlipContext.Provider>
 }

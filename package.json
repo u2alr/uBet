@@ -10,7 +10,10 @@
     "dev:api": "wrangler pages dev --port 8788",
     "db:migrate": "wrangler d1 migrations apply ubet --local",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --no-warnings --test shared/*.test.ts",
+    "typecheck": "tsc -b && tsc -p tsconfig.functions.json && tsc -p tsconfig.test.json",
+    "check": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
     "hono": "^4.13.13",

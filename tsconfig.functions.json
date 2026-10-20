@@ -6,7 +6,9 @@
     "types": ["@cloudflare/workers-types"],
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["functions", "shared"]
+  "include": ["functions", "shared"],
+  "exclude": ["shared/**/*.test.ts"]
 }

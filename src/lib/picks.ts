@@ -1,32 +1,7 @@
-import type { Risk, Stat } from '../../shared/baseline'
+import type { Pick } from '../../shared/picks.ts'
 
-export interface Pick {
-  playerId: number
-  player: string
-  team: string | null
-  teamName: string | null
-  stat: Stat
-  side: 'over' | 'under'
-  line: number
-  price: number
-  book: string
-  prices: { book: string; price: number }[]
-  modelProb: number
-  marketProb: number | null
-  prob: number
-  impliedProb: number
-  ev: number
-  risk: Risk
-  model: string
-  bigGap: boolean
-  confidence: number
-  projection: number
-  hitRate10: number | null
-  recent: number[]
-  sample: number
-  game: string
-  gameDate: string
-}
+// One definition of a pick, shared with the Worker that builds it, so the two cannot drift apart.
+export type { Pick }
 
 export const pickKey = (p: Pick) => `${p.playerId}|${p.stat}|${p.side}|${p.line}`
 
