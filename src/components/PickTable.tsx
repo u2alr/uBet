@@ -1,9 +1,10 @@
-import { Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import { STAT_LABEL, fmt, pct } from '../lib/format'
 import type { Risk } from '../../shared/baseline'
 import { groupByGame, type Pick } from '../lib/picks'
 import { useSlip } from '../lib/slipContext'
 import Headshot from './Headshot'
+import { PickBars, PickSpark } from './PickSpark'
 
 const RISK: Record<Risk, { label: string; cls: string }> = {
   safe: { label: 'Safe', cls: 'bg-neutral-200 text-neutral-900' },
@@ -45,6 +46,7 @@ export default function PickTable({ picks, onOpenPlayer, empty }: {
             <th className="px-2 py-1.5 text-right font-normal" title="Our model alone">Model</th>
             <th className="px-2 py-1.5 text-right font-normal" title="The books, margin removed">Market</th>
             <th className="px-2 py-1.5 text-right font-normal">Proj</th>
+            <th className="px-2 py-2 font-normal" title="Last 10 games against the line. Bright bars landed on this side. Click a row to enlarge.">Last 10</th>
             <th className="px-2 py-1.5 text-right font-normal" title="How often this side hit in the last 10 games">L10</th>
             <th className="px-2 py-1.5 text-right font-normal" title="Games behind the estimate">Games</th>
             <th className="px-2 py-1.5 text-right font-normal">EV</th>
@@ -56,12 +58,12 @@ export default function PickTable({ picks, onOpenPlayer, empty }: {
           {groupByGame(picks).map((g) => (
             <Fragment key={g.game}>
               <tr className="border-t border-neutral-800 bg-neutral-950/40">
-                <td colSpan={12} className="px-3 pb-0.5 pt-2 text-xs uppercase tracking-widest text-neutral-400">{g.game}</td>
+                <td colSpan={13} className="px-3 pb-0.5 pt-2 text-xs uppercase tracking-widest text-neutral-400">{g.game}</td>
               </tr>
               {g.teams.map((t) => (
                 <Fragment key={t.team}>
                   <tr>
-                    <td colSpan={12} className="px-3 pb-0 pt-1 text-xs text-neutral-600">{t.team}</td>
+                    <td colSpan={13} className="px-3 pb-0 pt-1 text-xs text-neutral-600">{t.team}</td>
                   </tr>
                   {t.picks.map((p) => (
                     <PickRow key={`${p.playerId}${p.stat}${p.side}${p.line}`} p={p} onOpenPlayer={onOpenPlayer} />
@@ -77,7 +79,9 @@ export default function PickTable({ picks, onOpenPlayer, empty }: {
 }
 
 function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => void }) {
+  const [open, setOpen] = useState(false)
   return (
+    <>
     <tr className="border-t border-neutral-800/60 hover:bg-neutral-800/60">
       <td className="px-3 py-0.5">
         <button className="flex items-center gap-2 text-neutral-100 hover:underline" onClick={() => onOpenPlayer(p.playerId)}>
@@ -100,11 +104,16 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-400">{pct(p.modelProb)}</td>
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-400">{pct(p.marketProb)}</td>
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-400" title={`Projection from ${p.model === 'gbm-v1' ? 'the boosted model' : 'the fallback average model'}`}>{fmt(p.projection)}</td>
+      <td className="px-2 py-0.5">
+        <button className="block" onClick={() => setOpen(!open)} aria-expanded={open} title="Show the last games large"><PickSpark p={p} /></button>
+      </td>
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-400">{pct(p.hitRate10)}</td>
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-500">{p.sample}</td>
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}%</td>
       <td className="px-2 py-0.5"><RiskBadge risk={p.risk} /></td>
       <td className="px-3 py-0.5 text-right"><SlipButton pick={p} /></td>
     </tr>
+    {open && <tr className="bg-neutral-950/40"><td colSpan={13}><PickBars p={p} /></td></tr>}
+    </>
   )
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Stat } from '../../shared/baseline'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import type { Pick } from '../lib/picks'
+import { PickSpark } from './PickSpark'
 import { RiskBadge, SlipButton } from './PickTable'
 
 // Every prop line the books are offering for this one player, both sides, with our chance and the best price.
@@ -33,6 +34,7 @@ export default function PlayerProps({ playerId, refreshKey, onPick }: {
             <th className="px-2 py-1 font-normal">Prop</th>
             <th className="px-2 py-1 font-normal">Best odds</th>
             <th className="px-2 py-1 text-right font-normal">Chance</th>
+            <th className="px-2 py-2 font-normal">Last 10</th>
             <th className="px-2 py-1 text-right font-normal">Model</th>
             <th className="px-2 py-1 text-right font-normal">Market</th>
             <th className="px-2 py-1 text-right font-normal">Proj</th>
@@ -53,6 +55,7 @@ export default function PlayerProps({ playerId, refreshKey, onPick }: {
               </td>
               <td className="px-2 py-1 tabular-nums">{p.price.toFixed(2)} <span className="text-xs text-neutral-600">{p.book}</span></td>
               <td className="px-2 py-1 text-right tabular-nums text-neutral-100">{pct(p.prob)}</td>
+              <td className="px-2 py-1"><PickSpark p={p} /></td>
               <td className="px-2 py-1 text-right tabular-nums text-neutral-400">{pct(p.modelProb)}</td>
               <td className="px-2 py-1 text-right tabular-nums text-neutral-400">{pct(p.marketProb)}</td>
               <td className="px-2 py-1 text-right tabular-nums text-neutral-400">{p.projection.toFixed(1)}</td>
