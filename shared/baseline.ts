@@ -1,3 +1,5 @@
+import dispersionTable from './dispersion.json' with { type: 'json' }
+
 export const STATS = ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk'] as const
 export type Stat = (typeof STATS)[number]
 
@@ -10,7 +12,7 @@ export interface Sample {
 }
 
 export interface Prediction {
-  model: 'baseline-v2'
+  model: 'baseline-v2' | 'baseline-v3'
   predicted: number
   stdDev: number
   /** P(stat > line), strictly greater. */
@@ -67,7 +69,7 @@ function normalCdf(z: number) {
 // ---------- outcome probabilities for a count ----------
 
 /** Inputs outside these ranges are data errors, not statistics; callers get null instead of a number. */
-export const LIMITS = { maxLine: 300, maxMean: 500, maxAlpha: 50, maxSd: 500 }
+export const LIMITS = { maxLine: 300, maxMean: 500, maxAlpha: 1000, maxSd: 500 }
 
 export type Dist =
   | { kind: 'poisson'; mu: number }
@@ -174,6 +176,49 @@ export function predict(samples: Sample[], line: number, upcoming: GameType = 'r
 
   return {
     model: 'baseline-v2', predicted: mean, stdDev: spread,
+    pOver: out.over, pUnder: out.under, pPush: out.push, sample: samples.length, effectiveGames: nEff,
+  }
+}
+
+// ---------- baseline-v3: negative-binomial tails, chosen per statistic by out-of-sample testing ----------
+// research/PREREG_AUDIT.md fixed the rule and research/dist_study.py applied it on the development folds. Not the default:
+// shared/picks.ts and the Worker use it only when asked (FALLBACK_MODEL=v3) until it is confirmed on forward data.
+
+type DistKind = 'native' | 'nb' | 'nbc'
+type Bucket = 'lt2' | 'mid' | 'hi'
+const POLICY = dispersionTable.policy as Record<Stat, Record<Bucket, DistKind>>
+const DISPERSION = dispersionTable.dispersion as Record<Stat, { centers: number[]; alphas: number[]; constant: number }>
+
+/** Dispersion for a given mean: linear interpolation between fitted points, held flat beyond the ends (like numpy.interp). */
+export function alphaAt(stat: Stat, mu: number) {
+  const { centers, alphas } = DISPERSION[stat]
+  if (mu <= centers[0]) return alphas[0]
+  const last = centers.length - 1
+  if (mu >= centers[last]) return alphas[last]
+  let i = 1
+  while (centers[i] < mu) i++
+  const t = (mu - centers[i - 1]) / (centers[i] - centers[i - 1])
+  return alphas[i - 1] + t * (alphas[i] - alphas[i - 1])
+}
+
+/** Which distribution the v3 rule uses for this statistic and mean. */
+export function distributionFor(stat: Stat, mean: number, spread: number): Dist {
+  const bucket: Bucket = mean < 2 ? 'lt2' : mean < 6 ? 'mid' : 'hi'
+  const kind = POLICY[stat][bucket]
+  if (kind === 'nb') return { kind: 'nb', mu: Math.max(mean, 1e-3), alpha: alphaAt(stat, mean) }
+  if (kind === 'nbc') return { kind: 'nb', mu: Math.max(mean, 1e-3), alpha: DISPERSION[stat].constant }
+  return mean < 6 ? { kind: 'poisson', mu: Math.max(mean, 0.05) } : { kind: 'normal', mu: mean, sd: spread }
+}
+
+/** Same projection as predict(), with the over/under/push probabilities taken from distributionFor(). */
+export function predictV3(stat: Stat, samples: Sample[], line: number, upcoming: GameType = 'regular'): Prediction | null {
+  if (samples.length < 5 || samples.some((s) => !Number.isFinite(s.value) || s.value < 0)) return null
+  const { mean, sd, nEff } = weightedStats(samples, upcoming)
+  const spread = Math.max(sd * (1 + 1 / Math.max(nEff, 1)), 0.5)
+  const out = outcomeProbs(line, distributionFor(stat, mean, spread))
+  if (!out) return null
+  return {
+    model: 'baseline-v3', predicted: mean, stdDev: spread,
     pOver: out.over, pUnder: out.under, pPush: out.push, sample: samples.length, effectiveGames: nEff,
   }
 }

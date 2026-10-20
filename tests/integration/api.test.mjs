@@ -131,6 +131,14 @@ describe('inputs are validated', () => {
     assert.equal((await api('/players?search=' + 'a'.repeat(65))).status, 400)
     assert.ok((await api('/players?search=curry')).body.data.length >= 1)
   })
+  it('API responses carry security headers and are never cached by browsers', async () => {
+    for (const path of ['/status', '/players/201939/stats?stat=pts', '/players/abc/stats', '/nope']) {
+      const res = await fetch(`${APP}/api${path}`)
+      assert.equal(res.headers.get('x-content-type-options'), 'nosniff', path)
+      assert.equal(res.headers.get('cache-control'), 'no-store', path)
+      assert.equal(res.headers.get('referrer-policy'), 'no-referrer', path)
+    }
+  })
   it('no cross-site read access is granted', async () => {
     const res = await fetch(`${APP}/api/status`, { headers: { Origin: 'https://evil.example' } })
     assert.equal(res.headers.get('access-control-allow-origin'), null)

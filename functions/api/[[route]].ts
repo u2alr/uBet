@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
-import { LIMITS, STATS, hitRate, predict, type GameType, type Stat } from '../../shared/baseline.ts'
+import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
 import { assessOddsAge, buildPicks, etDate, normName, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
 
 type Bindings = {
@@ -11,6 +11,8 @@ type Bindings = {
   /** Only for tests: point the Worker at fake providers (tests/integration). */
   ODDS_BASE_URL?: string
   ESPN_BASE_URL?: string
+  /** 'v3' switches the fallback model to the negative-binomial baseline (see shared/baseline.ts). Default 'v2'. */
+  FALLBACK_MODEL?: string
   ODDS_REGIONS?: string
   ODDS_MARKETS?: string
   ODDS_HOURS?: string
@@ -22,6 +24,14 @@ type Ctx = Context<Env>
 const app = new Hono<Env>().basePath('/api')
 
 class UpstreamError extends Error {}
+
+// Cloudflare's _headers file does not apply to Functions responses, so the API sets its own.
+app.use('*', async (c, next) => {
+  await next()
+  c.header('X-Content-Type-Options', 'nosniff')
+  c.header('Referrer-Policy', 'no-referrer')
+  c.header('Cache-Control', 'no-store') // odds and picks go stale; never let a browser or proxy keep them
+})
 
 // Clients get a generic message; the detail goes to the server log only (it can name internal tables or providers).
 app.onError((err, c) => {
@@ -188,7 +198,8 @@ app.get('/players/:id/stats', async (c) => {
     ...(line !== null && {
       line,
       hitRate: { last5: hitRate(values, line, 5), last10: hitRate(values, line, 10), season: hitRate(values, line, values.length) },
-      prediction: predict(results.map((r) => ({ value: r.value, type: r.type })), line),
+      prediction: (c.env.FALLBACK_MODEL === 'v3' ? predictV3(stat, results.map((r) => ({ value: r.value, type: r.type })), line)
+        : predict(results.map((r) => ({ value: r.value, type: r.type })), line)),
     }),
   })
 })
@@ -382,7 +393,7 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
       ).all<HistoryRow>()).results
     : []
 
-  const { picks, diagnostics: d } = buildPicks({ events: odds, players, history, projections, now })
+  const { picks, diagnostics: d } = buildPicks({ events: odds, players, history, projections, now, fallback: env.FALLBACK_MODEL === 'v3' ? 'v3' : 'v2' })
 
   if (d.fallbackLines > 0)
     meta.warnings.push({

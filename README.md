@@ -67,3 +67,24 @@ into `research/data/kalshi.sqlite`, with no API key and no cost. A Windows task 
 10 minutes while the PC is on; output goes to `research/data/kalshi.log`. `kalshi_eval.py --peek` shows how
 much usable data exists; it refuses to show scores until the minimum fixed in `research/PREREG_KALSHI.md`
 (1,500 liquid props across 30 game dates) is reached.
+
+## Configuration and tests
+
+Environment variables (set in `.dev.vars` locally, as Pages secrets when deployed):
+
+| Name | Purpose |
+|---|---|
+| `ODDS_API_KEY` | The Odds API key |
+| `CAPTURE_TOKEN` | If set, routes that spend credits or write (`/api/capture`, `?fresh=1`, `POST /api/predictions`) need this in the `x-capture-token` header. If unset they only work from localhost. **Set it before deploying.** |
+| `FALLBACK_MODEL` | `v3` switches the fallback model to the negative-binomial baseline (default `v2`; see `AUDIT.md` finding 14) |
+| `ODDS_REGIONS`, `ODDS_MARKETS`, `ODDS_HOURS`, `ODDS_BOOKS` | what to fetch (each region/market costs credits) |
+
+```bash
+npm run check               # typecheck, lint, unit and db tests
+npm run test:integration    # real Worker against a fake provider and a scratch copy of your local database
+npm run test:mutation       # plants known bugs and checks the tests catch them
+npm run check:data          # database integrity checks
+npm run grade               # grade logged picks against stored box scores (also runs after every sync)
+```
+
+`AUDIT.md` lists what was found, what was fixed, what is unproven and what is blocked on data.

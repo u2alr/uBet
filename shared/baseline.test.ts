@@ -2,9 +2,10 @@
 // The reference values in testdata/golden_probs.json were computed with scipy, independently of this code.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import dispersionTable from './dispersion.json' with { type: 'json' }
 import { describe, it } from 'node:test'
 import {
-  blendProb, expectedValue, hitRate, nbPOver, outcomeProbs, predict, riskTier,
+  alphaAt, blendProb, distributionFor, expectedValue, hitRate, nbPOver, outcomeProbs, predict, predictV3, riskTier,
   type Dist, type Sample,
 } from './baseline.ts'
 
@@ -97,7 +98,7 @@ describe('invalid input is rejected, never turned into a confident number', () =
   it('bad distributions', () => {
     for (const d of [
       { kind: 'poisson', mu: NaN }, { kind: 'poisson', mu: -1 }, { kind: 'poisson', mu: 501 },
-      { kind: 'nb', mu: 5, alpha: NaN }, { kind: 'nb', mu: 5, alpha: -0.1 }, { kind: 'nb', mu: 5, alpha: 51 },
+      { kind: 'nb', mu: 5, alpha: NaN }, { kind: 'nb', mu: 5, alpha: -0.1 }, { kind: 'nb', mu: 5, alpha: 1001 },
       { kind: 'normal', mu: 5, sd: 0 }, { kind: 'normal', mu: 5, sd: -1 }, { kind: 'normal', mu: Infinity, sd: 1 },
     ] as Dist[]) assert.equal(outcomeProbs(10.5, d), null, JSON.stringify(d))
   })
@@ -115,7 +116,7 @@ describe('cost is bounded (regression: line=Infinity looped forever)', () => {
     return performance.now() - t
   }
   it('extreme but valid inputs return promptly', () => {
-    assert.ok(quick(() => outcomeProbs(300, { kind: 'nb', mu: 500, alpha: 50 })) < 100)
+    assert.ok(quick(() => outcomeProbs(300, { kind: 'nb', mu: 500, alpha: 1000 })) < 100)
     assert.ok(quick(() => outcomeProbs(300, { kind: 'poisson', mu: 500 })) < 100)
     assert.ok(quick(() => outcomeProbs(300, { kind: 'poisson', mu: 0.05 })) < 100)
   })
@@ -234,5 +235,98 @@ describe('blendProb, expectedValue, riskTier', () => {
     assert.equal(riskTier(0.7), 'safe')
     assert.equal(riskTier(0.5), 'balanced')
     assert.equal(riskTier(0.3), 'risky')
+  })
+})
+
+describe('game-type weights (regression: swapping the playoff weights went unnoticed)', () => {
+  // newest first: five playoff games at 30, then ten regular-season games at 10
+  const mixed = [...Array(5).fill(30).map((value) => ({ value, type: 'playoffs' as const })), ...Array(10).fill(10).map((value) => ({ value, type: 'regular' as const }))]
+  const expected = (wPlayoff: number, wRegular: number) => {
+    let sw = 0, sm = 0
+    mixed.forEach((s, i) => { const w = (s.type === 'playoffs' ? wPlayoff : wRegular) * 0.93 ** i; sw += w; sm += w * s.value })
+    return sm / sw
+  }
+  it('before a regular-season game, playoff games count 0.6 and regular games 1.0', () => {
+    assert.ok(Math.abs(predict(mixed, 20.5, 'regular')!.predicted - expected(0.6, 1)) < 1e-9)
+  })
+  it('before a playoff game, playoff games count 1.2 and regular games 0.7', () => {
+    assert.ok(Math.abs(predict(mixed, 20.5, 'playoffs')!.predicted - expected(1.2, 0.7)) < 1e-9)
+  })
+  it('preseason games count 0.3 whatever comes next', () => {
+    const pre = [...Array(5).fill(30).map((value) => ({ value, type: 'preseason' as const })), ...Array(10).fill(10).map((value) => ({ value, type: 'regular' as const }))]
+    let sw = 0, sm = 0
+    pre.forEach((s, i) => { const w = (s.type === 'preseason' ? 0.3 : 1) * 0.93 ** i; sw += w; sm += w * s.value })
+    for (const up of ['regular', 'playoffs'] as const) {
+      const w2 = pre.map((s, i) => (s.type === 'preseason' ? 0.3 : up === 'playoffs' ? 0.7 : 1) * 0.93 ** i)
+      const m2 = pre.reduce((a, s, i) => a + w2[i] * s.value, 0) / w2.reduce((a, b) => a + b, 0)
+      assert.ok(Math.abs(predict(pre, 20.5, up)!.predicted - m2) < 1e-9, up)
+    }
+    assert.ok(sw > 0 && sm > 0)
+  })
+})
+
+describe('baseline-v3 (opt-in): negative-binomial tails chosen per statistic', () => {
+  it('dispersion is interpolated between fitted points and held flat beyond the ends', () => {
+    const lo = alphaAt('pts', 0.1), hi = alphaAt('pts', 500)
+    assert.equal(alphaAt('pts', 0), lo)
+    assert.equal(alphaAt('pts', 1000), hi)
+    assert.ok(lo > hi, 'low-scoring players are far more dispersed than stars')
+    // halfway between two fitted points gives the midpoint of their dispersions
+    const { centers, alphas } = dispersionTable.dispersion.pts
+    for (let i = 1; i < centers.length; i++) {
+      const mid = (alphaAt('pts', (centers[i - 1] + centers[i]) / 2))
+      assert.ok(Math.abs(mid - (alphas[i - 1] + alphas[i]) / 2) < 1e-9, `between points ${i - 1} and ${i}`)
+      assert.ok(Math.abs(alphaAt('pts', centers[i]) - alphas[i]) < 1e-12)
+    }
+  })
+
+  it('follows the pre-registered policy table', () => {
+    assert.equal(distributionFor('pts', 12, 6).kind, 'normal') // stars: the native rule survives
+    assert.equal(distributionFor('pts', 4, 3).kind, 'nb')
+    assert.equal(distributionFor('reb', 9, 3).kind, 'nb')
+    assert.equal(distributionFor('fg3m', 7, 2).kind, 'normal')
+    assert.equal(distributionFor('stl', 3, 1).kind, 'poisson') // too few rows to justify a change
+    // constant-dispersion cells use ONE value per statistic, whatever the mean
+    for (const mean of [0.2, 0.5, 1.9]) {
+      const c = distributionFor('blk', mean, 0.5)
+      assert.ok(c.kind === 'nb' && c.alpha === dispersionTable.dispersion.blk.constant, `blk mean ${mean}`)
+    }
+    // bucket edges: below 2 is the low bucket, 2 and above is the middle bucket
+    const lowAst = distributionFor('ast', 1.99, 1)
+    const midAst = distributionFor('ast', 2, 1)
+    assert.ok(lowAst.kind === 'nb' && lowAst.alpha === dispersionTable.dispersion.ast.constant)
+    assert.ok(midAst.kind === 'nb' && midAst.alpha === alphaAt('ast', 2) && midAst.alpha !== lowAst.alpha)
+    assert.equal(distributionFor('stl', 2.5, 1).kind, 'poisson') // the middle bucket keeps the native rule for steals
+    assert.equal(distributionFor('stl', 1.99, 1).kind, 'nb')
+    // 6 is the edge between the middle and high buckets
+    assert.equal(distributionFor('pts', 5.99, 3).kind, 'nb')
+    assert.equal(distributionFor('pts', 6, 3).kind, 'normal')
+  })
+
+  it('is identical to the current model wherever the policy keeps the native rule', () => {
+    const vals = [24, 27, 22, 30, 19, 25, 28, 21, 26, 23, 29, 20, 24, 27, 25]
+    for (const line of [22.5, 24.5, 27.5]) {
+      const a = predict(samples(vals), line)!, b = predictV3('pts', samples(vals), line)!
+      assert.equal(a.pOver, b.pOver)
+      assert.equal(b.model, 'baseline-v3')
+    }
+  })
+
+  it('is more dispersed than Poisson for rebounds, which is why it was adopted', () => {
+    const vals = [2, 5, 3, 7, 1, 4, 6, 3, 2, 8, 3, 4]
+    const v2 = predict(samples(vals), 8.5)!.pOver
+    const v3 = predictV3('reb', samples(vals), 8.5)!.pOver
+    assert.ok(v3 > v2, `${v3} should exceed ${v2}: the heavier tail makes a big game likelier`)
+  })
+
+  it('over + under + push = 1, and invalid input is rejected', () => {
+    const s = samples([3, 5, 2, 4, 6, 3, 4, 5, 2, 3])
+    for (const line of [3, 3.5, 4]) {
+      const p = predictV3('ast', s, line)!
+      assert.ok(Math.abs(p.pOver + p.pUnder + p.pPush - 1) < 1e-12)
+    }
+    assert.equal(predictV3('ast', s, NaN), null)
+    assert.equal(predictV3('ast', s, Infinity), null)
+    assert.equal(predictV3('ast', samples([1, 2]), 3.5), null)
   })
 })

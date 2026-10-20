@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { blendProb, expectedValue, nbPOver, outcomeProbs, MODEL_WEIGHT } from './baseline.ts'
 import {
-  assessOddsAge, buildPicks, devigPair, etDate, normName,
+  assessOddsAge, buildPicks, devigPair, etDate, isPlayoffDate, normName,
   type BuildInput, type HistoryRow, type OddsEvent, type PlayerRow, type ProjectionRow,
 } from './picks.ts'
 
@@ -265,5 +265,51 @@ describe('odds age fails closed', () => {
   })
   it('no games: nothing to warn about', () => {
     assert.deepEqual(assessOddsAge([], NOW), { oddsAsOf: null, warnings: [], blocked: false })
+  })
+})
+
+describe('the playoff window', () => {
+  it('starts on April 16 and ends with June', () => {
+    for (const [day, want] of [['2026-04-15', false], ['2026-04-16', true], ['2026-05-01', true], ['2026-06-30', true], ['2026-07-01', false], ['2026-10-20', false], ['2026-01-15', false]] as const)
+      assert.equal(isPlayoffDate(day), want, day)
+  })
+})
+
+describe('projections are matched to the right statistic (regression: wrong-stat lookups went unnoticed)', () => {
+  const rebEvent = event(market('Jaylen Brown', 6.5, [{ book: 'DraftKings', over: 1.9, under: 1.9 }], 'player_rebounds'))
+  const reb = [6, 8, 5, 7, 9, 4, 6, 7, 8, 5, 6, 7]
+  it('a rebounds line uses the rebounds projection', () => {
+    const r = buildPicks(base({ events: [rebEvent], history: history(7, reb, 'reb'), projections: [projection(7, 'reb', 7.4, 0.1)] }))
+    const p = r.picks[0]
+    assert.equal(p.model, 'gbm-v1')
+    assert.ok(Math.abs(p.projection - 7.4) < 1e-12)
+  })
+  it('a rebounds line does not borrow the points projection', () => {
+    const r = buildPicks(base({ events: [rebEvent], history: history(7, reb, 'reb'), projections: [projection(7, 'pts', 25, 0.1)] }))
+    assert.equal(r.picks[0].model, 'baseline-v2')
+    assert.ok(Math.abs(r.picks[0].projection - 6.5) < 2.5, 'stays near the rebounds history, not 25')
+  })
+})
+
+describe('a line that always ties', () => {
+  it('produces no pick and no NaN', () => {
+    const r = buildPicks(base({
+      events: [event(market('Jaylen Brown', 0, [{ book: 'DraftKings', over: 1.9, under: 1.9 }]))],
+      projections: [projection(7, 'pts', 0, 0.1)], // the player is projected to score exactly 0
+    }))
+    assert.equal(r.picks.length, 0)
+  })
+})
+
+describe('opt-in fallback model', () => {
+  it("baseline-v3 is used for fallback lines only when asked, and is named as such", () => {
+    const off = buildPicks(base())
+    const on = buildPicks(base({ fallback: 'v3' }))
+    assert.equal(off.picks[0].model, 'baseline-v2')
+    assert.equal(on.picks[0].model, 'baseline-v3')
+  })
+  it('a fresh projection still wins over either fallback', () => {
+    const r = buildPicks(base({ fallback: 'v3', projections: [projection(7, 'pts', 24.8, 0.08)] }))
+    assert.equal(r.picks[0].model, 'gbm-v1')
   })
 })

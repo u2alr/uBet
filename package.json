@@ -16,7 +16,9 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run test:db",
     "test:db": "node --no-warnings --test tests/grade.test.mjs",
     "grade": "ingest\\.venv\\Scripts\\python ingest\\sync.py --grade-only",
-    "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs"
+    "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs tests/integration/fallback_v3.test.mjs",
+    "test:mutation": "node --no-warnings tests/mutation_check.mjs",
+    "check:data": "node --no-warnings ingest/check_data.mjs"
   },
   "dependencies": {
     "hono": "^4.13.13",

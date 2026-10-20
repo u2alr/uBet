@@ -2,7 +2,7 @@
 // No database, no network, no clock: everything arrives as an argument, so every number a user sees can be
 // reproduced in a test. The Worker (functions/api) does the I/O and calls buildPicks().
 import {
-  BIG_GAP, blendProb, expectedValue, hitRate, outcomeProbs, predict, riskTier,
+  BIG_GAP, blendProb, expectedValue, hitRate, outcomeProbs, predict, predictV3, riskTier,
   type GameType, type Risk, type Stat,
 } from './baseline.ts'
 
@@ -164,6 +164,8 @@ export interface BuildInput {
   maxProjectionAgeHours?: number
   /** 'best' (default) keeps each player's best-value and safest side; 'all' returns every side (for tests and diagnostics). */
   selection?: 'best' | 'all'
+  /** Which baseline supplies the fallback probabilities when no fresh projection exists. 'v2' (default) or the opt-in 'v3'. */
+  fallback?: 'v2' | 'v3'
 }
 
 type Quote = { book: string; price: number }
@@ -216,7 +218,7 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
     for (const L of lines.values()) {
       const rows = rowsByPlayer.get(L.pl.id)!
       const samples = rows.map((r) => ({ value: r[L.stat as 'pts' | 'reb' | 'ast' | 'fg3m'] as number, type: r.type }))
-      const base = predict(samples, L.point, upcomingType)
+      const base = input.fallback === 'v3' ? predictV3(L.stat, samples, L.point, upcomingType) : predict(samples, L.point, upcomingType)
       if (!base) { noHistory.add(L.pl.name); continue }
 
       // Prefer the boosted model's mean with a negative-binomial tail, but only while it is fresh.

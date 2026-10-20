@@ -23,6 +23,8 @@ TEAM_IDS = {t["abbreviation"]: t["id"] for t in teams.get_teams()}
 # The app shows this as "synced 2h ago".
 MARK_SYNCED = "INSERT OR REPLACE INTO meta (key,value) VALUES ('last_sync', datetime('now'));"
 # Picks are graded here, right after new box scores land (the website no longer writes to the database on page views).
+# Removes box-score rows with impossible minutes that an older version of this script ingested. Idempotent.
+CLEAN_SQL = "DELETE FROM player_games WHERE minutes <= 0 OR minutes > 70;"
 GRADE_SQL = (Path(__file__).resolve().parent / "grade.sql").read_text(encoding="utf-8")
 MIN_GAMES = 10  # below this, always include the previous season
 
@@ -105,8 +107,8 @@ def player_sql(p: dict, n_seasons: int, teams: dict[int, str]) -> list[str]:
     ]
     for year, df, kind in seasons:
         for r in df.itertuples():
-            if not r.MIN:
-                continue  # DNP
+            if not r.MIN or not 0 < r.MIN <= 70:
+                continue  # DNP, or a corrupt minutes value (NBA.com has published negative minutes)
             matchup = r.MATCHUP
             home = " vs. " in matchup
             mine, theirs = (matchup.split(" vs. ") if home else matchup.split(" @ "))
@@ -175,7 +177,7 @@ def main():
     targets = targets[args.start:]
 
     def flush(sql: list[str]) -> None:
-        sql = sql + [MARK_SYNCED, GRADE_SQL]
+        sql = sql + [CLEAN_SQL, MARK_SYNCED, GRADE_SQL]
         OUT.write_text("\n".join(sql), encoding="utf-8")
         subprocess.run(
             ["npx", "wrangler", "d1", "execute", "ubet", "--remote" if args.remote else "--local", "--file", str(OUT)],

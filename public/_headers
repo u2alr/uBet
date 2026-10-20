@@ -1,0 +1,6 @@
+# Static files only: Cloudflare does not apply this file to Functions (/api) responses, which set their own headers.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
