@@ -25,7 +25,9 @@ MARK_SYNCED = "INSERT OR REPLACE INTO meta (key,value) VALUES ('last_sync', date
 # Picks are graded here, right after new box scores land (the website no longer writes to the database on page views).
 # Removes box-score rows with impossible minutes that an older version of this script ingested. Idempotent.
 CLEAN_SQL = "DELETE FROM player_games WHERE minutes <= 0 OR minutes > 70;"
-GRADE_SQL = (Path(__file__).resolve().parent / "grade.sql").read_text(encoding="utf-8")
+GRADE_SQL = ((Path(__file__).resolve().parent / "grade.sql").read_text(encoding="utf-8") + "
+"
+             + (Path(__file__).resolve().parent / "grade_minds.sql").read_text(encoding="utf-8"))
 MIN_GAMES = 10  # below this, always include the previous season
 
 

@@ -17,6 +17,11 @@ export const MINUTES_COLOR = '#9085e9' // violet (slot 7)
 /** Shooting percentages borrow the colour of the statistic they relate to: FG% ~ points, 3P% ~ threes. */
 export const SHOOTING_COLOR = { fg: STAT_COLOR.pts, three: STAT_COLOR.fg3m, ft: STAT_COLOR.stl }
 
+/** One colour per mind, in the palette's documented slot order (blue, orange, aqua, yellow). Control is the neutral benchmark. */
+export const MIND_COLOR: Record<string, string> = {
+  sam: '#3987e5', val: '#d95926', lou: '#199e70', cat: '#c98500', control: '#a3a3a3',
+}
+
 export const INK = {
   grid: '#262626',
   axis: '#525252',

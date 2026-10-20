@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import GameDetail from './components/GameDetail'
 import PlayerView from './components/PlayerView'
+import Minds from './components/Minds'
 import Results from './components/Results'
 import Slip from './components/Slip'
 import SyncBar from './components/SyncBar'
@@ -8,7 +9,7 @@ import Today from './components/Today'
 import { SlipProvider } from './lib/slip'
 import { useSlip } from './lib/slipContext'
 
-const TABS = ['Today', 'Slip', 'Results', 'Players'] as const
+const TABS = ['Today', 'Slip', 'Minds', 'Results', 'Players'] as const
 type Tab = (typeof TABS)[number]
 
 export default function App() {
@@ -52,6 +53,7 @@ function Shell() {
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => setGameId(null)} onOpenPlayer={openPlayer} />
         : <Today refreshKey={refreshKey} onOpenPlayer={openPlayer} onOpenGame={setGameId} onOpenSlip={() => setTab('Slip')} />)}
       {tab === 'Slip' && <Slip />}
+      {tab === 'Minds' && <Minds refreshKey={refreshKey} />}
       {tab === 'Results' && <Results refreshKey={refreshKey} />}
       {tab === 'Players' && <PlayerView initialId={playerId} refreshKey={refreshKey} />}
     </div>

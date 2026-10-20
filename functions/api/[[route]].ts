@@ -517,6 +517,32 @@ app.get('/results', async (c) => {
   return c.json({ data: results, summary })
 })
 
+// The minds' frozen cards and their record. Pure read; cards are written by minds/run.mjs, graded by ingest/sync.py.
+app.get('/minds', async (c) => {
+  const db = c.env.DB
+  const miss = (e: unknown) => { console.error(e); return { results: [] as Record<string, unknown>[] } }
+  const bets = (await db.prepare(
+    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400`,
+  ).all().catch(miss)).results
+  const legs = bets.length ? (await db.prepare(
+    `SELECT bet_id AS betId, idx, player, stat, side, line, price, book, game_date AS gameDate, prob, actual, result
+     FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets ORDER BY day DESC, id DESC LIMIT 400)) ORDER BY bet_id, idx`,
+  ).all().catch(miss)).results : []
+  const summary = (await db.prepare(
+    `SELECT mind, COUNT(*) AS bets,
+            SUM(status IN ('won','lost','push')) AS settled, SUM(status = 'won') AS won, SUM(status = 'lost') AS lost,
+            SUM(status = 'open') AS open, COALESCE(SUM(profit), 0) AS units,
+            AVG(CASE WHEN status IN ('won','lost','push') THEN prob END) AS statedProb,
+            AVG(CASE WHEN status IN ('won','lost') THEN (status = 'won') END) AS actualRate,
+            AVG(CASE WHEN status IN ('won','lost') THEN ev END) AS statedEv
+     FROM mind_bets GROUP BY mind`,
+  ).all().catch(miss)).results
+  const curve = (await db.prepare(
+    `SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL GROUP BY mind, day ORDER BY day`,
+  ).all().catch(miss)).results
+  return c.json({ data: { bets, legs, summary, curve, version: 'minds-v1', minBets: 200 } })
+})
+
 // Manual prediction logging from the player page. Writes to the database, so it is not public.
 app.post('/predictions', async (c) => {
   if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
