@@ -69,7 +69,7 @@ export default function MindsCharts({ bets, legs, pick }: { bets: Bet[]; legs: L
             <ZAxis range={[40, 40]} />
             <Tooltip contentStyle={tip} cursor={{ stroke: INK.axis }} />
             <Legend wrapperStyle={{ fontSize: 12, color: INK.legend }} />
-            {style.filter((s) => s.data.length).map((s) => <Scatter isAnimationActive={false} key={s.m} name={NAMES[s.m]} data={s.data} fill={MIND_COLOR[s.m]} fillOpacity={dim(s.m)} />)}
+            {style.filter((s) => s.data.length).map((s) => <Scatter key={s.m} name={NAMES[s.m]} data={s.data} fill={MIND_COLOR[s.m]} fillOpacity={dim(s.m)} />)}
           </ScatterChart>
         </ResponsiveContainer>
       </Panel>
@@ -84,7 +84,7 @@ export default function MindsCharts({ bets, legs, pick }: { bets: Bet[]; legs: L
             <ZAxis range={[40, 40]} />
             <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 100, y: 100 }]} stroke={INK.reference} strokeDasharray="4 4" strokeOpacity={0.5} />
             <Tooltip contentStyle={tip} cursor={{ stroke: INK.axis }} formatter={(v, n) => [`${v}%`, n]} labelFormatter={() => ''} />
-            {disagreement.filter((s) => s.data.length).map((s) => <Scatter isAnimationActive={false} key={s.m} name={NAMES[s.m]} data={s.data} fill={MIND_COLOR[s.m]} fillOpacity={dim(s.m)} />)}
+            {disagreement.filter((s) => s.data.length).map((s) => <Scatter key={s.m} name={NAMES[s.m]} data={s.data} fill={MIND_COLOR[s.m]} fillOpacity={dim(s.m)} />)}
           </ScatterChart>
         </ResponsiveContainer>
       </Panel>
@@ -97,7 +97,7 @@ export default function MindsCharts({ bets, legs, pick }: { bets: Bet[]; legs: L
             <YAxis allowDecimals={false} {...axis} />
             <Tooltip contentStyle={tip} cursor={{ fill: '#ffffff10' }} />
             <Legend wrapperStyle={{ fontSize: 12, color: INK.legend }} formatter={(v: string) => STAT_LABEL[v] ?? v} />
-            {STAT_ORDER.map((s) => <Bar isAnimationActive={false} key={s} dataKey={s} name={s} stackId="a" fill={STAT_COLOR[s]} stroke="#171717" strokeWidth={1} />)}
+            {STAT_ORDER.map((s) => <Bar key={s} dataKey={s} name={s} stackId="a" fill={STAT_COLOR[s]} stroke="#171717" strokeWidth={1} />)}
           </BarChart>
         </ResponsiveContainer>
       </Panel>
@@ -111,8 +111,8 @@ export default function MindsCharts({ bets, legs, pick }: { bets: Bet[]; legs: L
             <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...axis} />
             <Tooltip contentStyle={tip} cursor={{ fill: '#ffffff10' }} formatter={(v, n) => [`${v}%`, n]} labelFormatter={(l, p) => `${l} (${p?.[0]?.payload?.n ?? 0} bets)`} />
             <Legend wrapperStyle={{ fontSize: 12, color: INK.legend }} />
-            <Bar isAnimationActive={false} dataKey="said" name="Said" fill={INK.legend} radius={[3, 3, 0, 0]} />
-            <Bar isAnimationActive={false} dataKey="got" name="Got" fill={STAT_COLOR.pts} radius={[3, 3, 0, 0]} />
+            <Bar dataKey="said" name="Said" fill={INK.legend} radius={[3, 3, 0, 0]} />
+            <Bar dataKey="got" name="Got" fill={STAT_COLOR.pts} radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </Panel>

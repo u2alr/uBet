@@ -3,3 +3,30 @@
 body {
   @apply bg-neutral-950 text-neutral-200 antialiased;
 }
+
+/* Motion: short, eased, and switched off for anyone who asks their system to reduce it. */
+@keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes bar-grow { from { transform: scaleY(0); opacity: 0.4; } to { transform: scaleY(1); opacity: 1; } }
+@keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 -2px 0 0); } }
+@keyframes pop { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.anim-fade { animation: fade-up 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.anim-pop { animation: pop 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.anim-bar {
+  transform-origin: bottom;
+  animation: bar-grow 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 28ms);
+}
+.anim-reveal { animation: reveal 0.9s ease-out 0.15s both; }
+
+/* A card that lifts a little under the pointer, and rows that fade their highlight in. */
+.lift { transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease; }
+.lift:hover { transform: translateY(-1px); }
+button, a, tr, select, input { transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease; }
+button:active { transform: scale(0.97); }
+details > summary { transition: color 0.15s ease; }
+details[open] > :not(summary) { animation: fade-up 0.25s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-delay: 0ms !important; transition-duration: 0.001ms !important; }
+}

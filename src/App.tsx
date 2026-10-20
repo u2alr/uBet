@@ -49,6 +49,7 @@ function Shell() {
 
       <SyncBar onRefresh={bump} />
 
+      <div key={`${tab}${gameId ?? ''}`} className="anim-fade">
       {tab === 'Today' && (gameId
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => setGameId(null)} onOpenPlayer={openPlayer} />
         : <Today refreshKey={refreshKey} onOpenPlayer={openPlayer} onOpenGame={setGameId} onOpenSlip={() => setTab('Slip')} />)}
@@ -56,6 +57,7 @@ function Shell() {
       {tab === 'Minds' && <Minds refreshKey={refreshKey} />}
       {tab === 'Results' && <Results refreshKey={refreshKey} />}
       {tab === 'Players' && <PlayerView initialId={playerId} refreshKey={refreshKey} />}
+      </div>
     </div>
   )
 }

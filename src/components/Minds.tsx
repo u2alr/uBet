@@ -115,7 +115,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           const on = pick === m
           return (
             <button key={m} onClick={() => setPick(on ? null : m)} aria-pressed={on}
-              className={`rounded-lg bg-neutral-900 p-3 text-left ${on ? 'ring-1 ring-neutral-500' : 'hover:bg-neutral-800/60'}`}>
+              className={`lift rounded-lg bg-neutral-900 p-3 text-left ${on ? 'ring-1 ring-neutral-500' : 'hover:bg-neutral-800/60'}`}>
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: MIND_COLOR[m] }} />
                 <span className="text-sm font-medium text-neutral-100">{NAMES[m]}</span>
@@ -141,7 +141,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
                 {s?.bestWin != null && <><dt className="text-neutral-500">Best / worst</dt><dd className="text-right tabular-nums text-neutral-200">{signed(s.bestWin)} / {signed(s.worstLoss ?? 0)}</dd></>}
               </dl>
               <div className="mt-2 h-1 overflow-hidden rounded bg-neutral-800">
-                <div className="h-full" style={{ width: `${Math.min(100, (settled / minBets) * 100)}%`, background: MIND_COLOR[m] }} />
+                <div className="h-full transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, (settled / minBets) * 100)}%`, background: MIND_COLOR[m] }} />
               </div>
               <p className="mt-0.5 text-[11px] text-neutral-500">{settled} of {minBets} settled bets</p>
             </button>

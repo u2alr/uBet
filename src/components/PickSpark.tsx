@@ -47,7 +47,7 @@ export function PickBars({ p }: { p: Pick }) {
             <YAxis stroke={INK.axis} tick={{ fill: INK.legend, fontSize: 10 }} tickLine={false} domain={[0, Math.ceil(Math.max(p.line, ...p.recent, p.projection ?? 0) * 1.15)]} />
             <ReferenceLine y={p.line} stroke={INK.reference} strokeDasharray="4 3" label={{ value: `line ${p.line}`, fill: INK.legend, fontSize: 10, position: 'insideTopRight' }} />
             {p.projection != null && <ReferenceLine y={p.projection} stroke={color(p)} strokeDasharray="1 3" />}
-            <Bar dataKey="v" radius={[2, 2, 0, 0]} isAnimationActive={false}>
+            <Bar dataKey="v" radius={[2, 2, 0, 0]} animationDuration={600}>
               {p.recent.map((v, i) => <Cell key={i} fill={fill(p, v)} />)}
               <LabelList dataKey="v" position="top" fill={INK.legend} fontSize={10} />
             </Bar>

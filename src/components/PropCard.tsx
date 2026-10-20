@@ -5,6 +5,7 @@ import type { Pick } from '../lib/picks'
 import { PROP_VIEWS, isSingle, viewValue, type PropViewKey } from '../lib/propViews'
 import type { GameRow } from '../lib/stats'
 import { logoUrl, teamByName, teamId } from '../lib/teams'
+import AnimatedNumber from './AnimatedNumber'
 import { SlipButton } from './PickTable'
 
 type Kind = 'regular' | 'playoffs' | 'preseason' | 'all'
@@ -123,7 +124,7 @@ export default function PropCard({ playerId, picks, stat, line, kind, onStat, on
           <div className="text-[11px] uppercase tracking-widest text-neutral-500">Hit rate</div>
           {hasLine && values.length ? (
             <div className="text-lg tabular-nums" style={{ color: hits / values.length >= 0.5 ? HIT : MISS }}>
-              {((hits / values.length) * 100).toFixed(1)}% <span className="text-sm text-neutral-400">({hits}/{values.length})</span>
+              <AnimatedNumber value={(hits / values.length) * 100} suffix="%" /> <span className="text-sm text-neutral-400">({hits}/{values.length})</span>
             </div>
           ) : <div className="text-lg text-neutral-600">–</div>}
           <div className="text-[11px] text-neutral-500">{over ? `Odds imply ${((1 / over.price) * 100).toFixed(1)}% Over` : 'over the line, last ' + (n || 'all') + ' games'}</div>
@@ -139,7 +140,7 @@ export default function PropCard({ playerId, picks, stat, line, kind, onStat, on
               <button key={v.key} onClick={() => pickView(v.key)} aria-pressed={v.key === view}
                 className={`min-w-14 rounded-md px-2 py-1 text-center ${v.key === view ? 'bg-neutral-700 ring-1 ring-neutral-500' : 'hover:bg-neutral-800'}`}>
                 <div className={`text-[11px] ${v.key === view ? 'text-neutral-100' : 'text-neutral-500'}`}>{v.label}</div>
-                <div className="text-sm tabular-nums text-neutral-100">{a == null ? '–' : a.toFixed(1)}</div>
+                <div className="text-sm tabular-nums text-neutral-100"><AnimatedNumber value={a} /></div>
                 <div className="text-[11px] tabular-nums" style={{ color: diff == null ? '#525252' : diff >= 0 ? HIT : MISS }}>
                   {diff == null ? '·' : `${diff >= 0 ? '+' : ''}${diff.toFixed(1)}`}
                 </div>
@@ -197,8 +198,8 @@ export default function PropCard({ playerId, picks, stat, line, kind, onStat, on
               {/* the line, with its value chip */}
               {hasLine && (
                 <>
-                  <div className="pointer-events-none absolute right-0 border-t border-dashed" style={{ left: 40, bottom: y(lineN) + 2, borderColor: LINE }} />
-                  <div className="absolute left-0 rounded px-1.5 text-xs tabular-nums text-neutral-900" style={{ bottom: y(lineN) - 7, background: LINE }}>{lineN}</div>
+                  <div className="pointer-events-none absolute right-0 border-t border-dashed transition-[bottom] duration-500 ease-out" style={{ left: 40, bottom: y(lineN) + 2, borderColor: LINE }} />
+                  <div className="absolute left-0 rounded px-1.5 text-xs tabular-nums text-neutral-900 transition-[bottom] duration-500 ease-out" style={{ bottom: y(lineN) - 7, background: LINE }}>{lineN}</div>
                 </>
               )}
               <div className="flex flex-1 items-end gap-1.5" style={{ marginLeft: 40 }}>
@@ -207,17 +208,17 @@ export default function PropCard({ playerId, picks, stat, line, kind, onStat, on
                   const col = !hasLine ? '#525252' : v > lineN ? HIT : v < lineN ? MISS : TIE
                   const parts = PROP_VIEWS.find((p) => p.key === view)!.parts.length > 1 ? ` (${(['pts', 'reb', 'ast'] as const).map((k) => `${g[k]} ${k}`).join(', ')})` : ''
                   return (
-                    <div key={`${g.date}${i}`} className="flex flex-1 flex-col items-center justify-end" style={{ height: H }}
+                    <div key={`${g.date}|${g.opp}`} className="flex flex-1 flex-col items-center justify-end" style={{ height: H }}
                       title={`${g.date} ${g.home ? 'vs' : '@'} ${g.opp ?? '?'}: ${v} ${meta.label}${parts}, ${fmt(g.minutes, 0)} min, ${g.won ? 'W' : 'L'}`}>
-                      <div className="flex w-full max-w-9 items-end justify-center rounded-t pb-1 text-xs font-medium tabular-nums text-white" style={{ height: Math.max(20, y(v)), background: col }}>{v}</div>
+                      <div className="anim-bar flex w-full max-w-9 items-end justify-center rounded-t pb-1 text-xs font-medium tabular-nums text-white transition-[height,background-color] duration-500 ease-out hover:brightness-125" style={{ height: Math.max(20, y(v)), background: col, ['--i' as string]: i }}>{v}</div>
                     </div>
                   )
                 })}
                 {next && (
                   <div className="relative flex flex-1 flex-col items-center justify-end" style={{ height: H }} title={`Next game${nextOpp ? ` ${nextAway ? '@' : 'vs'} ${nextOpp}` : ''}, ${next.gameDate}`}>
-                    <div className="flex w-full max-w-9 items-end justify-center rounded-t border border-dashed border-neutral-500 pb-1 text-sm text-neutral-300" style={{ height: Math.max(60, hasLine ? y(lineN) : 60) }}>?</div>
+                    <div className="anim-pop flex w-full max-w-9 items-end justify-center rounded-t border border-dashed border-neutral-500 pb-1 text-sm text-neutral-300 transition-[height] duration-500 ease-out" style={{ height: Math.max(60, hasLine ? y(lineN) : 60) }}>?</div>
                     {nextProj != null && (
-                      <div className="absolute w-full max-w-9 border-t-2 border-dashed" style={{ bottom: y(nextProj), borderColor: MINUTES }} title={`Our projection ${nextProj.toFixed(1)}`} />
+                      <div className="absolute w-full max-w-9 border-t-2 border-dashed transition-[bottom] duration-500 ease-out" style={{ bottom: y(nextProj), borderColor: MINUTES }} title={`Our projection ${nextProj.toFixed(1)}`} />
                     )}
                   </div>
                 )}
@@ -251,7 +252,7 @@ export default function PropCard({ playerId, picks, stat, line, kind, onStat, on
 
             {/* minutes: its own small chart on the same columns, never a second axis on the bars */}
             <div className="relative mt-2" style={{ marginLeft: 40, height: 46 }}>
-              <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${cols * 100} 46`} preserveAspectRatio="none" aria-label="Minutes per game">
+              <svg key={minVals.join()} className="anim-reveal absolute inset-0 h-full w-full" viewBox={`0 0 ${cols * 100} 46`} preserveAspectRatio="none" aria-label="Minutes per game">
                 {minVals.length > 1 && (
                   <polyline fill="none" stroke={MINUTES} strokeWidth={2} vectorEffect="non-scaling-stroke"
                     points={minVals.map((m, i) => `${i * 100 + 50},${42 - ((m - minBot) / (minTop - minBot || 1)) * 38}`).join(' ')} />
