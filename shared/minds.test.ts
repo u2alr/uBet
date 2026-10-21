@@ -437,3 +437,77 @@ test('leans obey the same all-Under share cap, counted together with the strict 
   const d = decide(mixed)
   assert.ok(d.leans.some((b) => b.legs[0].side === 'over'))
 })
+
+// ------------------------------------------------------------------ the paper volume board
+
+import { volumeBoard } from './minds.ts'
+
+/** `k` players on one team in one game, each with all four statistics, at most one line each, no market (one-sided quotes). */
+const board = (eventId: string, k: number, o: Partial<Pick> = {}): Pick[] =>
+  Array.from({ length: k }, (_, i) => (['pts', 'reb', 'ast', 'fg3m'] as const).map((stat) =>
+    pick({ eventId, team: 'BOS', teamName: 'Boston Celtics', stat, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }], modelProb: 0.58, game: 'Boston Celtics @ Detroit Pistons',
+      role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 }, ...o, playerId: 9000 + eventId.charCodeAt(0) * 10 + i, player: `V${eventId}${i}` }))).flat()
+
+test('volume board: paper only, every starter\'s statistics even with no market, up to 40 a game, best raw value first', () => {
+  const b = volumeBoard(board('V1', 8))
+  assert.equal(b.bets.length, 32, '8 players x 4 statistics, one line each')
+  assert.ok(b.bets.every((x) => x.tier === 'volume' && x.research === false))
+  assert.match(b.bets[0].rationale[0], /^VOLUME BOARD \(paper, never staked\)/)
+  const ev = b.bets.map((x) => x.ev)
+  assert.deepEqual([...ev].sort((x, y) => y - x), ev, 'best first')
+  assert.equal(Object.values(b.byGame)[0], 32)
+  assert.equal(volumeBoard(board('V2', 14, {})).bets.length, 40, 'only the best 10 by minutes, so at most 40 a game')
+})
+
+test('volume board: one line per player and statistic, and it is the better one', () => {
+  const many = ['A', 'B', 'C', 'D', 'E'].flatMap((g) => board(g, 8))
+  assert.ok(volumeBoard(many).bets.length <= 5 * 40)
+  const wide = Array.from({ length: 8 }, (_, i) => (['pts', 'reb', 'ast', 'fg3m'] as const).flatMap((stat) =>
+    Array.from({ length: 3 }, (_, k) => pick({ eventId: 'W1', team: 'BOS', stat, line: 5.5 + k, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }], role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 }, playerId: 8000 + i, player: `W${i}`, game: 'Boston Celtics @ Detroit Pistons' }))))
+    .flat()
+  const b = volumeBoard(wide)
+  assert.equal(b.bets.length, 32, 'a ladder of three lines is one bet, not three')
+  const sides = [pick({ eventId: 'S1', playerId: 31, player: 'Pair', stat: 'pts', side: 'over', line: 20.5, modelProb: 0.45, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }] }),
+    pick({ eventId: 'S1', playerId: 31, player: 'Pair', stat: 'pts', side: 'under', line: 20.5, modelProb: 0.55, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }] })]
+  const pair = volumeBoard(sides).bets
+  assert.equal(pair.length, 1)
+  assert.equal(pair[0].legs[0].side, 'under', 'the side with the better value is kept')
+  const keys = b.bets.map((x) => `${x.legs[0].playerId}|${x.legs[0].stat}`)
+  assert.equal(new Set(keys).size, keys.length)
+  const dense = volumeBoard(Array.from({ length: 6 }, (_, g) => board(`D${g}`, 8)).flat().filter((_, i) => i % 1 === 0))
+  assert.ok(Object.values(dense.byGame).every((n) => n <= 40))
+})
+
+test('volume board: leaves out injured players, falling minutes, stale projections and non-rotation players', () => {
+  const base = board('X1', 3)
+  assert.equal(volumeBoard(base).bets.length, 12)
+  assert.equal(volumeBoard(board('X2', 3, { injury: { status: 'questionable', label: 'Questionable', note: '' } })).bets.length, 0)
+  assert.equal(volumeBoard(board('X3', 3, { role: { label: 'Starter', min10: 30, trend: -5, games: 60 } })).bets.length, 0)
+  assert.equal(volumeBoard(board('X4', 3, { projectionAgeHours: 30 })).bets.length, 0)
+  assert.equal(volumeBoard(board('X5', 3, { role: { label: 'Bench', min10: 17, trend: 0, games: 60 } })).bets.length, 0)
+  assert.equal(volumeBoard(board('X6', 3, { sample: 9 })).bets.length, 0)
+  assert.equal(volumeBoard(board('X7', 3, { model: 'baseline-v2' as never })).bets.length, 0)
+  assert.equal(volumeBoard([]).bets.length, 0)
+})
+
+test('volume board never touches the strict or lean tiers', () => {
+  const picks = [...board('Y1', 6), pick()]
+  const d = decide(picks)
+  assert.equal(d.approved.length, 1)
+  assert.ok(d.volume.length >= 24)
+  assert.ok([...d.approved, ...d.leans].every((b) => b.tier === 'strict' || b.tier === 'lean'))
+  assert.equal(d.stats.volume, d.volume.length)
+})
+
+test('volume board: only main-line prices; a far alternate or a stale 30x quote never tops the ranking', () => {
+  const ok = pick({ eventId: 'M1', playerId: 61, player: 'Main', stat: 'pts', line: 24.5, price: 1.9, prices: [{ book: 'A', price: 1.9 }], marketProb: null, marketBooks: 1 })
+  const tail = pick({ eventId: 'M1', playerId: 61, player: 'Main', stat: 'pts', line: 34.5, price: 9.0, prices: [{ book: 'A', price: 9.0 }], marketProb: null, marketBooks: 1, modelProb: 0.4 })
+  const junk = pick({ eventId: 'M1', playerId: 61, player: 'Main', stat: 'reb', line: 4.5, price: 31, prices: [{ book: 'A', price: 31 }], marketProb: null, marketBooks: 1 })
+  const short = pick({ eventId: 'M1', playerId: 61, player: 'Main', stat: 'ast', line: 4.5, price: 1.2, prices: [{ book: 'A', price: 1.2 }], marketProb: null, marketBooks: 1 })
+  const b = volumeBoard([ok, tail, junk, short]).bets
+  assert.equal(b.length, 1)
+  assert.equal(b[0].legs[0].line, 24.5)
+  assert.ok(b.every((x) => x.ev < 1), 'no absurd values')
+  for (const price of [1.49, 2.61]) assert.equal(volumeBoard([pick({ eventId: 'M2', price, prices: [{ book: 'A', price }], marketProb: null, marketBooks: 1 })]).bets.length, 0)
+  for (const price of [1.5, 2.6]) assert.equal(volumeBoard([pick({ eventId: 'M3', price, prices: [{ book: 'A', price }], marketProb: null, marketBooks: 1 })]).bets.length, 1)
+})

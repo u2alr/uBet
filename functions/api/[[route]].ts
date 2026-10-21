@@ -650,7 +650,7 @@ app.get('/minds', async (c) => {
      WHERE b.version = ? AND b.tier = 'strict' GROUP BY m.mind`,
   ).bind(version).all()).results
   const tierRow = async (mind: string, tier: string) => (await db.prepare(`SELECT '${mind}' AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.tier = '${tier}' HAVING COUNT(*) > 0`).bind(version).all()).results
-  const summary = [...(await tierRow('chief', 'strict')), ...(await tierRow('lean', 'lean')), ...personalities, ...(await tierRow('research', 'research'))]
+  const summary = [...(await tierRow('chief', 'strict')), ...(await tierRow('lean', 'lean')), ...personalities, ...(await tierRow('volume', 'volume')), ...(await tierRow('research', 'research'))]
   const curve = (await db.prepare(
     `SELECT 'chief' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND tier = 'strict' GROUP BY day
      UNION ALL SELECT 'lean' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND tier = 'lean' GROUP BY day
@@ -673,10 +673,10 @@ app.get('/minds', async (c) => {
 
   // Calibration by statistic and price band, over settled singles in the staked portfolio.
   const calibration = (await db.prepare(
-    `SELECT l.stat AS stat, CASE WHEN l.price < 1.7 THEN '<1.70' WHEN l.price < 2.1 THEN '1.70-2.09' ELSE '2.10+' END AS band,
+    `SELECT b.tier AS tier, l.stat AS stat, CASE WHEN l.price < 1.7 THEN '<1.70' WHEN l.price < 2.1 THEN '1.70-2.09' ELSE '2.10+' END AS band,
             COUNT(*) AS n, AVG(l.prob) AS said, AVG(l.p_cons) AS cons, AVG(b.status = 'won') AS got
      FROM mind_legs l JOIN mind_bets b ON b.id = l.bet_id
-     WHERE b.version = ? AND b.kind = 'single' AND b.tier = 'strict' AND b.status IN ('won','lost') GROUP BY l.stat, band ORDER BY l.stat, band`,
+     WHERE b.version = ? AND b.kind = 'single' AND b.tier IN ('strict','lean','volume') AND b.status IN ('won','lost') GROUP BY b.tier, l.stat, band ORDER BY b.tier, l.stat, band`,
   ).bind(version).all()).results
   return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200, ranDays: days.map((d) => d.day), audit, rejections, calibration } })
 })

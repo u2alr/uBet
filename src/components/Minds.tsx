@@ -16,7 +16,7 @@ interface Bet {
 }
 interface Rejection { id: number; day: string; proposedBy: string; playerId: number; player: string; stat: string; side: string; line: number; price: number; game: string | null; reason: string; detail: string | null; pCons: number | null; evCons: number | null; result: string | null; actual: number | null }
 interface Audit { reason: string; n: number; graded: number; won: number; lost: number; units: number }
-interface Calib { stat: string; band: string; n: number; said: number; cons: number | null; got: number }
+interface Calib { tier: string; stat: string; band: string; n: number; said: number; cons: number | null; got: number }
 interface Leg {
   betId: number; idx: number; playerId: number; player: string; stat: string; side: string; line: number; price: number
   book: string | null; gameDate: string; prob: number; modelProb: number | null; marketProb: number | null; actual: number | null; result: string | null
@@ -40,10 +40,11 @@ interface Sum {
 interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string | null }[]
   ranDays: string[]; audit: Audit[]; rejections: Rejection[]; calibration: Calib[] } }
 
-const NAMES: Record<string, string> = { chief: 'Strict bets (the Chief)', lean: 'Leans (half stake)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
+const NAMES: Record<string, string> = { chief: 'Strict bets (the Chief)', lean: 'Leans (half stake)', volume: 'Volume board (paper)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
 const STYLE: Record<string, string> = {
   chief: 'full-stake bets that cleared every check',
   lean: 'a real model edge that is too uncertain for a full bet',
+  volume: 'paper only: many lines per game, graded for evidence, never bet',
   research: 'parlays: tracked and graded, never staked (independence unvalidated)',
   sam: 'proposes the likeliest outcomes, if they still pay',
   val: 'proposes the biggest conservative expected value',
@@ -72,7 +73,7 @@ const PIPELINE = [
   'Flat 1 unit per bet. Grading uses the executable price. Parlays assume independence between games, which is unvalidated, so they are research-only.',
 ]
 const BASE = ['sam', 'val', 'lou', 'cat']
-const V4_ORDER = ['chief', 'lean', 'sam', 'val', 'cat', 'research']
+const V4_ORDER = ['chief', 'lean', 'sam', 'val', 'cat', 'volume', 'research']
 const orderFor = (res: Res | null) => (!res ? BASE : res.data.version === res.data.current ? V4_ORDER : [...BASE, ...(res.data.summary.some((s) => s.mind === 'control') ? ['control'] : [])])
 const STATUS: Record<string, string> = { open: 'Open', won: 'Won', lost: 'Lost', push: 'Push', void: 'Void' }
 const settledStatus = new Set(['won', 'lost', 'push'])
@@ -85,6 +86,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const [pick, setPick] = useState<string | null>(null)
   const [show, setShow] = useState<'all' | 'open' | 'settled'>('all')
   const [view, setView] = useState<'game' | 'mind'>('game')
+  const [board, setBoard] = useState<'bets' | 'volume'>('bets')
   const [dayPick, setDayPick] = useState<string | null>(null)
   const [version, setVersion] = useState<string | null>(null)
   useEffect(() => { api<Res>(`/minds${version ? `?version=${version}` : ''}`).then(setRes).catch((e) => setError(e.message)) }, [refreshKey, version])
@@ -106,7 +108,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
   const { bets, legs, summary, minBets } = res.data
   const sum = (m: string) => summary.find((s) => s.mind === m)
-  const inGroupAll = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'research' ? b.tier === 'research' : (b.proposedBy ?? b.mind).split(',').includes(m) && b.tier === 'strict')
+  const inGroupAll = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'volume' ? b.tier === 'volume' : m === 'research' ? b.tier === 'research' : (b.proposedBy ?? b.mind).split(',').includes(m) && b.tier === 'strict')
   const legMap = new Map<number, Leg[]>()
   for (const l of legs) (legMap.get(l.betId) ?? legMap.set(l.betId, []).get(l.betId)!).push(l)
   const legsOf = (id: number) => legMap.get(id) ?? []
@@ -114,9 +116,13 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const expectedUnits = (m: string) => bets.filter((b) => inGroupAll(b, m) && settledStatus.has(b.status)).reduce((a, b) => a + b.ev, 0)
 
   const proposers = (b: Bet) => (b.proposedBy ?? b.mind).split(',')
-  const inGroup = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'research' ? b.tier === 'research' : proposers(b).includes(m) && b.tier === 'strict')
+  const inGroup = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'volume' ? b.tier === 'volume' : m === 'research' ? b.tier === 'research' : proposers(b).includes(m) && b.tier === 'strict')
   const visible = bets.filter((b) =>
-    (!pick || inGroup(b, pick)) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
+    (board === 'volume' ? b.tier === 'volume' : b.tier !== 'volume') && (!pick || inGroup(b, pick)) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
+  // The charts describe whichever board is showing: the paper volume board would otherwise swamp the real bets.
+  const chartBets = bets.filter((b) => (board === 'volume') === (b.tier === 'volume'))
+  const chartIds = new Set(chartBets.map((b) => b.id))
+  const chartLegs = legs.filter((l) => chartIds.has(l.betId))
   const days = [...new Set([...bets.map((b) => b.day), ...res.data.ranDays])].sort().reverse()
   const selDay = dayPick && days.includes(dayPick) ? dayPick : days[0]
   const byDay = new Map<string, Bet[]>()
@@ -147,7 +153,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       )}
 
 
-      <div className={`grid gap-2 sm:grid-cols-2 ${ORDER.length > 5 ? 'xl:grid-cols-6' : ORDER.length > 4 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
+      <div className={`grid gap-2 sm:grid-cols-2 ${ORDER.length > 6 ? 'xl:grid-cols-7' : ORDER.length > 5 ? 'xl:grid-cols-6' : ORDER.length > 4 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
         {ORDER.map((m) => {
           const s = sum(m)
           const settled = s?.settled ?? 0
@@ -231,10 +237,17 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
         )}
       </div>
 
-      <LazyMount height={560}><MindsCharts bets={bets} legs={legs} pick={pick} /></LazyMount>
+      <LazyMount height={560}><MindsCharts bets={chartBets} legs={chartLegs} pick={pick} /></LazyMount>
 
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="mr-2 text-sm text-neutral-300">Bets{pick ? `: ${NAMES[pick]}` : ''} <span className="text-xs text-neutral-600">{visible.length}</span></h2>
+        {bets.some((b) => b.tier === 'volume') && (
+          <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
+            {([['bets', 'Bets'], ['volume', 'Volume board (paper)']] as const).map(([v, label]) => (
+              <button key={v} onClick={() => setBoard(v)} className={`px-3 py-1 ${board === v ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{label}</button>
+            ))}
+          </div>
+        )}
         <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
           {([['game', 'By game'], ['mind', 'By mind']] as const).map(([v, label]) => (
             <button key={v} onClick={() => setView(v)} className={`px-3 py-1 ${view === v ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{label}</button>
@@ -259,7 +272,8 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           {bets.length === 0 ? <>No cards yet. Run <code className="text-neutral-300">node minds/run.mjs</code> to generate today's bets.</> : 'No bets match this filter.'}
         </p>
       )}
-      {view === 'game' && visible.every((b) => b.day !== selDay) && res.data.ranDays.includes(selDay) && (
+      {board === 'volume' && <VolumeNote bets={visible.filter((b) => b.day === selDay)} legsOf={legsOf} />}
+      {board === 'bets' && view === 'game' && visible.every((b) => b.day !== selDay) && res.data.ranDays.includes(selDay) && (
         <NoBets day={selDay} rejections={res.data.rejections.filter((r) => r.day === selDay)} />
       )}
       {view === 'game' && visible.some((b) => b.day === selDay && b.tier !== 'strict' && b.tier !== 'research') && !visible.some((b) => b.day === selDay && b.tier === 'strict') && (
@@ -622,17 +636,34 @@ function CalibrationTable({ rows }: { rows: Calib[] }) {
     <div className="rounded-lg bg-neutral-900 px-3 py-2 text-xs">
       <h3 className="mb-1 text-neutral-300">Calibration by statistic and price</h3>
       <table className="w-full text-left">
-        <thead className="text-neutral-500"><tr><th className="py-1 font-normal">Stat</th><th className="font-normal">Price</th><th className="font-normal">Bets</th><th className="font-normal">Said</th><th className="font-normal">Conservative</th><th className="font-normal">Got</th></tr></thead>
+        <thead className="text-neutral-500"><tr><th className="py-1 font-normal">Tier</th><th className="font-normal">Stat</th><th className="font-normal">Price</th><th className="font-normal">Bets</th><th className="font-normal">Said</th><th className="font-normal">Conservative</th><th className="font-normal">Got</th></tr></thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={`${r.stat}${r.band}`} className="border-t border-neutral-800 text-neutral-300">
-              <td className="py-1">{STAT_LABEL[r.stat] ?? r.stat}</td><td>{r.band}</td><td className="tabular-nums">{r.n}</td>
+            <tr key={`${r.tier}${r.stat}${r.band}`} className="border-t border-neutral-800 text-neutral-300">
+              <td className="py-1">{r.tier === 'volume' ? 'volume (paper)' : r.tier}</td><td>{STAT_LABEL[r.stat] ?? r.stat}</td><td>{r.band}</td><td className="tabular-nums">{r.n}</td>
               <td className="tabular-nums">{pct(r.said)}</td><td className="tabular-nums">{r.cons == null ? '–' : pct(r.cons)}</td><td className="tabular-nums">{pct(r.got)}</td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="mt-1 text-neutral-600">Small groups say nothing: wait for dozens of bets in a row of this table before reading it.</p>
+    </div>
+  )
+}
+
+/** What the volume board is, how far it reaches per game, and what the average line on it is worth. */
+function VolumeNote({ bets, legsOf }: { bets: Bet[]; legsOf: (id: number) => Leg[] }) {
+  const perGame = new Map<string, number>()
+  for (const b of bets) { const g = legsOf(b.id)[0]?.eventId ?? '?'; perGame.set(g, (perGame.get(g) ?? 0) + 1) }
+  const reach = [...perGame.values()].filter((n) => n >= 30).length
+  const avgEv = bets.length ? bets.reduce((a, b) => a + b.ev, 0) / bets.length : null
+  const positive = bets.filter((b) => b.ev > 0).length
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm text-neutral-300">
+      <b className="font-medium text-neutral-100">Paper only: {bets.length} lines.</b> Every rotation player's best main line of each statistic, per game, graded afterwards so calibration
+      can be read at scale. It is not a list to bet. The values here are the model's alone (average <b className="font-medium text-neutral-100">{avgEv == null ? '–' : `${avgEv >= 0 ? '+' : ''}${(avgEv * 100).toFixed(1)}%`}</b>, {positive} of {bets.length} above zero) with
+      no market to check them against, and they overstate: the model is mildly overconfident, and choosing the better side of every line picks up its errors. A random line loses to the book's margin.
+      {perGame.size > 0 && <> {reach} of {perGame.size} games reach 30 lines; the rest have fewer because books post props for only some players and the model covers only some of those.</>}
     </div>
   )
 }

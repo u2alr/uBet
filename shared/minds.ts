@@ -1,11 +1,11 @@
-// The minds, version 5 (version 4 plus a small-stake tier of leans): four candidate-generating personalities, four evidence agents, and one strict Chief.
+// The minds, version 6 (version 5 plus a paper-only volume board): four candidate-generating personalities, four evidence agents, and one strict Chief.
 // Pure and deterministic: every probability and price is calculated here in code; nothing is voted on.
-// Rules, evidence for each threshold, and what is NOT validated: research/PREREG_MINDS_V4.md and PREREG_MINDS_V5.md.
-// Frozen after the first v5 decision. A change is minds-v6.
+// Rules, evidence for each threshold, and what is NOT validated: research/PREREG_MINDS_V4.md, V5.md and V6.md.
+// Frozen after the first v6 decision. A change is minds-v7.
 import { TEAM_NAMES, type Pick } from './picks.ts'
 import { blendProb, expectedValue } from './baseline.ts'
 
-export const MINDS_VERSION = 'minds-v5'
+export const MINDS_VERSION = 'minds-v6'
 
 export const CHIEF = {
   // ---- eligibility: data complete, fresh, and a starter or star
@@ -65,6 +65,14 @@ export const CHIEF = {
   // ---- Leans: a second, clearly lesser tier. The model sees an edge that does not survive the uncertainty haircut.
   // Point estimates, not conservative ones, so these are exactly the bets the strict tier turns down. Small stake, tracked apart.
   lean: { minEvHat: 0.02, minProb: 0.5, stake: 0.5, maxPerDay: 8 },
+
+  // ---- Volume board: PAPER ONLY. For every game, the best line of each of a team's top `topN` players' four statistics (at most
+  // 10 x 4 = 40 per team-game), ranked by raw model
+  // value. It exists to produce graded evidence at scale (calibration by stat and price), not to be bet: most of these lines have
+  // no edge, and a book's margin makes the average one lose. It has no market check, so it is not a place to look for value.
+  /** Only lines priced like a real main line (a coin flip plus margin). Far alternates and stale or promotional quotes pay 5x to 30x and
+   *  would top any ranking by raw value, because the model overrates tails. */
+  volume: { topN: 10, minRoleMinutes: 18, minPrice: 1.5, maxPrice: 2.6 },
 } as const
 
 export type MindId = 'sam' | 'val' | 'lou' | 'cat'
@@ -230,7 +238,7 @@ export interface Bet {
   /** Parlays are research-only: tracked and graded, but not part of the staked portfolio. */
   research: boolean
   /** strict: the Chief's staked bets. lean: a smaller stake on a weaker edge. research: parlays, never staked. */
-  tier: 'strict' | 'lean' | 'research'
+  tier: 'strict' | 'lean' | 'volume' | 'research'
   /** Suggested stake in units. */
   stake: number
   rationale: string[]
@@ -247,9 +255,11 @@ export interface Decision {
   approved: Bet[]
   /** Smaller-stake bets on edges too weak for the strict tier. Tracked and graded separately. */
   leans: Bet[]
+  /** The paper-only volume board: many lines per game, graded for evidence, never staked. */
+  volume: Bet[]
   research: Bet[]
   rejected: Rejection[]
-  stats: { picks: number; eligible: number; ineligible: Record<string, number>; candidates: number; approved: number; leans: number; research: number; rejected: number }
+  stats: { picks: number; eligible: number; ineligible: Record<string, number>; candidates: number; approved: number; leans: number; volume: number; volumeByGame: Record<string, number>; research: number; rejected: number }
 }
 
 /** What the Chief checks after the proposer's own thresholds. First failure wins. */
@@ -303,6 +313,56 @@ function leanBet(e: Evidence): Bet {
     ...bet, tier: 'lean', stake: c.lean.stake,
     rationale: [`LEAN, suggested stake ${c.lean.stake} unit: the model sees ${q.evHat >= 0 ? '+' : ''}${pct(q.evHat, 1)} expected value, but it is ${pct(q.evCons, 1)} once the uncertainty from ${q.nEff} games is counted, so it did not earn a full bet. Treat it as a lower-confidence play.`, ...bet.rationale],
   }
+}
+
+/** Why a line is not on the volume board. Same data and role checks as the strict tier, but no market requirement. */
+function volumeReason(p: Pick): string | null {
+  const c = CHIEF
+  if (p.team == null || p.model !== 'gbm-v1') return 'no_fresh_projection'
+  if (p.projectionAgeHours == null || p.projectionAgeHours > c.maxProjectionAgeHours) return 'stale_projection'
+  if (!Number.isFinite(p.modelProb) || !Number.isFinite(p.price) || p.price <= 1) return 'bad_numbers'
+  if (p.price < c.volume.minPrice || p.price > c.volume.maxPrice) return 'not_a_main_line_price'
+  if (p.sample < c.minSample) return 'thin_history'
+  if (p.role == null || p.role.min10 < c.volume.minRoleMinutes) return 'not_a_starter_or_star'
+  if (p.injury) return 'injury_listed'
+  if (p.role.trend != null && p.role.trend <= c.minutesDropVeto) return 'minutes_dropping'
+  return null
+}
+
+/** Paper only. Per game: each rotation player's best line of each statistic (either side), best raw value first. */
+export function volumeBoard(allPicks: Pick[]): { bets: Bet[]; byGame: Record<string, number> } {
+  const c = CHIEF
+  const ok = allPicks.filter((p) => !volumeReason(p))
+  const minutes = new Map<string, Map<number, number>>()
+  for (const p of ok) {
+    const g = minutes.get(groupKey(p)) ?? minutes.set(groupKey(p), new Map()).get(groupKey(p))!
+    g.set(p.playerId, p.role!.min10)
+  }
+  const starters = new Set<string>()
+  for (const [g, m] of minutes) [...m].sort((a, b) => b[1] - a[1]).slice(0, c.volume.topN).forEach(([id]) => starters.add(`${g}|${id}`))
+  const byGame = new Map<string, Evidence[]>()
+  for (const p of ok.filter((x) => starters.has(`${groupKey(x)}|${x.playerId}`))) {
+    const e = buildEvidence(p)
+    ;(byGame.get(p.eventId) ?? byGame.set(p.eventId, []).get(p.eventId)!).push(e)
+  }
+  const bets: Bet[] = []
+  const counts: Record<string, number> = {}
+  for (const [eventId, list] of byGame) {
+    const best = new Map<string, Evidence>()                                  // one line per player and statistic: the better side
+    for (const e of list) {
+      const k = `${e.pick.playerId}|${e.pick.stat}`
+      const cur = best.get(k)
+      if (!cur || e.quant.evHat > cur.quant.evHat) best.set(k, e)
+    }
+    const top = [...best.values()].sort((a, b) => b.quant.evHat - a.quant.evHat)
+    counts[list[0].pick.game] = top.length
+    for (const e of top) {
+      const b = singleBet(e, ['val'])
+      bets.push({ ...b, tier: 'volume', rationale: [`VOLUME BOARD (paper, never staked): ranked by the model's raw value, ${e.quant.evHat >= 0 ? '+' : ''}${pct(e.quant.evHat, 1)} at ${e.market.execPrice.toFixed(2)}. Most lines on this board have no edge and a book's margin makes the average one lose; it is here to be graded, not to be bet.`, ...b.rationale.slice(1, 2), ...b.rationale.slice(4)] })
+    }
+    void eventId
+  }
+  return { bets, byGame: counts }
 }
 
 /** The proposers whose own thresholds this evidence meets. */
@@ -415,9 +475,10 @@ export function decide(allPicks: Pick[]): Decision {
   // 4. Parlays (research only): individually qualified legs, different games, product of conservative chances.
   const research = buildParlays(evidence.filter((e) => !chiefCheck(e) && e.pick.push === 0 && e.quant.evCons >= c.lou.minLegEvCons && e.quant.pCons >= c.lou.minLegPCons))
 
+  const vol = volumeBoard(allPicks)
   return {
-    approved, leans, research, rejected,
-    stats: { picks: allPicks.length, eligible: pool.length, ineligible, candidates, approved: approved.length, leans: leans.length, research: research.length, rejected: rejected.length },
+    approved, leans, volume: vol.bets, research, rejected,
+    stats: { picks: allPicks.length, eligible: pool.length, ineligible, candidates, approved: approved.length, leans: leans.length, volume: vol.bets.length, volumeByGame: vol.byGame, research: research.length, rejected: rejected.length },
   }
 }
 
