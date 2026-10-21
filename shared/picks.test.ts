@@ -338,3 +338,33 @@ describe('matching a pick to the ESPN game', () => {
     assert.ok(!sameMatchup('Boston Celtics', 'Boston Celtics', 'Boston Celtics'))
   })
 })
+
+describe('quote timestamps, identity and the per-book detail the engine needs', () => {
+  const stamped = (book: string, over: number, under: number, nbaId?: number, updated = '2026-10-20T14:30:00Z') => ({
+    key: book.toLowerCase(), title: book, markets: [{ key: 'player_points', outcomes: [
+      { name: 'Over', description: 'Jaylen Brown', price: over, point: 24.5, updated, updatedSource: 'quote' as const, main: true, playerNbaId: nbaId },
+      { name: 'Under', description: 'Jaylen Brown', price: under, point: 24.5, updated, updatedSource: 'quote' as const, main: true, playerNbaId: nbaId },
+    ] }],
+  })
+  it('keeps each book\'s two-sided quote with its timestamp, and the selected side\'s price per book', () => {
+    const r = buildPicks(base({ events: [event([stamped('DraftKings', 1.9, 1.9, 7), stamped('FanDuel', 1.95, 1.85, 7, '2026-10-20T14:00:00Z')])] }))
+    const over = find(r, 'over')!
+    assert.equal(over.identity, 'verified')
+    assert.equal(over.main, true); assert.equal(over.mainKnown, true)
+    assert.deepEqual(over.bookQuotes!.map((q) => [q.book, q.over, q.under, q.overUpdated]).sort(), [['DraftKings', 1.9, 1.9, '2026-10-20T14:30:00Z'], ['FanDuel', 1.95, 1.85, '2026-10-20T14:00:00Z']])
+    assert.deepEqual(over.sideQuotes!.map((q) => [q.book, q.price, q.updated]), [['FanDuel', 1.95, '2026-10-20T14:00:00Z'], ['DraftKings', 1.9, '2026-10-20T14:30:00Z']])
+  })
+  it('drops a line whose provider player id disagrees with the database, and says so', () => {
+    const r = buildPicks(base({ events: [event([stamped('DraftKings', 1.9, 1.9, 999)])] }))
+    assert.equal(r.picks.length, 0)
+    assert.equal(r.diagnostics.identityMismatches.length, 1)
+    assert.match(r.diagnostics.identityMismatches[0], /999 vs 7/)
+  })
+  it('marks identity unverified, not verified, when the provider gives no id; plain quotes carry no invented timestamp', () => {
+    const r = buildPicks(base())
+    const over = find(r, 'over')!
+    assert.equal(over.identity, 'unverified')
+    assert.equal(over.mainKnown, false)
+    assert.ok(over.bookQuotes!.every((q) => q.overUpdated === null && q.underUpdated === null))
+  })
+})

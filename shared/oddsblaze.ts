@@ -15,7 +15,11 @@ export interface BlazeOdd {
   name?: string
   price: string | number
   selection?: { name?: string; side?: string; line?: number }
-  player?: { name?: string }
+  player?: { name?: string; mappings?: { NBA?: { id?: string | number } } }
+  /** This quote's own timestamp. Only some books give one (DraftKings does; Fanatics and Caesars do not). */
+  updated?: string
+  /** The book's main line for this market, as opposed to an alternate. */
+  main?: boolean
 }
 export interface BlazeEvent {
   id: string
@@ -26,6 +30,8 @@ export interface BlazeEvent {
 }
 export interface BlazeResponse {
   sportsbook: { id: string; name: string }
+  /** When the book's whole feed was last refreshed. The fallback timestamp for quotes with none of their own. */
+  updated?: string
   events: BlazeEvent[]
 }
 
@@ -68,7 +74,11 @@ export function normalizeOddsBlaze(responses: BlazeResponse[]): { events: OddsEv
         if (typeof line !== 'number' || !Number.isFinite(line)) { stats.skipped.line++; continue }
         const player = o.player?.name ?? o.selection?.name
         if (!player) { stats.skipped.player++; continue }
-        ;(markets.get(key) ?? markets.set(key, []).get(key)!).push({ name: side, description: player, price, point: line, id: o.id })
+        const nba = Number(o.player?.mappings?.NBA?.id)
+        ;(markets.get(key) ?? markets.set(key, []).get(key)!).push({
+          name: side, description: player, price, point: line, id: o.id,
+          updated: o.updated ?? r.updated, updatedSource: o.updated ? 'quote' : 'feed', main: o.main, playerNbaId: Number.isFinite(nba) && nba > 0 ? nba : undefined,
+        })
         stats.kept++
       }
       if (!markets.size) continue

@@ -8,7 +8,10 @@ import path from 'node:path'
 import { buildPicks, etDate, normName } from '../shared/picks.ts'
 import { normalizeOddsBlaze, TWO_WAY_BOOKS } from '../shared/oddsblaze.ts'
 import { enrichPicks, parseInjuries } from '../shared/injuries.ts'
+import { gzipSync } from 'node:zlib'
 import { attachOpponent, decide, legKey, MINDS_VERSION } from '../shared/minds.ts'
+import { parseCalibration } from '../shared/engine/calibration.ts'
+import { makeConfig } from '../shared/engine/config.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -50,7 +53,9 @@ const responses = []
 const cacheFile = path.join(ROOT, 'minds', 'out', 'odds_cache.json')
 if (useCache && existsSync(cacheFile) && Date.now() - statSync(cacheFile).mtimeMs < 3 * 3600_000) {
   responses.push(...JSON.parse(readFileSync(cacheFile, 'utf8')))
-  now = statSync(cacheFile).mtimeMs   // judge the cached lines as of when they were downloaded
+  // judge the cached lines as of when they were downloaded: just after the newest quote timestamp inside them
+  const stamps = [...readFileSync(cacheFile, 'utf8').matchAll(/"updated":\s*"([^"]+)"/g)].map((m) => Date.parse(m[1])).filter(Number.isFinite)
+  now = stamps.length ? Math.max(...stamps) + 120_000 : statSync(cacheFile).mtimeMs
   console.log('using cached odds from', new Date(now).toLocaleTimeString())
 } else {
   for (const b of books) {
@@ -101,46 +106,46 @@ const league = Object.fromEntries(['pts', 'reb', 'ast', 'fg3m'].map((s) => [s, a
 const oppTable = Object.fromEntries(allowed.map((r) => [r.team, Object.fromEntries(['pts', 'reb', 'ast', 'fg3m'].map((s) => [s, r[s] / league[s]]))]))
 console.log(`opponent tendencies for ${allowed.length} teams`)
 
-const decision = decide(attachOpponent(upcoming, oppTable))
-if (process.env.LINE_COUNT) {   // developer aid: where do lines drop out, per game?
-  const stages = { 'all lines': () => true, 'has fresh projection': (p) => p.model === 'gbm-v1' && p.projectionAgeHours != null && p.projectionAgeHours <= 24, 'main-line price': (p) => p.price >= 1.5 && p.price <= 2.6, 'has role/minutes': (p) => p.role != null, '18+ min': (p) => p.role != null && p.role.min10 >= 18, 'not injured': (p) => !p.injury, '10+ games': (p) => p.sample >= 10 }
-  const games = [...new Set(upcoming.map((p) => p.game))]
-  let cur = upcoming
-  console.log('game'.padEnd(34), Object.keys(stages).map((k) => k.slice(0, 12).padStart(13)).join(''))
-  const rows = Object.fromEntries(games.map((g) => [g, []]))
-  for (const f of Object.values(stages)) { cur = cur.filter(f); for (const g of games) rows[g].push(new Set(cur.filter((p) => p.game === g).map((p) => `${p.playerId}|${p.stat}`)).size) }
-  for (const g of games) console.log(g.split(' @ ').map((x) => x.split(' ').pop()).join('@').padEnd(34), rows[g].map((n) => String(n).padStart(13)).join(''))
-}
-if (process.env.EV_DIST) {   // developer aid: how much raw edge exists on this slate, at each threshold
-  const { buildEvidence, ineligibleReason } = await import('../shared/minds.ts')
-  const ev = attachOpponent(upcoming, oppTable).filter((p) => !ineligibleReason(p)).map(buildEvidence).filter((e) => !e.skeptic.vetoes.length && !e.market.vetoes.length && e.matchup.score >= 0)
-  for (const t of [0.05, 0.03, 0.02, 0.01, 0, -0.02]) console.log(`raw EV >= ${t}: ${ev.filter((e) => e.quant.evHat >= t && e.quant.pBlend >= 0.5).length} of ${ev.length} clean eligible picks;  conservative >= ${t}: ${ev.filter((e) => e.quant.evCons >= t && e.quant.pBlend >= 0.5).length}`)
-}
+// Calibration artifact (written by research/calibrate.py). Missing or unreadable => the engine approves nothing (fail closed).
+let calibration = null
+try { calibration = parseCalibration(JSON.parse(readFileSync(path.join(ROOT, 'shared', 'calibration.json'), 'utf8'))) } catch (e) { console.error(`WARNING: calibration artifact unusable (${e.message}); nothing can be approved`) }
+const config = makeConfig()
+const inputs = attachOpponent(upcoming, oppTable)
+const decision = decide(inputs, { now, config, calibration, injuryChecked: injuries != null })
+const runId = `${day}-${MINDS_VERSION}-${decision.run.configHash.slice(0, 8)}-${now}`
 const { approved, leans, volume, research, rejected } = decision
 const sd = decision.stats
-console.log(`picks ${sd.picks} -> eligible ${sd.eligible} -> candidates ${sd.candidates} -> approved ${sd.approved} strict + ${sd.leans} leans (+${sd.research} research parlays, ${sd.volume} paper volume lines), rejected ${sd.rejected}`)
-console.log('not eligible:', JSON.stringify(sd.ineligible))
+console.log(`picks ${sd.picks} -> evaluated ${sd.evaluated} -> candidates ${sd.candidates} -> approved ${sd.approved} strict + ${sd.leans} SHADOW_ONLY leans (+${sd.research} research-only, ${sd.volume} paper volume lines), rejected ${sd.rejected}`)
+console.log('status:', JSON.stringify(sd.byStatus), ' reasons:', JSON.stringify(sd.byReason))
 const why = rejected.reduce((a, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {})
 console.log('rejected because:', JSON.stringify(why))
 
 const gameOf = (id) => events.find((e) => e.id === id)
 const q = (v) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`)
 const lines = []
+const gz = gzipSync(JSON.stringify(inputs)).toString('base64')
+lines.push(`INSERT OR IGNORE INTO mind_runs (run_id, day, version, config_hash, config_json, calibration_version, calibration_hash, stats_json, cap_log_json) VALUES (${q(runId)}, ${q(day)}, ${q(MINDS_VERSION)}, ${q(decision.run.configHash)}, ${q(JSON.stringify(config))}, ${q(decision.run.calibrationVersion)}, ${q(decision.run.calibrationHash)}, ${q(JSON.stringify(sd))}, ${q(JSON.stringify(decision.capLog))});`)
+for (let i = 0; i * 60000 < gz.length; i++) lines.push(`INSERT OR IGNORE INTO mind_run_inputs (run_id, idx, chunk) VALUES (${q(runId)}, ${i}, ${q(gz.slice(i * 60000, (i + 1) * 60000))});`)
+const outcomeOf = new Map()
+for (const b of approved) b.records.forEach((r) => outcomeOf.set(r.key, 'strict'))
+for (const b of leans) b.records.forEach((r) => outcomeOf.set(r.key, 'shadow_lean'))
+for (const b of research) b.records.forEach((r) => outcomeOf.set(r.key, outcomeOf.get(r.key) ?? 'research'))
+for (const r of decision.candidates) lines.push(`INSERT OR IGNORE INTO mind_candidates (run_id, key, status, outcome, record_json) VALUES (${q(runId)}, ${q(r.key)}, ${q(r.status)}, ${q(outcomeOf.get(r.key) ?? (r.status === 'ELIGIBLE' ? 'not_proposed' : `rejected:${r.status}`))}, ${q(JSON.stringify(r))});`)
 for (const b of [...approved, ...leans, ...volume, ...research]) {
   const betKey = [day, 'chief', MINDS_VERSION, ...b.legs.map(legKey).sort()].join('|')
-  lines.push(`INSERT OR IGNORE INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, stake, proposed_by, p_cons, ev_cons, rationale, research, tier) VALUES (${q(betKey)}, ${q(day)}, ${q(b.mind)}, ${q(MINDS_VERSION)}, ${q(b.kind)}, ${b.odds}, ${b.prob}, ${b.ev}, ${b.stake}, ${q(b.proposedBy.join(','))}, ${b.pCons}, ${b.evCons}, ${q(JSON.stringify(b.rationale))}, ${b.research ? 1 : 0}, ${q(b.tier)});`)
+  lines.push(`INSERT OR IGNORE INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, stake, proposed_by, p_cons, ev_cons, rationale, research, tier, label, run_id) VALUES (${q(betKey)}, ${q(day)}, ${q(b.mind)}, ${q(MINDS_VERSION)}, ${q(b.kind)}, ${b.odds}, ${b.prob}, ${b.ev}, ${b.stake}, ${q(b.proposedBy.join(','))}, ${b.pCons}, ${b.evCons}, ${q(JSON.stringify(b.rationale))}, ${b.research ? 1 : 0}, ${q(b.tier)}, ${q(b.label)}, ${q(runId)});`)
   b.legs.forEach((l, i) => {
-    const e = b.legEvidence[i]
+    const rec = b.records[i] ?? { probability: { decision: b.prob, conservative: null }, review: { matchup: { score: null } }, eligibility: { flags: [] } }
     lines.push(
       `INSERT OR IGNORE INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, book, odds_id, event_id, game_date, prob, model_prob, market_prob, tip_off, home_team, away_team, p_cons, matchup_score, skeptic_flags) ` +
-      `SELECT id, ${i}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${b.legPrices[i]}, ${q(l.book)}, ${q(l.oddsId)}, ${q(l.eventId)}, ${q(l.gameDate)}, ${e.quant.pBlend}, ${l.modelProb}, ${q(l.marketProb)}, ${q(gameOf(l.eventId)?.commence_time)}, ${q(gameOf(l.eventId)?.home_team)}, ${q(gameOf(l.eventId)?.away_team)}, ${e.quant.pCons}, ${e.matchup.score}, ${q(e.skeptic.flags.join(','))} FROM mind_bets WHERE bet_key = ${q(betKey)};`)
+      `SELECT id, ${i}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${b.legPrices[i]}, ${q(l.book)}, ${q(l.oddsId)}, ${q(l.eventId)}, ${q(l.gameDate)}, ${rec.probability?.decision ?? b.prob}, ${l.modelProb}, ${q(l.marketProb)}, ${q(gameOf(l.eventId)?.commence_time)}, ${q(gameOf(l.eventId)?.home_team)}, ${q(gameOf(l.eventId)?.away_team)}, ${rec.probability?.conservative ?? null}, ${rec.review?.matchup?.score ?? null}, ${q((rec.eligibility?.flags ?? []).map((x) => x.code).join(','))} FROM mind_bets WHERE bet_key = ${q(betKey)};`)
   })
 }
 for (const r of rejected) {
   const l = r.pick, g = gameOf(l.eventId)
-  lines.push(`INSERT INTO mind_rejections (day, version, proposed_by, player_id, player, stat, side, line, price, game, tip_off, game_date, reason, detail, p_cons, ev_cons) VALUES (${q(day)}, ${q(MINDS_VERSION)}, ${q(r.proposedBy.join(','))}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${l.price}, ${q(l.game)}, ${q(g?.commence_time)}, ${q(l.gameDate)}, ${q(r.reason)}, ${q(r.detail)}, ${r.pCons}, ${r.evCons});`)
+  lines.push(`INSERT INTO mind_rejections (day, version, proposed_by, player_id, player, stat, side, line, price, game, tip_off, game_date, reason, detail, p_cons, ev_cons, reasons_json, run_id) VALUES (${q(day)}, ${q(MINDS_VERSION)}, ${q(r.proposedBy.join(','))}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${l.price}, ${q(l.game)}, ${q(g?.commence_time)}, ${q(l.gameDate)}, ${q(r.reason)}, ${q(r.detail)}, ${r.pCons ?? null}, ${r.evCons ?? null}, ${q(JSON.stringify(r.reasons))}, ${q(runId)});`)
 }
-console.log('paper volume lines per game:', Object.entries(sd.volumeByGame).map(([g, n]) => `${g.split(' @ ').map((x) => x.split(' ').pop()).join('@')}=${n}`).join('  '))
+console.log('paper volume lines per game:', Object.entries(sd.volumeByGame ?? {}).map(([g, n]) => `${g.split(' @ ').map((x) => x.split(' ').pop()).join('@')}=${n}`).join('  '))
 console.log(`\nLEANS, half stake (${leans.length}):`)
 for (const b of leans) console.log(`  ${b.proposedBy.join('+').padEnd(8)} ${b.odds.toFixed(2)}x says ${(b.prob * 100).toFixed(0)}% ev ${(b.ev * 100).toFixed(1)}% cons ${(b.evCons * 100).toFixed(1)}%  ${b.legs[0].player} ${b.legs[0].side} ${b.legs[0].line} ${b.legs[0].stat}`)
 console.log(`\nAPPROVED BETS (${approved.length}):`)

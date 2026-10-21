@@ -65,3 +65,14 @@ test('picks carry odds id, event id and number of two-sided books', () => {
   assert.equal(over.marketBooks, 2)
   assert.equal(over.oddsId, 'fanatics-o')
 })
+
+test('quotes carry their own timestamp, else the feed\'s, plus the main-line flag and the provider\'s NBA player id', () => {
+  const withTs = { ...odd('a', 'Player Points', 'Over', 20.5, '1.9', 'Jaylen Brown'), updated: '2026-10-21T12:00:00Z', main: true, player: { name: 'Jaylen Brown', mappings: { NBA: { id: '1627759' } } } }
+  const without = { ...odd('b', 'Player Points', 'Under', 20.5, '1.9', 'Jaylen Brown'), player: { name: 'Jaylen Brown' } }
+  const r = { ...resp('draftkings', [ev('E', [withTs, without])]), updated: '2026-10-21T11:55:00Z' }
+  const o = normalizeOddsBlaze([r]).events[0].bookmakers![0].markets[0].outcomes
+  assert.equal(o[0].updated, '2026-10-21T12:00:00Z'); assert.equal(o[0].updatedSource, 'quote'); assert.equal(o[0].main, true); assert.equal(o[0].playerNbaId, 1627759)
+  assert.equal(o[1].updated, '2026-10-21T11:55:00Z'); assert.equal(o[1].updatedSource, 'feed'); assert.equal(o[1].main, undefined); assert.equal(o[1].playerNbaId, undefined)
+  const noneAtAll = normalizeOddsBlaze([resp('draftkings', [ev('E', [without])])]).events[0].bookmakers![0].markets[0].outcomes[0]
+  assert.equal(noneAtAll.updated, undefined, 'no invented timestamp')
+})

@@ -39,7 +39,7 @@ export function parseInjuries(feed: unknown): Map<string, Injury> {
  * Attach availability to picks. A pick on a player listed Out cannot win, so it is removed and counted;
  * everyone else keeps their pick with the status attached.
  */
-export function annotateInjuries<P extends { player: string; injury?: Injury | null }>(picks: P[], injuries: Map<string, Injury>): { picks: P[]; dropped: string[] } {
+export function annotateInjuries<P extends { player: string; injury?: Injury | null; injuryChecked?: boolean }>(picks: P[], injuries: Map<string, Injury>): { picks: P[]; dropped: string[] } {
   const dropped = new Set<string>()
   const kept: P[] = []
   for (const p of picks) {
@@ -83,9 +83,11 @@ export function rolesByPlayer(history: { player_id: number; type: string; minute
 }
 
 /** Attach role and availability to picks (the Worker and the minds runner both use this, so they cannot disagree). */
-export function enrichPicks<P extends { playerId: number; player: string; role?: Role | null; injury?: Injury | null }>(
+export function enrichPicks<P extends { playerId: number; player: string; role?: Role | null; injury?: Injury | null; injuryChecked?: boolean }>(
   picks: P[], history: { player_id: number; type: string; minutes?: number }[], injuries: Map<string, Injury> | null,
 ): { picks: P[]; dropped: string[] } {
   const roles = rolesByPlayer(history)
-  return annotateInjuries(picks.map((p) => ({ ...p, role: roles.get(p.playerId) ?? null })), injuries ?? new Map())
+  const out = annotateInjuries(picks.map((p) => ({ ...p, role: roles.get(p.playerId) ?? null })), injuries ?? new Map())
+  // `injuryChecked` is how downstream code tells "healthy" from "we could not look".
+  return { ...out, picks: out.picks.map((p) => ({ ...p, injuryChecked: injuries !== null })) }
 }

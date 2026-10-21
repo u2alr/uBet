@@ -5,7 +5,7 @@ import { describe, it } from 'node:test'
 import { DatabaseSync } from 'node:sqlite'
 
 const GRADE = readFileSync(new URL('../ingest/grade_minds.sql', import.meta.url), 'utf8')
-const MIG = ['0010_minds', '0011_leg_games', '0012_chief', '0013_rejection_results', '0014_tiers']
+const MIG = ['0010_minds', '0011_leg_games', '0012_chief', '0013_rejection_results', '0014_tiers', '0015_engine_v7']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n')
 
 function fresh() {

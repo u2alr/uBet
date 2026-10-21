@@ -37,12 +37,12 @@ interface Sum {
 interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string | null }[]
   ranDays: string[]; audit: Audit[]; rejections: Rejection[]; calibration: Calib[] } }
 
-const NAMES: Record<string, string> = { chief: 'Strict bets (the Chief)', lean: 'Leans (half stake)', volume: 'Volume board (paper)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
+const NAMES: Record<string, string> = { chief: 'Strict bets (the Chief)', lean: 'Leans (SHADOW_ONLY)', volume: 'Volume board (paper)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
 const STYLE: Record<string, string> = {
   chief: 'full-stake bets that cleared every check',
-  lean: 'a real model edge that is too uncertain for a full bet',
+  lean: 'SHADOW_ONLY: a raw edge that fails the conservative test; hypothetical half stake, never a recommendation',
   volume: 'paper only: many lines per game, graded for evidence, never bet',
-  research: 'parlays: tracked and graded, never staked (independence unvalidated)',
+  research: 'RESEARCH_ONLY: parlays and thin-history or unvalidated singles; graded, never staked',
   sam: 'proposes the likeliest outcomes, if they still pay',
   val: 'proposes the biggest conservative expected value',
   lou: 'builds parlays from qualified legs',
@@ -53,21 +53,21 @@ const c = CHIEF
 const p0 = (x: number) => `${Math.round(x * 100)}%`
 // Read from the frozen config, so this text can never drift from what the Chief actually does.
 const RULES: Record<string, string[]> = {
-  sam: [`Proposes singles whose estimated win chance is ${p0(c.sam.minProb)} or more and whose conservative expected value is not negative. No minimum number.`],
-  val: [`Proposes singles with a conservative expected return of +${p0(c.val.minEvCons)} or more and an estimated win chance of ${p0(c.val.minProb)} or more, ranked by that conservative value.`],
-  cat: [`Proposes where the market rates the side below ${p0(c.cat.maxMarketProb)} but the model is higher by ${p0(c.cat.minGap)} or more, with +${p0(c.cat.minEvCons)} conservative value, and only if the matchup explains why.`],
-  lou: [`Builds parlays of ${c.lou.minLegs} to ${c.lou.maxLegs} legs from different games, each leg individually clearing +${p0(c.lou.minLegEvCons)} conservative value and a ${p0(c.lou.minLegPCons)} conservative chance. The whole parlay needs +${p0(c.lou.minEvCons)} on the product of conservative chances. At most ${c.lou.maxParlays} a day, never topped up, and research-only.`],
+  sam: [`Proposes singles whose conservative win chance is ${p0(c.sam.minProbability)} or more and whose conservative expected value is not negative. No minimum number.`],
+  val: [`Proposes singles with a conservative expected return of +${p0(c.val.minEvConservative)} or more and a conservative win chance of ${p0(c.val.minProbability)} or more, ranked by that conservative value.`],
+  cat: [`Proposes where the market rates the side below ${p0(c.cat.maxMarketProbability)} but the calibrated model is higher by ${p0(c.cat.minGap)} or more, with +${p0(c.cat.minEvConservative)} conservative value, and only if the matchup gives a specific reason.`],
+  lou: [`RESEARCH_ONLY. Builds parlays of ${c.lou.minLegs} to ${c.lou.maxLegs} legs from different games, each leg individually clearing +${p0(c.lou.minLegEv)} value and a ${p0(c.lou.minLegProbability)} chance. The whole parlay needs +${p0(c.lou.minParlayEv)} on the product of the legs. At most ${c.lou.maxParlaysPerDay} a day, never topped up. The independence assumption is an unvalidated baseline.`],
 }
 const PIPELINE = [
-  `1. Eligibility: fresh projection (under ${c.maxProjectionAgeHours}h), ${c.minSample}+ games, ${c.minMarketBooks}+ books quoting both sides, a team's top ${c.starterTopN} by minutes and ${c.minRoleMinutes}+ minutes.`,
-  `2. Quant: the model's chance is corrected for its measured overconfidence, blended with the market, then cut by ${c.haircutZ} standard errors for how little history supports it. Every threshold uses that conservative number.`,
-  `3. Market: the price counted is the best, capped at ${Math.round((c.priceCorroboration - 1) * 100)}% above the next book, so one stale quote cannot create an edge. A lone price, a stale-looking line, or a price rich against the market's own fair price is rejected. Line movement is not available yet.`,
-  `4. Matchup: minutes trend and the opponent's tendency can corroborate or contradict. They never add probability, because the model already sees the opponent.`,
-  `5. Skeptic: vetoes injuries, under ${c.minSampleStrict} games, falling minutes, a model/market gap of ${p0(c.maxGap)}+, and recent games that contradict the bet. A gap of ${p0(c.reviewGap)}+ needs the matchup to explain it.`,
-  `6. Portfolio: one bet per player and stat, at most ${c.maxBetsPerPlayer} per player and ${c.maxBetsPerGame} per game, ${c.maxDailyBets} a day, and no more than ${p0(c.maxUnderShare)} Unders. These caps only remove bets.`,
-  `7. Leans: what step 2's haircut removed. A pick that clears every veto and has a raw edge of +${p0(c.lean.minEvHat)} or more at ${p0(c.lean.minProb)}+ win chance becomes a lean: ${c.lean.stake} unit, one per player, at most ${c.lean.maxPerDay} a day, with its own record. They are the bets the strict tier turns down, so they are weaker evidence.`,
-  'The Chief may reject everything. There is no quota, and nothing is topped up. Every rejected candidate is recorded with its reason and graded afterwards, so the filters can be audited.',
-  'Flat 1 unit per bet. Grading uses the executable price. Parlays assume independence between games, which is unvalidated, so they are research-only.',
+  `1. Eligibility (one shared policy): fresh projection (under ${c.eligibility.maxProjectionAgeHours}h), ${c.eligibility.minGamesStrict}+ games (${c.eligibility.minGamesResearch}-${c.eligibility.minGamesStrict - 1} is research-only), top ${c.eligibility.topNByMinutes} on the team by minutes and ${c.eligibility.minMinutes}+ minutes, ${c.eligibility.minIndependentBooks}+ independent books quoting both sides with fresh timestamps, verified injury status and player identity. Anything missing is rejected with a reason code.`,
+  `2. Probability: the model is calibrated on out-of-sample data, blended with the market's vig-free fair probability, then lowered to a bounded lower estimate (${c.probability.confidenceLevel}% one-sided) from the calibration's own measured error. Statistics whose calibration failed validation cannot be approved as strict bets.`,
+  `3. Market consensus: the executable price is the best fresh price, capped at ${Math.round((c.market.priceCorroboration - 1) * 100)}% above the next independent book. Stale-looking or inconsistent prices and disagreeing books are rejected. Line movement is not available yet.`,
+  `4. Matchup and skeptic: minutes trend and the opponent's tendency corroborate or contradict. A model/market gap of ${p0(c.eligibility.reviewGap)}+ needs a documented matchup reason and ${p0(c.eligibility.extremeGap)}+ is rejected outright.`,
+  `5. Specialists propose; the Chief recomputes every threshold from the engine's own numbers and ignores anything else a proposal says.`,
+  `6. Portfolio: one bet per player and stat, at most ${c.portfolio.maxStrictPerPlayer} per player and ${c.portfolio.maxStrictPerGame} per game, ${c.portfolio.maxStrictPerDay} a day, and no more than ${p0(c.portfolio.maxUnderShare)} Unders. These caps only remove bets.`,
+  `7. SHADOW_ONLY leans: raw edge of +${p0(c.lean.minRawEv)} or more at ${p0(c.lean.minRawProbability)}+ win chance that fail strict approval only on the conservative threshold. One per player, at most ${c.lean.maxPerDay} a day, graded at a hypothetical ${c.lean.hypotheticalStake} unit and never counted as strict bets.`,
+  'The Chief may reject everything. There is no quota, and nothing is topped up. Every candidate is stored as an immutable snapshot with its reason codes and graded afterwards, so the filters can be audited.',
+  'Flat 1 unit per strict bet. Grading uses the executable price. Probabilities are unproven against historical sportsbook lines: nothing here promises profit.',
 ]
 const BASE = ['sam', 'val', 'lou', 'cat']
 const V4_ORDER = ['chief', 'lean', 'sam', 'val', 'cat', 'volume', 'research']

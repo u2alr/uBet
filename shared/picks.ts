@@ -1,6 +1,7 @@
 // Pure construction of suggested bets from raw odds, history and projections.
 // No database, no network, no clock: everything arrives as an argument, so every number a user sees can be
 // reproduced in a test. The Worker (functions/api) does the I/O and calls buildPicks().
+import type { BookQuote, SideQuote } from './engine/consensus.ts'
 import type { Injury, Role } from './injuries.ts'
 import {
   BIG_GAP, blendProb, expectedValue, hitRate, outcomeProbs, predict, predictV3, riskTier,
@@ -9,7 +10,18 @@ import {
 
 // ---------- raw inputs, shaped like The Odds API / the database ----------
 
-export interface OddsOutcome { name: string; description?: string; price: number; point?: number; /** provider's id for this exact price, used to look up closing lines later */ id?: string }
+export interface OddsOutcome {
+  name: string; description?: string; price: number; point?: number
+  /** provider's id for this exact price, used to look up closing lines later */
+  id?: string
+  /** ISO time of this quote: its own if the provider gives one, otherwise the feed's. */
+  updated?: string
+  updatedSource?: 'quote' | 'feed'
+  /** The provider flags this as the book's main line (not an alternate). */
+  main?: boolean
+  /** The provider's NBA player id, to verify who the line is for. */
+  playerNbaId?: number
+}
 export interface OddsMarket { key: string; outcomes: OddsOutcome[] }
 export interface OddsBook { key: string; title: string; markets: OddsMarket[] }
 export interface OddsEvent { id: string; commence_time: string; home_team: string; away_team: string; bookmakers?: OddsBook[] }
@@ -98,7 +110,16 @@ export interface Pick {
   price: number
   book: string
   /** Best price per book for this exact bet, highest first. */
-  prices: { book: string; price: number; id?: string }[]
+  prices: { book: string; price: number; id?: string; updated?: string }[]
+  /** Every book that quotes BOTH sides of this line, with the best price per side and when it was quoted. Input to the consensus. */
+  bookQuotes?: BookQuote[]
+  /** Best price per book for the selected side, with timestamps. Input to the executable-price check. */
+  sideQuotes?: SideQuote[]
+  /** Any quote for this line was flagged as the book's main line. `mainKnown` is false when the provider gives no such flag. */
+  main?: boolean
+  mainKnown?: boolean
+  /** 'verified' when the provider's NBA player id matches the database id; 'unverified' when the provider gave none. A mismatch never produces a pick. */
+  identity?: 'verified' | 'unverified'
   /** The provider's id for the best price (null if the provider gives none). */
   oddsId: string | null
   /** The provider's id for the game, so legs can be grouped by game. */
@@ -136,6 +157,8 @@ export interface Pick {
   injury?: Injury | null
   /** Minutes role from the last 10 games. */
   role?: Role | null
+  /** True when the injury list was fetched for this run, so a missing `injury` means healthy and not unknown. */
+  injuryChecked?: boolean
   /** How much of this statistic the opponent allows compared with the league (1.05 = 5% more); filled in by the minds runner. */
   oppFactor?: number | null
 }
@@ -176,6 +199,8 @@ export function assessOddsAge(fetchedAt: (number | null)[], now: number): { odds
 export interface Diagnostics {
   /** Names in the odds that match no synced player (so no pick is possible). */
   unmatchedPlayers: string[]
+  /** Lines dropped because the provider's NBA player id disagreed with the database id for that name. */
+  identityMismatches: string[]
   /** Matched players with too little history for any estimate. */
   insufficientHistory: string[]
   /** Players whose stored projection was older than the limit, so the simpler model was used instead. */
@@ -199,7 +224,7 @@ export interface BuildInput {
   fallback?: 'v2' | 'v3'
 }
 
-type Quote = { book: string; price: number; id?: string }
+type Quote = { book: string; price: number; id?: string; updated?: string; source?: 'quote' | 'feed'; main?: boolean; nbaId?: number }
 type Line = { pl: PlayerRow; stat: Stat; point: number; over: Quote[]; under: Quote[] }
 
 const validQuote = (o: OddsOutcome) =>
@@ -215,12 +240,13 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
   const proj = new Map(projections.map((r) => [`${r.player_id}|${r.game_date}|${r.stat}`, r]))
 
   const unmatched = new Set<string>()
+  const mismatched = new Set<string>()
   const noHistory = new Set<string>()
   const staleProj = new Set<string>()
   let projectionLines = 0, fallbackLines = 0, invalidQuotes = 0
   const picks: Pick[] = []
   const diag = (): Diagnostics => ({
-    unmatchedPlayers: [...unmatched].sort(), insufficientHistory: [...noHistory].sort(), staleProjectionPlayers: [...staleProj].sort(),
+    unmatchedPlayers: [...unmatched].sort(), identityMismatches: [...mismatched].sort(), insufficientHistory: [...noHistory].sort(), staleProjectionPlayers: [...staleProj].sort(),
     projectionLines, fallbackLines, invalidQuotes,
   })
 
@@ -239,10 +265,11 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
           if (!validQuote(out)) { invalidQuotes++; continue }
           const pl = byName.get(normName(out.description!))
           if (!pl) { unmatched.add(out.description!); continue }
+          if (out.playerNbaId !== undefined && Number.isFinite(out.playerNbaId) && out.playerNbaId !== pl.id) { mismatched.add(`${out.description} (${out.playerNbaId} vs ${pl.id})`); continue }
           if (!rowsByPlayer.has(pl.id)) { noHistory.add(pl.name); continue }
           const k = `${pl.id}|${stat}|${out.point}`
           const L = lines.get(k) ?? lines.set(k, { pl, stat, point: out.point!, over: [], under: [] }).get(k)!
-          ;(out.name === 'Over' ? L.over : L.under).push({ book: b.title, price: out.price, id: out.id })
+          ;(out.name === 'Over' ? L.over : L.under).push({ book: b.title, price: out.price, id: out.id, updated: out.updated, source: out.updatedSource, main: out.main, nbaId: out.playerNbaId })
         }
       }
 
@@ -283,6 +310,16 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
       const perBook = new Map<string, { o?: number; u?: number }>()
       for (const x of L.over) perBook.set(x.book, { ...perBook.get(x.book), o: Math.max(x.price, perBook.get(x.book)?.o ?? 0) })
       for (const x of L.under) perBook.set(x.book, { ...perBook.get(x.book), u: Math.max(x.price, perBook.get(x.book)?.u ?? 0) })
+      const bestOf = (qs: Quote[]) => { const m = new Map<string, Quote>(); for (const x of qs) { const c = m.get(x.book); if (!c || x.price > c.price) m.set(x.book, x) } return m }
+      const bestOver = bestOf(L.over), bestUnder = bestOf(L.under)
+      const bookQuotes: BookQuote[] = [...new Set([...bestOver.keys(), ...bestUnder.keys()])].map((book) => {
+        const o = bestOver.get(book), u = bestUnder.get(book)
+        return { book, over: o?.price ?? null, under: u?.price ?? null, overUpdated: o?.updated ?? null, underUpdated: u?.updated ?? null, timestampSource: o?.source ?? u?.source }
+      })
+      const allQuotes = [...L.over, ...L.under]
+      const mainKnown = allQuotes.some((x) => x.main !== undefined)
+      const mainLine = allQuotes.some((x) => x.main === true)
+      const identity: 'verified' | 'unverified' = allQuotes.some((x) => x.nbaId === L.pl.id) ? 'verified' : 'unverified'
       const both = [...perBook.values()].filter((v) => v.o && v.u)
       const marketOver = both.length ? both.reduce((a, v) => a + devigPair(v.o!, v.u!), 0) / both.length : null
 
@@ -313,6 +350,8 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
           bigGap: marketProb != null && Math.abs(modelProb - marketProb) > BIG_GAP,
           projection: projected, hitRate10: rate, recent: played.slice(0, 10).reverse(), sample: base.sample,
           projectionAgeHours: ageHours, game, gameDate,
+          bookQuotes, sideQuotes: sorted.map((x) => { const q0 = (side === 'over' ? bestOver : bestUnder).get(x.book); return { book: x.book, price: x.price, id: x.id, updated: q0?.updated ?? null, timestampSource: q0?.source } }),
+          main: mainLine, mainKnown, identity,
         })
       }
     }
