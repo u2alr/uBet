@@ -102,9 +102,14 @@ const oppTable = Object.fromEntries(allowed.map((r) => [r.team, Object.fromEntri
 console.log(`opponent tendencies for ${allowed.length} teams`)
 
 const decision = decide(attachOpponent(upcoming, oppTable))
-const { approved, research, rejected } = decision
+if (process.env.EV_DIST) {   // developer aid: how much raw edge exists on this slate, at each threshold
+  const { buildEvidence, ineligibleReason } = await import('../shared/minds.ts')
+  const ev = attachOpponent(upcoming, oppTable).filter((p) => !ineligibleReason(p)).map(buildEvidence).filter((e) => !e.skeptic.vetoes.length && !e.market.vetoes.length && e.matchup.score >= 0)
+  for (const t of [0.05, 0.03, 0.02, 0.01, 0, -0.02]) console.log(`raw EV >= ${t}: ${ev.filter((e) => e.quant.evHat >= t && e.quant.pBlend >= 0.5).length} of ${ev.length} clean eligible picks;  conservative >= ${t}: ${ev.filter((e) => e.quant.evCons >= t && e.quant.pBlend >= 0.5).length}`)
+}
+const { approved, leans, research, rejected } = decision
 const sd = decision.stats
-console.log(`picks ${sd.picks} -> eligible ${sd.eligible} -> candidates ${sd.candidates} -> approved ${sd.approved} (+${sd.research} research parlays), rejected ${sd.rejected}`)
+console.log(`picks ${sd.picks} -> eligible ${sd.eligible} -> candidates ${sd.candidates} -> approved ${sd.approved} strict + ${sd.leans} leans (+${sd.research} research parlays), rejected ${sd.rejected}`)
 console.log('not eligible:', JSON.stringify(sd.ineligible))
 const why = rejected.reduce((a, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {})
 console.log('rejected because:', JSON.stringify(why))
@@ -112,9 +117,9 @@ console.log('rejected because:', JSON.stringify(why))
 const gameOf = (id) => events.find((e) => e.id === id)
 const q = (v) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`)
 const lines = []
-for (const b of [...approved, ...research]) {
+for (const b of [...approved, ...leans, ...research]) {
   const betKey = [day, 'chief', MINDS_VERSION, ...b.legs.map(legKey).sort()].join('|')
-  lines.push(`INSERT OR IGNORE INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, proposed_by, p_cons, ev_cons, rationale, research) VALUES (${q(betKey)}, ${q(day)}, ${q(b.mind)}, ${q(MINDS_VERSION)}, ${q(b.kind)}, ${b.odds}, ${b.prob}, ${b.ev}, ${q(b.proposedBy.join(','))}, ${b.pCons}, ${b.evCons}, ${q(JSON.stringify(b.rationale))}, ${b.research ? 1 : 0});`)
+  lines.push(`INSERT OR IGNORE INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, stake, proposed_by, p_cons, ev_cons, rationale, research, tier) VALUES (${q(betKey)}, ${q(day)}, ${q(b.mind)}, ${q(MINDS_VERSION)}, ${q(b.kind)}, ${b.odds}, ${b.prob}, ${b.ev}, ${b.stake}, ${q(b.proposedBy.join(','))}, ${b.pCons}, ${b.evCons}, ${q(JSON.stringify(b.rationale))}, ${b.research ? 1 : 0}, ${q(b.tier)});`)
   b.legs.forEach((l, i) => {
     const e = b.legEvidence[i]
     lines.push(
@@ -126,6 +131,8 @@ for (const r of rejected) {
   const l = r.pick, g = gameOf(l.eventId)
   lines.push(`INSERT INTO mind_rejections (day, version, proposed_by, player_id, player, stat, side, line, price, game, tip_off, game_date, reason, detail, p_cons, ev_cons) VALUES (${q(day)}, ${q(MINDS_VERSION)}, ${q(r.proposedBy.join(','))}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${l.price}, ${q(l.game)}, ${q(g?.commence_time)}, ${q(l.gameDate)}, ${q(r.reason)}, ${q(r.detail)}, ${r.pCons}, ${r.evCons});`)
 }
+console.log(`\nLEANS, half stake (${leans.length}):`)
+for (const b of leans) console.log(`  ${b.proposedBy.join('+').padEnd(8)} ${b.odds.toFixed(2)}x says ${(b.prob * 100).toFixed(0)}% ev ${(b.ev * 100).toFixed(1)}% cons ${(b.evCons * 100).toFixed(1)}%  ${b.legs[0].player} ${b.legs[0].side} ${b.legs[0].line} ${b.legs[0].stat}`)
 console.log(`\nAPPROVED BETS (${approved.length}):`)
 for (const b of approved) console.log(`  ${b.proposedBy.join('+').padEnd(8)} ${b.odds.toFixed(2)}x says ${(b.prob * 100).toFixed(0)}% cons ${(b.pCons * 100).toFixed(0)}% ev ${(b.ev * 100).toFixed(1)}% cons ${(b.evCons * 100).toFixed(1)}%  ${b.legs[0].player} ${b.legs[0].side} ${b.legs[0].line} ${b.legs[0].stat}`)
 console.log(`RESEARCH PARLAYS (${research.length}):`)

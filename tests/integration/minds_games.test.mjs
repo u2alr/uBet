@@ -12,26 +12,27 @@ before(async () => {
     extraBindings: [`CAPTURE_TOKEN=${TOKEN}`],
     seed: (db) => {
       db.exec("DELETE FROM mind_legs; DELETE FROM mind_bets; DELETE FROM mind_rejections; DELETE FROM meta WHERE key LIKE 'minds_ran:%';")
-      const ins = db.prepare("INSERT INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, status, profit, proposed_by, research) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+      const ins = db.prepare("INSERT INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, status, profit, proposed_by, research, tier, stake) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       // version 4: a bet two personalities proposed counts for each of them, and once for the Chief
-      ins.run('a', '2026-10-01', 'sam', 'minds-v4', 'single', 2, 0.6, 0.2, 'won', 1, 'sam,val', 0)
-      ins.run('b', '2026-10-01', 'val', 'minds-v4', 'single', 2, 0.4, -0.2, 'lost', -1, 'val', 0)
-      ins.run('c', '2026-10-02', 'sam', 'minds-v4', 'single', 2, 0.9, 0.8, 'push', 0, 'sam', 0)   // refunded: neither a hit nor a miss
-      ins.run('d', '2026-10-02', 'sam', 'minds-v4', 'single', 2, 0.7, 0.4, 'open', null, 'sam', 0)
-      ins.run('p1', '2026-10-02', 'lou', 'minds-v4', 'combo', 8, 0.1, 0.5, 'lost', -1, 'lou', 1)   // research parlay: graded, never staked
+      ins.run('a', '2026-10-01', 'sam', 'minds-v5', 'single', 2, 0.6, 0.2, 'won', 1, 'sam,val', 0, 'strict', 1)
+      ins.run('b', '2026-10-01', 'val', 'minds-v5', 'single', 2, 0.4, -0.2, 'lost', -1, 'val', 0, 'strict', 1)
+      ins.run('c', '2026-10-02', 'sam', 'minds-v5', 'single', 2, 0.9, 0.8, 'push', 0, 'sam', 0, 'strict', 1)   // refunded: neither a hit nor a miss
+      ins.run('d', '2026-10-02', 'sam', 'minds-v5', 'single', 2, 0.7, 0.4, 'open', null, 'sam', 0, 'strict', 1)
+      ins.run('p1', '2026-10-02', 'lou', 'minds-v5', 'combo', 8, 0.1, 0.5, 'lost', -1, 'lou', 1, 'research', 1)   // research parlay: graded, never staked
+      ins.run('l1', '2026-10-02', 'val', 'minds-v5', 'single', 2, 0.55, 0.05, 'won', 0.5, 'val', 0, 'lean', 0.5)      // a half-stake lean that won
       // archived versions, which must never mix into version 4's record
-      ins.run('v1a', '2026-10-01', 'control', 'minds-v1', 'single', 2, 0.9, 0.8, 'lost', -1, null, 0)
-      ins.run('v2a', '2026-10-01', 'sam', 'minds-v2', 'single', 2, 0.6, 0.2, 'won', 1, null, 0)
-      ins.run('v3a', '2026-10-01', 'val', 'minds-v3', 'single', 2, 0.6, 0.2, 'won', 1, null, 0)
-      db.exec("INSERT INTO meta (key, value) VALUES ('minds_ran:minds-v4:2026-10-01', 'x'), ('minds_ran:minds-v4:2026-10-02', 'x')")
+      ins.run('v1a', '2026-10-01', 'control', 'minds-v1', 'single', 2, 0.9, 0.8, 'lost', -1, null, 0, 'strict', 1)
+      ins.run('v2a', '2026-10-01', 'sam', 'minds-v2', 'single', 2, 0.6, 0.2, 'won', 1, null, 0, 'strict', 1)
+      ins.run('v3a', '2026-10-01', 'val', 'minds-v3', 'single', 2, 0.6, 0.2, 'won', 1, null, 0, 'strict', 1)
+      db.exec("INSERT INTO meta (key, value) VALUES ('minds_ran:minds-v5:2026-10-01', 'x'), ('minds_ran:minds-v5:2026-10-02', 'x')")
       const rej = db.prepare("INSERT INTO mind_rejections (day, version, proposed_by, player_id, player, stat, side, line, price, reason, detail, result) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-      rej.run('2026-10-01', 'minds-v4', 'val', 1, 'A', 'pts', 'over', 20.5, 1.9, 'form_contradiction', 'recent games', 'won')
-      rej.run('2026-10-01', 'minds-v4', 'val', 2, 'B', 'pts', 'over', 20.5, 1.9, 'form_contradiction', 'recent games', 'lost')
-      rej.run('2026-10-02', 'minds-v4', 'val', 3, 'C', 'ast', 'under', 5.5, 1.9, 'uncertainty_haircut', 'raw 8%', null)
+      rej.run('2026-10-01', 'minds-v5', 'val', 1, 'A', 'pts', 'over', 20.5, 1.9, 'form_contradiction', 'recent games', 'won')
+      rej.run('2026-10-01', 'minds-v5', 'val', 2, 'B', 'pts', 'over', 20.5, 1.9, 'form_contradiction', 'recent games', 'lost')
+      rej.run('2026-10-02', 'minds-v5', 'val', 3, 'C', 'ast', 'under', 5.5, 1.9, 'uncertainty_haircut', 'raw 8%', null)
       // A leg whose "recent games" we can recompute independently: Curry's points before a cutoff date.
       curryId = db.prepare("SELECT id FROM players WHERE name = 'Stephen Curry'").get().id
       cutoff = db.prepare("SELECT g.date AS d FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.player_id = ? AND g.game_type = 'regular' ORDER BY g.date DESC LIMIT 1 OFFSET 3").get(curryId).d
-      const betId = ins.run('e', '2026-10-03', 'val', 'minds-v4', 'single', 2, 0.6, 0.1, 'open', null, 'val', 0).lastInsertRowid
+      const betId = ins.run('e', '2026-10-03', 'val', 'minds-v5', 'single', 2, 0.6, 0.1, 'open', null, 'val', 0, 'strict', 1).lastInsertRowid
       db.prepare("INSERT INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, game_date, prob) VALUES (?, 0, ?, 'Stephen Curry', 'pts', 'over', 20.5, 2, ?, 0.6)").run(betId, curryId, cutoff)
     },
   })
@@ -58,6 +59,16 @@ describe('/api/minds', () => {
     assert.ok(Math.abs(sam.statedProb - 0.6) < 1e-9, `sam statedProb ${sam.statedProb}`)    // the 0.9 push is excluded
     assert.equal(sam.actualRate, 1)
   })
+  it('leans are their own tier: a half-stake win is half a unit, and they never enter the strict portfolio', async () => {
+    const { body } = await api('/minds')
+    const lean = body.data.summary.find((s) => s.mind === 'lean')
+    assert.equal(lean.bets, 1)
+    assert.equal(lean.units, 0.5)
+    assert.equal(body.data.summary.find((s) => s.mind === 'chief').bets, 5)
+    assert.ok(body.data.bets.find((b) => b.tier === 'lean').stake === 0.5)
+    // the personalities' attribution rows count strict bets only
+    assert.equal(body.data.summary.find((s) => s.mind === 'val').bets, 3)
+  })
   it('research parlays have their own row and never reach the portfolio', async () => {
     const { body } = await api('/minds')
     const r = body.data.summary.find((s) => s.mind === 'research')
@@ -83,11 +94,11 @@ describe('/api/minds', () => {
 describe('rule-set versions', () => {
   it('default to the current version and keep archived versions out of its record', async () => {
     const { body } = await api('/minds')
-    assert.equal(body.data.version, 'minds-v4')
-    assert.equal(body.data.current, 'minds-v4')
-    assert.ok(body.data.bets.every((b) => b.version === 'minds-v4'))
+    assert.equal(body.data.version, 'minds-v5')
+    assert.equal(body.data.current, 'minds-v5')
+    assert.ok(body.data.bets.every((b) => b.version === 'minds-v5'))
     assert.equal(body.data.summary.find((s) => s.mind === 'control'), undefined)
-    assert.deepEqual(body.data.versions.map((v) => v.version).sort(), ['minds-v1', 'minds-v2', 'minds-v3', 'minds-v4'])
+    assert.deepEqual(body.data.versions.map((v) => v.version).sort(), ['minds-v1', 'minds-v2', 'minds-v3', 'minds-v5'])
   })
   it('an archived version can be read on its own, with the old per-mind meaning', async () => {
     const { body } = await api('/minds?version=minds-v1')

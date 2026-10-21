@@ -12,6 +12,7 @@ import MindsCharts from './MindsCharts'
 interface Bet {
   id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null
   proposedBy: string | null; pCons: number | null; evCons: number | null; rationale: string | null; research: number
+  tier: string; stake: number
 }
 interface Rejection { id: number; day: string; proposedBy: string; playerId: number; player: string; stat: string; side: string; line: number; price: number; game: string | null; reason: string; detail: string | null; pCons: number | null; evCons: number | null; result: string | null; actual: number | null }
 interface Audit { reason: string; n: number; graded: number; won: number; lost: number; units: number }
@@ -39,9 +40,10 @@ interface Sum {
 interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string | null }[]
   ranDays: string[]; audit: Audit[]; rejections: Rejection[]; calibration: Calib[] } }
 
-const NAMES: Record<string, string> = { chief: 'The Chief (portfolio)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
+const NAMES: Record<string, string> = { chief: 'Strict bets (the Chief)', lean: 'Leans (half stake)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
 const STYLE: Record<string, string> = {
-  chief: 'every staked bet, once: what the whole system actually did',
+  chief: 'full-stake bets that cleared every check',
+  lean: 'a real model edge that is too uncertain for a full bet',
   research: 'parlays: tracked and graded, never staked (independence unvalidated)',
   sam: 'proposes the likeliest outcomes, if they still pay',
   val: 'proposes the biggest conservative expected value',
@@ -65,11 +67,12 @@ const PIPELINE = [
   `4. Matchup: minutes trend and the opponent's tendency can corroborate or contradict. They never add probability, because the model already sees the opponent.`,
   `5. Skeptic: vetoes injuries, under ${c.minSampleStrict} games, falling minutes, a model/market gap of ${p0(c.maxGap)}+, and recent games that contradict the bet. A gap of ${p0(c.reviewGap)}+ needs the matchup to explain it.`,
   `6. Portfolio: one bet per player and stat, at most ${c.maxBetsPerPlayer} per player and ${c.maxBetsPerGame} per game, ${c.maxDailyBets} a day, and no more than ${p0(c.maxUnderShare)} Unders. These caps only remove bets.`,
+  `7. Leans: what step 2's haircut removed. A pick that clears every veto and has a raw edge of +${p0(c.lean.minEvHat)} or more at ${p0(c.lean.minProb)}+ win chance becomes a lean: ${c.lean.stake} unit, one per player, at most ${c.lean.maxPerDay} a day, with its own record. They are the bets the strict tier turns down, so they are weaker evidence.`,
   'The Chief may reject everything. There is no quota, and nothing is topped up. Every rejected candidate is recorded with its reason and graded afterwards, so the filters can be audited.',
   'Flat 1 unit per bet. Grading uses the executable price. Parlays assume independence between games, which is unvalidated, so they are research-only.',
 ]
 const BASE = ['sam', 'val', 'lou', 'cat']
-const V4_ORDER = ['chief', 'sam', 'val', 'cat', 'research']
+const V4_ORDER = ['chief', 'lean', 'sam', 'val', 'cat', 'research']
 const orderFor = (res: Res | null) => (!res ? BASE : res.data.version === res.data.current ? V4_ORDER : [...BASE, ...(res.data.summary.some((s) => s.mind === 'control') ? ['control'] : [])])
 const STATUS: Record<string, string> = { open: 'Open', won: 'Won', lost: 'Lost', push: 'Push', void: 'Void' }
 const settledStatus = new Set(['won', 'lost', 'push'])
@@ -103,7 +106,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
   const { bets, legs, summary, minBets } = res.data
   const sum = (m: string) => summary.find((s) => s.mind === m)
-  const inGroupAll = (b: Bet, m: string) => (m === 'chief' ? !b.research : m === 'research' ? !!b.research : (b.proposedBy ?? b.mind).split(',').includes(m) && !b.research)
+  const inGroupAll = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'research' ? b.tier === 'research' : (b.proposedBy ?? b.mind).split(',').includes(m) && b.tier === 'strict')
   const legMap = new Map<number, Leg[]>()
   for (const l of legs) (legMap.get(l.betId) ?? legMap.set(l.betId, []).get(l.betId)!).push(l)
   const legsOf = (id: number) => legMap.get(id) ?? []
@@ -111,7 +114,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const expectedUnits = (m: string) => bets.filter((b) => inGroupAll(b, m) && settledStatus.has(b.status)).reduce((a, b) => a + b.ev, 0)
 
   const proposers = (b: Bet) => (b.proposedBy ?? b.mind).split(',')
-  const inGroup = (b: Bet, m: string) => (m === 'chief' ? !b.research : m === 'research' ? !!b.research : proposers(b).includes(m) && !b.research)
+  const inGroup = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'research' ? b.tier === 'research' : proposers(b).includes(m) && b.tier === 'strict')
   const visible = bets.filter((b) =>
     (!pick || inGroup(b, pick)) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
   const days = [...new Set([...bets.map((b) => b.day), ...res.data.ranDays])].sort().reverse()
@@ -123,7 +126,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
     <div className="space-y-3">
       <p className="rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
         {res.data.version === res.data.current
-          ? 'Four specialists propose; one strict Chief decides, and may decide on no bet at all. There is no quota.'
+          ? 'Four specialists propose; one strict Chief decides. Strict bets are full stake and may be none at all; leans are a smaller stake on weaker edges. No quotas.'
           : 'An archived rule set.'}{' '}Each decision is frozen when it is made and graded from box scores. No verdict before {minBets} settled bets:
         until then, treat every number below as noise. Click a card to see only its bets.
       </p>
@@ -144,7 +147,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       )}
 
 
-      <div className={`grid gap-2 sm:grid-cols-2 ${ORDER.length > 4 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
+      <div className={`grid gap-2 sm:grid-cols-2 ${ORDER.length > 5 ? 'xl:grid-cols-6' : ORDER.length > 4 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
         {ORDER.map((m) => {
           const s = sum(m)
           const settled = s?.settled ?? 0
@@ -258,6 +261,11 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       )}
       {view === 'game' && visible.every((b) => b.day !== selDay) && res.data.ranDays.includes(selDay) && (
         <NoBets day={selDay} rejections={res.data.rejections.filter((r) => r.day === selDay)} />
+      )}
+      {view === 'game' && visible.some((b) => b.day === selDay && b.tier !== 'strict' && b.tier !== 'research') && !visible.some((b) => b.day === selDay && b.tier === 'strict') && (
+        <p className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm text-neutral-300">
+          <b className="font-medium text-neutral-100">No strict bets for {dayLabel(selDay)}.</b> The cards below are <b className="font-medium text-neutral-100">leans</b>: the model sees a real edge, but it does not survive the uncertainty haircut. Half stake, lower confidence, and tracked apart from the strict record.
+        </p>
       )}
       {view === 'game'
         ? <ScheduleView bets={visible.filter((b) => b.day === selDay)} legsOf={legsOf} />
@@ -454,7 +462,7 @@ function MiniBet({ bets, l }: { bets: Bet[]; l: Leg }) {
         <span className="flex w-8 shrink-0 gap-0.5" title={who.map((m) => NAMES[m] ?? m).join(', ')}>
           {who.map((m) => <span key={m} className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[m] }} />)}
         </span>
-        <span className="min-w-0 flex-1 truncate text-neutral-100">{l.player}</span>
+        <span className="min-w-0 flex-1 truncate text-neutral-100">{l.player}{b.tier === 'lean' && <span className="ml-1.5 rounded border border-[#86b6ef] px-1 text-[9px] tracking-wide text-[#86b6ef]" title="A lean: half stake, lower confidence">LEAN {b.stake}u</span>}</span>
         <span className="shrink-0 text-neutral-400">{l.side === 'over' ? 'O' : 'U'} {l.line} {STAT_LABEL[l.stat] ?? l.stat}</span>
         <span className="w-10 shrink-0 text-right tabular-nums text-neutral-300">{l.price.toFixed(2)}</span>
         <span className="w-12 shrink-0 text-right tabular-nums text-neutral-500">{signed(b.ev * 100, 1)}%</span>

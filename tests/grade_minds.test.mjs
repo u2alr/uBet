@@ -5,7 +5,7 @@ import { describe, it } from 'node:test'
 import { DatabaseSync } from 'node:sqlite'
 
 const GRADE = readFileSync(new URL('../ingest/grade_minds.sql', import.meta.url), 'utf8')
-const MIG = ['0010_minds', '0011_leg_games', '0012_chief', '0013_rejection_results']
+const MIG = ['0010_minds', '0011_leg_games', '0012_chief', '0013_rejection_results', '0014_tiers']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n')
 
 function fresh() {
@@ -28,6 +28,18 @@ function bet(db, legs, date = '2026-10-01') {
   return Number(id)
 }
 const st = (db, id) => db.prepare('SELECT status, profit, settled_odds FROM mind_bets WHERE id = ?').get(id)
+
+describe('grading leans (half stake)', () => {
+  it('scales profit and loss by the suggested stake', () => {
+    const db = fresh()
+    const w = bet(db, [[7, 'pts', 'over', 23.5, 1.9]]), l = bet(db, [[7, 'pts', 'under', 23.5, 1.9]])
+    db.exec(`UPDATE mind_bets SET stake = 0.5, tier = 'lean' WHERE id IN (${w}, ${l})`)
+    db.exec(GRADE)
+    const r = (id) => db.prepare('SELECT status, profit FROM mind_bets WHERE id = ?').get(id)
+    assert.equal(r(w).status, 'won'); assert.ok(Math.abs(r(w).profit - 0.45) < 1e-9)
+    assert.equal(r(l).status, 'lost'); assert.equal(r(l).profit, -0.5)
+  })
+})
 
 describe('grading rejected candidates', () => {
   it('grades what would have happened, without touching any bet', () => {

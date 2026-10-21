@@ -357,16 +357,49 @@ test('parlays: at most 5 legs, and a weak leg is not added just because it nudge
   assert.equal(d.research[0].legs.length, 4, 'the +1% leg is below the +2% leg floor')
 })
 
-test('a raw edge removed by the uncertainty haircut is recorded as a near miss, so the haircut itself can be audited later', () => {
+test('a raw edge removed by the uncertainty haircut becomes a lean: smaller stake, its own tier, the reasoning says so', () => {
   const thin = pick({ modelProb: 0.66, marketProb: 0.54, sample: 30, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] })
   const d = decide([thin])
-  assert.equal(d.approved.length, 0)
-  assert.equal(d.rejected.length, 1)
-  assert.equal(d.rejected[0].reason, 'uncertainty_haircut')
-  assert.match(d.rejected[0].detail, /raw expected value 8\.1%/)
-  assert.ok(d.rejected[0].evCons < 0)
-  // a pick with no raw edge at all is not worth recording
-  assert.equal(decide([pick({ modelProb: 0.5, marketProb: 0.5, price: 1.9 })]).rejected.length, 0)
+  assert.equal(d.approved.length, 0, 'not a strict bet')
+  assert.equal(d.leans.length, 1)
+  const l = d.leans[0]
+  assert.equal(l.tier, 'lean')
+  assert.equal(l.stake, 0.5)
+  assert.equal(l.research, false)
+  assert.ok(l.ev >= 0.02 && l.evCons < 0.03)
+  assert.match(l.rationale[0], /^LEAN, suggested stake 0\.5 unit/)
+  assert.equal(d.approved.concat(d.leans).filter((b) => b.tier === 'strict').length, 0)
+  // a pick with no raw edge at all is neither a lean nor worth recording
+  const none = decide([pick({ modelProb: 0.5, marketProb: 0.5, price: 1.9 })])
+  assert.equal(none.leans.length, 0)
+})
+
+test('leans: never a vetoed pick, never below +2% raw value or 50% chance, never a strict bet twice, at most 8 a day, one per player', () => {
+  const edge = { modelProb: 0.66, marketProb: 0.54, sample: 30, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] }
+  assert.equal(decide([pick({ ...edge, injury: { status: 'questionable', label: 'Questionable', note: '' } })]).leans.length, 0)
+  assert.equal(decide([pick({ ...edge, modelProb: 0.55, marketProb: 0.52 })]).leans.length, 0, 'raw value under +2%')
+  const strong = decide([pick()])
+  assert.equal(strong.approved.length, 1)
+  assert.equal(strong.leans.length, 0, 'a strict bet is not repeated as a lean')
+  const many = Array.from({ length: 30 }, (_, i) => pick({ ...edge, eventId: `L${i}` }))
+  assert.equal(decide(many).leans.length, 8)
+  const longshot = pick({ modelProb: 0.5, marketProb: 0.45, price: 2.6, prices: [{ book: 'A', price: 2.6 }, { book: 'B', price: 2.58 }] })
+  const lq = quant(longshot, 2.6)
+  assert.ok(lq.evHat > 0.15 && lq.pBlend < 0.5, `evHat ${lq.evHat} pBlend ${lq.pBlend}`)
+  assert.equal(decide([longshot]).leans.length, 0, 'a big payout at under 50% is a longshot, not a lean')
+  const withStrict = decide([pick({ playerId: 77, player: 'Both', eventId: 'LB', line: 10.5 }), pick({ playerId: 77, player: 'Both', eventId: 'LB', line: 11.5, modelProb: 0.66, marketProb: 0.54, sample: 30 })])
+  assert.equal(withStrict.approved.length, 1)
+  assert.equal(withStrict.leans.length, 0, 'a player with a strict bet gets no lean')
+  const oneStar = Array.from({ length: 4 }, (_, i) => pick({ ...edge, playerId: 5, player: 'Star', eventId: 'LS', line: 10.5 + i, stat: (['pts', 'reb', 'ast', 'fg3m'] as const)[i] }))
+  assert.equal(decide(oneStar).leans.length, 1, 'one lean per player')
+})
+
+test('leans credit the personalities whose point-estimate thresholds they meet', () => {
+  const lean = decide([pick({ modelProb: 0.66, marketProb: 0.54, sample: 30, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] })]).leans[0]
+  assert.deepEqual(lean.proposedBy, ['val'])
+  const safe = decide([pick({ modelProb: 0.72, marketProb: 0.6, sample: 20, price: 1.75, prices: [{ book: 'A', price: 1.75 }, { book: 'B', price: 1.74 }] })])
+  const all = [...safe.approved, ...safe.leans]
+  assert.ok(all.length === 1 && all[0].proposedBy.includes('sam'))
 })
 
 test('at most 60 near misses are recorded a day', () => {
@@ -394,4 +427,13 @@ test('a candidate that is already rejected or approved is not repeated on the wa
   assert.equal(d.approved.length, 1)
   const keys = d.rejected.map((r) => `${r.pick.playerId}|${r.pick.line}|${r.pick.side}`)
   assert.equal(new Set(keys).size, keys.length)
+})
+
+test('leans obey the same all-Under share cap, counted together with the strict bets', () => {
+  const edge = { modelProb: 0.66, marketProb: 0.54, sample: 30, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] }
+  const unders = Array.from({ length: 20 }, (_, i) => pick({ ...edge, eventId: `LU${i}`, side: 'under' }))
+  assert.equal(decide(unders).leans.length, 5, 'the sixth all-Under bet of a card is not taken')
+  const mixed = [...unders, ...Array.from({ length: 6 }, (_, i) => pick({ ...edge, eventId: `LO${i}`, side: 'over', modelProb: 0.655 }))]
+  const d = decide(mixed)
+  assert.ok(d.leans.some((b) => b.legs[0].side === 'over'))
 })

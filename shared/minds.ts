@@ -1,11 +1,11 @@
-// The minds, version 4: four candidate-generating personalities, four evidence agents, and one strict Chief.
+// The minds, version 5 (version 4 plus a small-stake tier of leans): four candidate-generating personalities, four evidence agents, and one strict Chief.
 // Pure and deterministic: every probability and price is calculated here in code; nothing is voted on.
-// Rules, evidence for each threshold, and what is NOT validated: research/PREREG_MINDS_V4.md.
-// Frozen after the first v4 card. A change is minds-v5.
+// Rules, evidence for each threshold, and what is NOT validated: research/PREREG_MINDS_V4.md and PREREG_MINDS_V5.md.
+// Frozen after the first v5 decision. A change is minds-v6.
 import { TEAM_NAMES, type Pick } from './picks.ts'
 import { blendProb, expectedValue } from './baseline.ts'
 
-export const MINDS_VERSION = 'minds-v4'
+export const MINDS_VERSION = 'minds-v5'
 
 export const CHIEF = {
   // ---- eligibility: data complete, fresh, and a starter or star
@@ -61,6 +61,10 @@ export const CHIEF = {
   maxNearMisses: 60,
   /** The closest eligible picks that did not qualify, recorded on every day (including no-bet days) so there is always something to read and grade. Never bets. */
   maxWatchlist: 25,
+
+  // ---- Leans: a second, clearly lesser tier. The model sees an edge that does not survive the uncertainty haircut.
+  // Point estimates, not conservative ones, so these are exactly the bets the strict tier turns down. Small stake, tracked apart.
+  lean: { minEvHat: 0.02, minProb: 0.5, stake: 0.5, maxPerDay: 8 },
 } as const
 
 export type MindId = 'sam' | 'val' | 'lou' | 'cat'
@@ -225,6 +229,10 @@ export interface Bet {
   evCons: number
   /** Parlays are research-only: tracked and graded, but not part of the staked portfolio. */
   research: boolean
+  /** strict: the Chief's staked bets. lean: a smaller stake on a weaker edge. research: parlays, never staked. */
+  tier: 'strict' | 'lean' | 'research'
+  /** Suggested stake in units. */
+  stake: number
   rationale: string[]
 }
 export interface Rejection {
@@ -237,9 +245,11 @@ export interface Rejection {
 }
 export interface Decision {
   approved: Bet[]
+  /** Smaller-stake bets on edges too weak for the strict tier. Tracked and graded separately. */
+  leans: Bet[]
   research: Bet[]
   rejected: Rejection[]
-  stats: { picks: number; eligible: number; ineligible: Record<string, number>; candidates: number; approved: number; research: number; rejected: number }
+  stats: { picks: number; eligible: number; ineligible: Record<string, number>; candidates: number; approved: number; leans: number; research: number; rejected: number }
 }
 
 /** What the Chief checks after the proposer's own thresholds. First failure wins. */
@@ -274,8 +284,24 @@ function rationaleFor(e: Evidence, proposers: MindId[]): string[] {
 function singleBet(e: Evidence, proposers: MindId[]): Bet {
   return {
     mind: proposers[0], proposedBy: proposers, kind: 'single', legs: [e.pick], legPrices: [e.market.execPrice], legEvidence: [e],
-    odds: e.market.execPrice, prob: e.quant.pBlend, pCons: e.quant.pCons, ev: e.quant.evHat, evCons: e.quant.evCons, research: false,
+    odds: e.market.execPrice, prob: e.quant.pBlend, pCons: e.quant.pCons, ev: e.quant.evHat, evCons: e.quant.evCons, research: false, tier: 'strict', stake: 1,
     rationale: rationaleFor(e, proposers),
+  }
+}
+
+/** A lean: credited to whichever personalities' point-estimate thresholds it meets (Value Val if none), at a smaller stake. */
+function leanBet(e: Evidence): Bet {
+  const c = CHIEF
+  const p = e.pick, q = e.quant
+  const who: MindId[] = []
+  if (q.pBlend >= c.sam.minProb && q.evHat >= 0) who.push('sam')
+  if (q.pBlend >= c.val.minProb && q.evHat >= c.val.minEvCons) who.push('val')
+  if (p.marketProb != null && p.marketProb < c.cat.maxMarketProb && p.modelProb - p.marketProb >= c.cat.minGap && q.evHat >= c.cat.minEvCons && e.matchup.score >= c.cat.minMatchup) who.push('cat')
+  if (!who.length) who.push('val')
+  const bet = singleBet(e, who)
+  return {
+    ...bet, tier: 'lean', stake: c.lean.stake,
+    rationale: [`LEAN, suggested stake ${c.lean.stake} unit: the model sees ${q.evHat >= 0 ? '+' : ''}${pct(q.evHat, 1)} expected value, but it is ${pct(q.evCons, 1)} once the uncertainty from ${q.nEff} games is counted, so it did not earn a full bet. Treat it as a lower-confidence play.`, ...bet.rationale],
   }
 }
 
@@ -333,22 +359,6 @@ export function decide(allPicks: Pick[]): Decision {
     survivors.set(legKey(e.pick), { e, who })
   }
 
-  // Near misses: a raw edge that the uncertainty haircut removed. Not bets, but the most useful rejections to record,
-  // because grading them later shows whether the haircut is too strict or about right.
-  const candidateKeys = new Set(rejected.map((r) => legKey(r.pick)).concat([...survivors.keys()]))
-  const near = evidence
-    .filter((e) => !candidateKeys.has(legKey(e.pick)) && !chiefCheck(e) && e.quant.pBlend >= c.val.minProb && e.quant.evHat >= c.val.minEvCons)
-    .sort((a, b) => b.quant.evHat - a.quant.evHat).slice(0, c.maxNearMisses)
-  for (const e of near) rej(e, ['val'], { reason: 'uncertainty_haircut', detail: `raw expected value ${pct(e.quant.evHat, 1)}, but ${pct(e.quant.evCons, 1)} once the uncertainty from ${e.quant.nEff} games is counted` })
-
-  // Watchlist: the best of the rest. Not candidates, not bets: they show how far the slate was from qualifying, and grading
-  // them later shows whether the thresholds are too strict. Ranked by conservative value; anything the Chief would veto is excluded.
-  const seen = new Set([...rejected.map((r) => legKey(r.pick)), ...survivors.keys()])
-  const watch = evidence
-    .filter((e) => !seen.has(legKey(e.pick)) && !chiefCheck(e))
-    .sort((a, b) => b.quant.evCons - a.quant.evCons).slice(0, c.maxWatchlist)
-  for (const e of watch) rej(e, [], { reason: 'watchlist', detail: `closest to qualifying: conservative value ${e.quant.evCons >= 0 ? '+' : ''}${pct(e.quant.evCons, 1)} (Value Val needs +${pct(c.val.minEvCons)}), win chance ${pct(e.quant.pBlend)} (Safe Sam needs ${pct(c.sam.minProb)})` })
-
   // 3. Portfolio: one bet per player+stat, then caps in order of conservative value. Caps drop bets; nothing is added.
   const ranked = [...survivors.values()].sort((a, b) => b.e.quant.evCons - a.e.quant.evCons || b.e.quant.pCons - a.e.quant.pCons)
   const approved: Bet[] = []
@@ -370,12 +380,44 @@ export function decide(allPicks: Pick[]): Decision {
     approved.push(singleBet(e, who))
   }
 
+  // 3b. Leans: what the strict tier turned down because the uncertainty haircut removed the edge. One bet per player in all,
+  // the same per-game cap, a small stake, and their own record, so they can be compared with the strict tier.
+  const leans: Bet[] = []
+  for (const e of evidence.filter((x) => !chiefCheck(x) && x.quant.pBlend >= c.lean.minProb && x.quant.evHat >= c.lean.minEvHat).sort((a, b) => b.quant.evHat - a.quant.evHat)) {
+    const p = e.pick
+    if (leans.length >= c.lean.maxPerDay) break
+    if ((players.get(p.playerId) ?? 0) >= 1) continue   // one bet per player in all: a strict bet on him rules out a lean on him
+    if ((games.get(p.eventId) ?? 0) >= c.maxBetsPerGame) continue
+    const under = p.side === 'under'
+    const total = approved.length + leans.length
+    if (under && total + 1 >= c.underShareFrom && (unders + 1) / (total + 1) > c.maxUnderShare) continue
+    players.set(p.playerId, 1); games.set(p.eventId, (games.get(p.eventId) ?? 0) + 1)
+    if (under) unders++
+    leans.push(leanBet(e))
+  }
+
+  // Near misses: a raw edge that the haircut removed and that did not fit the lean list (caps). Recorded, never bet.
+  const leanKeys = new Set(leans.map((b) => legKey(b.legs[0])))
+  const candidateKeys = new Set(rejected.map((r) => legKey(r.pick)).concat([...survivors.keys()], [...leanKeys]))
+  const near = evidence
+    .filter((e) => !candidateKeys.has(legKey(e.pick)) && !chiefCheck(e) && e.quant.pBlend >= c.val.minProb && e.quant.evHat >= c.val.minEvCons)
+    .sort((a, b) => b.quant.evHat - a.quant.evHat).slice(0, c.maxNearMisses)
+  for (const e of near) rej(e, ['val'], { reason: 'uncertainty_haircut', detail: `raw expected value ${pct(e.quant.evHat, 1)}, but ${pct(e.quant.evCons, 1)} once the uncertainty from ${e.quant.nEff} games is counted` })
+
+  // Watchlist: the best of the rest. Not candidates, not bets: they show how far the slate was from qualifying, and grading
+  // them later shows whether the thresholds are too strict. Ranked by conservative value; anything the Chief would veto is excluded.
+  const seen = new Set([...rejected.map((r) => legKey(r.pick)), ...survivors.keys(), ...leanKeys])
+  const watch = evidence
+    .filter((e) => !seen.has(legKey(e.pick)) && !chiefCheck(e))
+    .sort((a, b) => b.quant.evCons - a.quant.evCons).slice(0, c.maxWatchlist)
+  for (const e of watch) rej(e, [], { reason: 'watchlist', detail: `closest to qualifying: conservative value ${e.quant.evCons >= 0 ? '+' : ''}${pct(e.quant.evCons, 1)} (Value Val needs +${pct(c.val.minEvCons)}), win chance ${pct(e.quant.pBlend)} (Safe Sam needs ${pct(c.sam.minProb)})` })
+
   // 4. Parlays (research only): individually qualified legs, different games, product of conservative chances.
   const research = buildParlays(evidence.filter((e) => !chiefCheck(e) && e.pick.push === 0 && e.quant.evCons >= c.lou.minLegEvCons && e.quant.pCons >= c.lou.minLegPCons))
 
   return {
-    approved, research, rejected,
-    stats: { picks: allPicks.length, eligible: pool.length, ineligible, candidates, approved: approved.length, research: research.length, rejected: rejected.length },
+    approved, leans, research, rejected,
+    stats: { picks: allPicks.length, eligible: pool.length, ineligible, candidates, approved: approved.length, leans: leans.length, research: research.length, rejected: rejected.length },
   }
 }
 
@@ -405,7 +447,7 @@ function buildParlays(legs: Evidence[]): Bet[] {
     const pCons = best.reduce((a, e) => a * e.quant.pCons, 1)
     out.push({
       mind: 'lou', proposedBy: ['lou'], kind: 'combo', legs: best.map((e) => e.pick), legPrices: best.map((e) => e.market.execPrice), legEvidence: best,
-      odds, prob, pCons, ev: prob * odds - 1, evCons: pCons * odds - 1, research: true,
+      odds, prob, pCons, ev: prob * odds - 1, evCons: pCons * odds - 1, research: true, tier: 'research', stake: 1,
       rationale: [
         `Longshot Lou: ${best.length} legs from ${best.length} different games, each individually clearing +${pct(c.lou.minLegEvCons)} conservative value and ${pct(c.lou.minLegPCons)} conservative chance.`,
         `Joint chance ${pct(pCons, 1)} (conservative) at ${odds.toFixed(2)}x is ${pct(pCons * odds - 1, 1)} expected; the floor is +${pct(c.lou.minEvCons)}.`,

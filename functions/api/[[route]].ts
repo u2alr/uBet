@@ -628,7 +628,7 @@ app.get('/minds', async (c) => {
   ).all()).results as { version: string; bets: number; settled: number; since: string | null }[]
   if (!versions.some((v) => v.version === MINDS_VERSION)) versions.unshift({ version: MINDS_VERSION, bets: 0, settled: 0, since: null })
   const bets = (await db.prepare(
-    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit, proposed_by AS proposedBy, p_cons AS pCons, ev_cons AS evCons, rationale, research
+    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit, proposed_by AS proposedBy, p_cons AS pCons, ev_cons AS evCons, rationale, research, tier, stake
      FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000`,
   ).bind(version).all()).results
   const legs = bets.length ? (await db.prepare(
@@ -647,16 +647,16 @@ app.get('/minds', async (c) => {
     `SELECT m.mind AS mind, ${AGG} FROM mind_bets b
      JOIN (SELECT 'sam' AS mind UNION ALL SELECT 'val' UNION ALL SELECT 'lou' UNION ALL SELECT 'cat' UNION ALL SELECT 'control') m
        ON (',' || COALESCE(b.proposed_by, b.mind) || ',') LIKE ('%,' || m.mind || ',%')
-     WHERE b.version = ? AND b.research = 0 GROUP BY m.mind`,
+     WHERE b.version = ? AND b.tier = 'strict' GROUP BY m.mind`,
   ).bind(version).all()).results
-  const chief = (await db.prepare(`SELECT 'chief' AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.research = 0 HAVING COUNT(*) > 0`).bind(version).all()).results
-  const research = (await db.prepare(`SELECT 'research' AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.research = 1 HAVING COUNT(*) > 0`).bind(version).all()).results
-  const summary = [...chief, ...personalities, ...research]
+  const tierRow = async (mind: string, tier: string) => (await db.prepare(`SELECT '${mind}' AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.tier = '${tier}' HAVING COUNT(*) > 0`).bind(version).all()).results
+  const summary = [...(await tierRow('chief', 'strict')), ...(await tierRow('lean', 'lean')), ...personalities, ...(await tierRow('research', 'research'))]
   const curve = (await db.prepare(
-    `SELECT 'chief' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND research = 0 GROUP BY day
+    `SELECT 'chief' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND tier = 'strict' GROUP BY day
+     UNION ALL SELECT 'lean' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND tier = 'lean' GROUP BY day
      UNION ALL SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND proposed_by IS NULL GROUP BY mind, day
      ORDER BY day`,
-  ).bind(version, version).all()).results
+  ).bind(version, version, version).all()).results
 
   // The Chief's record of what it turned down: counts by reason, and what those would have done (graded like bets).
   const days = (await db.prepare(`SELECT substr(key, length(?) + 1) AS day FROM meta WHERE key LIKE ? ORDER BY key DESC LIMIT 30`).bind(`minds_ran:${version}:`, `minds_ran:${version}:%`).all().catch(() => ({ results: [] }))).results
@@ -676,7 +676,7 @@ app.get('/minds', async (c) => {
     `SELECT l.stat AS stat, CASE WHEN l.price < 1.7 THEN '<1.70' WHEN l.price < 2.1 THEN '1.70-2.09' ELSE '2.10+' END AS band,
             COUNT(*) AS n, AVG(l.prob) AS said, AVG(l.p_cons) AS cons, AVG(b.status = 'won') AS got
      FROM mind_legs l JOIN mind_bets b ON b.id = l.bet_id
-     WHERE b.version = ? AND b.kind = 'single' AND b.research = 0 AND b.status IN ('won','lost') GROUP BY l.stat, band ORDER BY l.stat, band`,
+     WHERE b.version = ? AND b.kind = 'single' AND b.tier = 'strict' AND b.status IN ('won','lost') GROUP BY l.stat, band ORDER BY l.stat, band`,
   ).bind(version).all()).results
   return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200, ranDays: days.map((d) => d.day), audit, rejections, calibration } })
 })
