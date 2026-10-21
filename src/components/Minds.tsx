@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { MINDS_V3 } from '../../shared/minds'
+import { CHIEF } from '../../shared/minds'
 import { INK, MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import { teamByName } from '../lib/teams'
@@ -9,7 +9,13 @@ import LazyMount from './LazyMount'
 import { PickBars, PickSpark } from './PickSpark'
 import MindsCharts from './MindsCharts'
 
-interface Bet { id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null }
+interface Bet {
+  id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null
+  proposedBy: string | null; pCons: number | null; evCons: number | null; rationale: string | null; research: number
+}
+interface Rejection { id: number; day: string; proposedBy: string; playerId: number; player: string; stat: string; side: string; line: number; price: number; game: string | null; reason: string; detail: string | null; pCons: number | null; evCons: number | null; result: string | null; actual: number | null }
+interface Audit { reason: string; n: number; graded: number; won: number; lost: number; units: number }
+interface Calib { stat: string; band: string; n: number; said: number; cons: number | null; got: number }
 interface Leg {
   betId: number; idx: number; playerId: number; player: string; stat: string; side: string; line: number; price: number
   book: string | null; gameDate: string; prob: number; modelProb: number | null; marketProb: number | null; actual: number | null; result: string | null
@@ -20,52 +26,51 @@ interface Leg {
   tipOff: string | null
   homeTeam: string | null
   awayTeam: string | null
+  pCons: number | null
+  matchupScore: number | null
+  skepticFlags: string | null
 }
 interface Sum {
   mind: string; bets: number; settled: number; won: number; lost: number; open: number; units: number
-  statedProb: number | null; actualRate: number | null; statedEv: number | null
+  statedProb: number | null; consProb: number | null; actualRate: number | null; statedEv: number | null; avgEvCons: number | null
   staked: number | null; avgOdds: number | null; avgEv: number | null; combos: number; singles: number; days: number
   bestWin: number | null; worstLoss: number | null
 }
-interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string }[] } }
+interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string | null }[]
+  ranDays: string[]; audit: Audit[]; rejections: Rejection[]; calibration: Calib[] } }
 
-const NAMES: Record<string, string> = { sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', control: 'Control (random)' }
+const NAMES: Record<string, string> = { chief: 'The Chief (portfolio)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
 const STYLE: Record<string, string> = {
-  sam: 'plays it safe: likely singles and a double',
-  val: 'only bets with a positive expected value',
-  lou: 'long-odds combos of 3 to 5 legs',
-  cat: 'bets where the model and the market disagree',
+  chief: 'every staked bet, once: what the whole system actually did',
+  research: 'parlays: tracked and graded, never staked (independence unvalidated)',
+  sam: 'proposes the likeliest outcomes, if they still pay',
+  val: 'proposes the biggest conservative expected value',
+  lou: 'builds parlays from qualified legs',
+  cat: 'proposes where the model beats a market that rates the side under 50%',
   control: 'random picks from the same pool: the benchmark to beat',
 }
-const c = MINDS_V3
+const c = CHIEF
 const p0 = (x: number) => `${Math.round(x * 100)}%`
-// The rules, read from the frozen config so this text can never drift from what the minds actually do.
+// Read from the frozen config, so this text can never drift from what the Chief actually does.
 const RULES: Record<string, string[]> = {
-  sam: [
-    `Up to ${c.betsPerTeamPerGame} singles for each team in each game: win chance ${p0(c.sam.singleProb)} or more and no negative expected value, likeliest first.`,
-    `Plus up to ${c.samDoubles} doubles a day: two such legs from different games, each ${p0(c.sam.doubleLegProb)} or more.`,
-  ],
-  val: [
-    `Up to ${c.betsPerTeamPerGame} singles for each team in each game: expected value of +${p0(c.val.minEv)} or more and a win chance of ${p0(c.val.minProb)} or more, best value first.`,
-    `Plus ${c.valDoubles} double a day of two legs (different games), each worth +${p0(c.val.doubleLegEv)} or more, if the pair is worth +${p0(c.val.doubleEv)} or more combined.`,
-  ],
-  lou: [
-    `Up to ${c.louCombos} parlays a day of ${c.lou.minLegs} to ${c.maxLegs} legs from different games and players; each leg ${p0(c.lou.legProb)}+ and priced ${c.lou.legPrice.toFixed(1)} or more, every leg used once, paying ${c.lou.minOdds}x or more.`,
-    `If five parlays cannot be built, it is topped up with 2-leg longshots paying ${c.lou.fillDoubleOdds}x or more.`,
-  ],
-  cat: [
-    `Up to ${c.betsPerTeamPerGame} singles for each team in each game, on the side the market rates below ${p0(c.cat.maxMarketProb)}, where our model is higher by ${p0(c.cat.minGap)} or more and the bet has +${p0(c.cat.minEv)} EV or more. Biggest disagreement first.`,
-    'Gaps of 25 points or more are skipped: those are usually something the model cannot see.',
-  ],
-  control: ['Version 1 only: 3 random singles from the same pool, as a benchmark. Removed in version 2.'],
+  sam: [`Proposes singles whose estimated win chance is ${p0(c.sam.minProb)} or more and whose conservative expected value is not negative. No minimum number.`],
+  val: [`Proposes singles with a conservative expected return of +${p0(c.val.minEvCons)} or more and an estimated win chance of ${p0(c.val.minProb)} or more, ranked by that conservative value.`],
+  cat: [`Proposes where the market rates the side below ${p0(c.cat.maxMarketProb)} but the model is higher by ${p0(c.cat.minGap)} or more, with +${p0(c.cat.minEvCons)} conservative value, and only if the matchup explains why.`],
+  lou: [`Builds parlays of ${c.lou.minLegs} to ${c.lou.maxLegs} legs from different games, each leg individually clearing +${p0(c.lou.minLegEvCons)} conservative value and a ${p0(c.lou.minLegPCons)} conservative chance. The whole parlay needs +${p0(c.lou.minEvCons)} on the product of conservative chances. At most ${c.lou.maxParlays} a day, never topped up, and research-only.`],
 }
-const SHARED = [
-  `Starters and stars only: a team's top ${c.starterTopN} players by recent minutes, averaging ${c.minRoleMinutes}+ with no big drop. Their minutes, and so their props, are the most predictable.`,
-  `Also required: fresh boosted-model projection, ${c.minSample}+ games of history, ${c.minMarketBooks}+ books quoting both sides, not on the injury list, no model/market gap over ${p0(c.maxGap)}.`,
-  `A mind never lowers a floor to fill a quota: a team with fewer qualifying lines simply gets fewer bets. At most ${c.maxBetsPerPlayer} bets per player a day, and ${c.maxAllUnder} all-Under bets per team-game.`,
-  'Flat 1 unit per bet. Combo legs are treated as independent. A pushed or voided leg is dropped from a combo.',
+const PIPELINE = [
+  `1. Eligibility: fresh projection (under ${c.maxProjectionAgeHours}h), ${c.minSample}+ games, ${c.minMarketBooks}+ books quoting both sides, a team's top ${c.starterTopN} by minutes and ${c.minRoleMinutes}+ minutes.`,
+  `2. Quant: the model's chance is corrected for its measured overconfidence, blended with the market, then cut by ${c.haircutZ} standard errors for how little history supports it. Every threshold uses that conservative number.`,
+  `3. Market: the price counted is the best, capped at ${Math.round((c.priceCorroboration - 1) * 100)}% above the next book, so one stale quote cannot create an edge. A lone price, a stale-looking line, or a price rich against the market's own fair price is rejected. Line movement is not available yet.`,
+  `4. Matchup: minutes trend and the opponent's tendency can corroborate or contradict. They never add probability, because the model already sees the opponent.`,
+  `5. Skeptic: vetoes injuries, under ${c.minSampleStrict} games, falling minutes, a model/market gap of ${p0(c.maxGap)}+, and recent games that contradict the bet. A gap of ${p0(c.reviewGap)}+ needs the matchup to explain it.`,
+  `6. Portfolio: one bet per player and stat, at most ${c.maxBetsPerPlayer} per player and ${c.maxBetsPerGame} per game, ${c.maxDailyBets} a day, and no more than ${p0(c.maxUnderShare)} Unders. These caps only remove bets.`,
+  'The Chief may reject everything. There is no quota, and nothing is topped up. Every rejected candidate is recorded with its reason and graded afterwards, so the filters can be audited.',
+  'Flat 1 unit per bet. Grading uses the executable price. Parlays assume independence between games, which is unvalidated, so they are research-only.',
 ]
 const BASE = ['sam', 'val', 'lou', 'cat']
+const V4_ORDER = ['chief', 'sam', 'val', 'cat', 'research']
+const orderFor = (res: Res | null) => (!res ? BASE : res.data.version === res.data.current ? V4_ORDER : [...BASE, ...(res.data.summary.some((s) => s.mind === 'control') ? ['control'] : [])])
 const STATUS: Record<string, string> = { open: 'Open', won: 'Won', lost: 'Lost', push: 'Push', void: 'Void' }
 const settledStatus = new Set(['won', 'lost', 'push'])
 const signed = (n: number, d = 2) => `${n > 0 ? '+' : ''}${n.toFixed(d)}`
@@ -81,7 +86,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const [version, setVersion] = useState<string | null>(null)
   useEffect(() => { api<Res>(`/minds${version ? `?version=${version}` : ''}`).then(setRes).catch((e) => setError(e.message)) }, [refreshKey, version])
 
-  const ORDER = useMemo(() => [...BASE, ...(res?.data.summary.some((s) => s.mind === 'control') ? ['control'] : [])], [res])
+  const ORDER = orderFor(res)
   const series = useMemo(() => {
     if (!res) return []
     const days = [...new Set(res.data.curve.map((x) => x.day))].sort()
@@ -92,21 +97,24 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       for (const m of ORDER) if (m in run) row[m] = Number(run[m].toFixed(2))
       return row
     })
-  }, [res, ORDER])
+  }, [res]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <p className="text-sm text-neutral-500">{error}</p>
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
   const { bets, legs, summary, minBets } = res.data
   const sum = (m: string) => summary.find((s) => s.mind === m)
+  const inGroupAll = (b: Bet, m: string) => (m === 'chief' ? !b.research : m === 'research' ? !!b.research : (b.proposedBy ?? b.mind).split(',').includes(m) && !b.research)
   const legMap = new Map<number, Leg[]>()
   for (const l of legs) (legMap.get(l.betId) ?? legMap.set(l.betId, []).get(l.betId)!).push(l)
   const legsOf = (id: number) => legMap.get(id) ?? []
   // What the bets were *expected* to earn, to set beside what they did: the honest comparison.
-  const expectedUnits = (m: string) => bets.filter((b) => b.mind === m && settledStatus.has(b.status)).reduce((a, b) => a + b.ev, 0)
+  const expectedUnits = (m: string) => bets.filter((b) => inGroupAll(b, m) && settledStatus.has(b.status)).reduce((a, b) => a + b.ev, 0)
 
+  const proposers = (b: Bet) => (b.proposedBy ?? b.mind).split(',')
+  const inGroup = (b: Bet, m: string) => (m === 'chief' ? !b.research : m === 'research' ? !!b.research : proposers(b).includes(m) && !b.research)
   const visible = bets.filter((b) =>
-    (!pick || b.mind === pick) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
-  const days = [...new Set(bets.map((b) => b.day))].sort().reverse()
+    (!pick || inGroup(b, pick)) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
+  const days = [...new Set([...bets.map((b) => b.day), ...res.data.ranDays])].sort().reverse()
   const selDay = dayPick && days.includes(dayPick) ? dayPick : days[0]
   const byDay = new Map<string, Bet[]>()
   for (const b of visible) (byDay.get(b.day) ?? byDay.set(b.day, []).get(b.day)!).push(b)
@@ -114,8 +122,10 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   return (
     <div className="space-y-3">
       <p className="rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
-        {ORDER.length} rule-based pickers, {res.data.version === res.data.current ? `up to ${c.betsPerTeamPerGame} bets per team per game` : 'an archived rule set'}. Each card is frozen when it is made and graded from box scores. No mind gets a verdict before {minBets} settled bets:
-        until then, treat every number below as noise. Click a mind to see only its bets and its rules.
+        {res.data.version === res.data.current
+          ? 'Four specialists propose; one strict Chief decides, and may decide on no bet at all. There is no quota.'
+          : 'An archived rule set.'}{' '}Each decision is frozen when it is made and graded from box scores. No verdict before {minBets} settled bets:
+        until then, treat every number below as noise. Click a card to see only its bets.
       </p>
       {res.data.versions.length > 1 && (
         <div className="flex items-center gap-2 text-xs text-neutral-500">
@@ -179,16 +189,20 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       </div>
 
       <details className="rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-400" open={pick !== null}>
-        <summary className="cursor-pointer text-neutral-300">Rules{pick ? `: ${NAMES[pick]}` : ''}</summary>
-        <div className="mt-2 space-y-2">
-          {(pick ? [pick] : ORDER).map((m) => (
-            <div key={m}>
-              <div className="flex items-center gap-2 text-neutral-200"><span className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[m] }} />{NAMES[m]}</div>
-              <ul className="ml-4 list-disc text-neutral-400">{RULES[m].map((r) => <li key={r}>{r}</li>)}</ul>
-            </div>
-          ))}
-          <ul className="list-disc border-t border-neutral-800 pl-4 pt-2 text-neutral-500">{SHARED.map((r) => <li key={r}>{r}</li>)}</ul>
-        </div>
+        <summary className="cursor-pointer text-neutral-300">How it decides{pick && RULES[pick] ? `: ${NAMES[pick]}` : ''}</summary>
+        {res.data.version !== res.data.current ? (
+          <p className="mt-2 text-neutral-500">This is an archived rule set ({res.data.version.replace('minds-', 'v')}). Its rules are in research/PREREG_MINDS*.md. It is shown for comparison and never added to the current record.</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {(pick && RULES[pick] ? [pick] : Object.keys(RULES)).map((m) => (
+              <div key={m}>
+                <div className="flex items-center gap-2 text-neutral-200"><span className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[m] }} />{NAMES[m]}</div>
+                <ul className="ml-4 list-disc text-neutral-400">{RULES[m].map((r) => <li key={r}>{r}</li>)}</ul>
+              </div>
+            ))}
+            <ul className="space-y-1 border-t border-neutral-800 pt-2 text-neutral-500">{PIPELINE.map((r) => <li key={r}>{r}</li>)}</ul>
+          </div>
+        )}
       </details>
 
       <div className="rounded-lg bg-neutral-900 p-3">
@@ -237,14 +251,20 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
         </div>
       </div>
 
-      {visible.length === 0 && (
+      {visible.length === 0 && !(view === 'game' && res.data.ranDays.includes(selDay)) && (
         <p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">
           {bets.length === 0 ? <>No cards yet. Run <code className="text-neutral-300">node minds/run.mjs</code> to generate today's bets.</> : 'No bets match this filter.'}
         </p>
       )}
+      {view === 'game' && visible.every((b) => b.day !== selDay) && res.data.ranDays.includes(selDay) && (
+        <NoBets day={selDay} rejections={res.data.rejections.filter((r) => r.day === selDay)} />
+      )}
       {view === 'game'
         ? <ScheduleView bets={visible.filter((b) => b.day === selDay)} legsOf={legsOf} />
-        : [...byDay].map(([day, list]) => <DaySection key={day} day={day} list={list} order={ORDER} legsOf={legsOf} />)}
+        : [...byDay].map(([day, list]) => <DaySection key={day} day={day} list={list} order={ORDER.filter((m) => m !== 'chief' && m !== 'research')} legsOf={legsOf} />)}
+
+      {res.data.rejections.length > 0 && <Rejections audit={res.data.audit} rejections={res.data.rejections} day={view === 'game' ? selDay : null} />}
+      {res.data.calibration.length > 0 && <CalibrationTable rows={res.data.calibration} />}
     </div>
   )
 }
@@ -372,7 +392,9 @@ function ScheduleView({ bets, legsOf }: { bets: Bet[]; legsOf: (id: number) => L
       </div>
       {combos.length > 0 && (
         <div className="space-y-1">
-          <div className="text-xs uppercase tracking-widest text-neutral-500">Doubles and parlays <span className="normal-case tracking-normal text-neutral-600">{combos.length}</span></div>
+          <div className="text-xs uppercase tracking-widest text-neutral-500">
+            {combos.every((b) => b.research) ? 'Research only: parlays (tracked, not staked)' : 'Doubles and parlays'} <span className="normal-case tracking-normal text-neutral-600">{combos.length}</span>
+          </div>
           <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
             {combos.map((b) => <ComboCard key={b.id} b={b} legs={legsOf(b.id)} />)}
           </div>
@@ -425,11 +447,12 @@ function mergeSame(bs: Bet[], legsOf: (id: number) => Leg[]): { bets: Bet[]; leg
 function MiniBet({ bets, l }: { bets: Bet[]; l: Leg }) {
   const [open, setOpen] = useState(false)
   const b = bets[0]
+  const who = [...new Set(bets.flatMap((x) => (x.proposedBy ?? x.mind).split(',')))]
   return (
     <div>
       <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 rounded px-2 py-0.5 text-left text-xs hover:bg-neutral-800/60">
-        <span className="flex w-6 shrink-0 gap-0.5" title={bets.map((x) => NAMES[x.mind]).join(', ')}>
-          {bets.map((x) => <span key={x.id} className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[x.mind] }} />)}
+        <span className="flex w-8 shrink-0 gap-0.5" title={who.map((m) => NAMES[m] ?? m).join(', ')}>
+          {who.map((m) => <span key={m} className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[m] }} />)}
         </span>
         <span className="min-w-0 flex-1 truncate text-neutral-100">{l.player}</span>
         <span className="shrink-0 text-neutral-400">{l.side === 'over' ? 'O' : 'U'} {l.line} {STAT_LABEL[l.stat] ?? l.stat}</span>
@@ -437,12 +460,18 @@ function MiniBet({ bets, l }: { bets: Bet[]; l: Leg }) {
         <span className="w-12 shrink-0 text-right tabular-nums text-neutral-500">{signed(b.ev * 100, 1)}%</span>
         <span className="w-14 shrink-0 text-right tabular-nums" style={{ color: STATE_COLOR[b.status] ?? '#737373' }}>{statusText(b)}</span>
       </button>
-      {open && <div className="mx-2 mb-1 rounded bg-neutral-950/60 px-2 py-1.5"><LegRow l={l} /></div>}
+      {open && (
+        <div className="mx-2 mb-1 space-y-1 rounded bg-neutral-950/60 px-2 py-1.5">
+          <LegRow l={l} />
+          <Why b={b} l={l} />
+        </div>
+      )}
     </div>
   )
 }
 
 function ComboCard({ b, legs }: { b: Bet; legs: Leg[] }) {
+  const [open, setOpen] = useState(false)
   return (
     <div className="rounded-lg bg-neutral-900 px-3 py-2 text-xs">
       <div className="flex items-center gap-2">
@@ -451,7 +480,9 @@ function ComboCard({ b, legs }: { b: Bet; legs: Leg[] }) {
         <span className="text-neutral-500">{legs.length}-leg</span>
         <span className="ml-auto tabular-nums text-neutral-400">{b.odds.toFixed(2)}x · says {p0(b.prob)} · EV {signed(b.ev * 100, 1)}%</span>
         <span className="w-16 text-right tabular-nums" style={{ color: STATE_COLOR[b.status] ?? '#737373' }}>{statusText(b)}</span>
+        {b.rationale && <button className="text-neutral-500 hover:text-neutral-300" onClick={() => setOpen(!open)} aria-expanded={open}>why</button>}
       </div>
+      {open && <Why b={b} />}
       <div className="mt-1 space-y-0.5">
         {legs.map((l) => (
           <div key={l.idx} className="flex items-center gap-2 text-neutral-300">
@@ -462,6 +493,120 @@ function ComboCard({ b, legs }: { b: Bet; legs: Leg[] }) {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+/** The reasoning behind a bet: what the Quant, Market, Matchup and Skeptic each said. Older versions have none. */
+function Why({ b, l }: { b: Bet; l?: Leg }) {
+  let lines: string[] = []
+  try { lines = b.rationale ? (JSON.parse(b.rationale) as string[]) : [] } catch { lines = [] }
+  if (!lines.length) return null
+  return (
+    <div className="space-y-0.5 border-t border-neutral-800 pt-1 text-[11px] text-neutral-400">
+      {lines.map((x) => <p key={x}>{x}</p>)}
+      {b.evCons != null && (
+        <p className="text-neutral-500">
+          Says {pct(b.prob)}, conservative {pct(b.pCons)}; value {signed(b.ev * 100, 1)}% expected, {signed(b.evCons * 100, 1)}% conservative.
+          {l?.skepticFlags ? ` Flags: ${l.skepticFlags}.` : ''}
+        </p>
+      )}
+    </div>
+  )
+}
+
+const REASON: Record<string, string> = {
+  uncertainty_haircut: 'a raw edge that did not survive the uncertainty haircut',
+  injury_listed: 'listed on the injury report',
+  thin_history: 'too few games behind the estimate',
+  minutes_dropping: 'minutes falling',
+  extreme_gap: 'model and market too far apart',
+  form_contradiction: 'recent games contradict the bet',
+  unresolved_review: 'a big disagreement the matchup did not explain',
+  cat_uncorroborated: 'the market disagrees and nothing explains why',
+  matchup_contradicted: 'the opponent works against it',
+  single_price: 'only one book offers this price',
+  stale_line: 'the best price looks stale',
+  rich_price: 'the price is rich against the market',
+  duplicate_exposure: 'a better line on the same player and stat was chosen',
+  player_cap: 'too many bets on one player',
+  game_cap: 'too many bets in one game',
+  daily_cap: "the day's limit was reached",
+  under_share_cap: 'too many Unders on one card',
+}
+
+function NoBets({ day, rejections }: { day: string; rejections: Rejection[] }) {
+  const top = Object.entries(rejections.reduce<Record<string, number>>((a, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {})).sort((a, b) => b[1] - a[1]).slice(0, 4)
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-neutral-300">
+      <b className="font-medium text-neutral-100">No bets for {dayLabel(day)}.</b> The Chief reviewed the slate and nothing cleared the thresholds. That is the intended default, not a failure.
+      {top.length > 0 && <span className="text-neutral-500"> The candidates it looked at and turned down: {top.map(([r, n]) => `${n} ${REASON[r] ?? r}`).join('; ')}.</span>}
+    </div>
+  )
+}
+
+/** Everything the Chief turned down, and what those would have done, so each filter can be judged by its results. */
+function Rejections({ audit, rejections, day }: { audit: Audit[]; rejections: Rejection[]; day: string | null }) {
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState<string | null>(null)
+  const shown = rejections.filter((r) => (!day || r.day === day) && (!reason || r.reason === reason))
+  return (
+    <div className="rounded-lg bg-neutral-900 px-3 py-2 text-xs">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 text-left text-neutral-300">
+        Rejected candidates <span className="text-neutral-600">{audit.reduce((a, r) => a + r.n, 0)} in all</span>
+        <span className="ml-auto text-neutral-500">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <table className="w-full text-left">
+            <thead className="text-neutral-500"><tr><th className="py-1 font-normal">Reason</th><th className="font-normal">Count</th><th className="font-normal">Graded</th><th className="font-normal" title="Of the graded ones, how many would have won">Would have won</th><th className="font-normal" title="Units if every graded one had been bet at the price shown. Not a result: it is what the filter saved or cost.">If bet</th></tr></thead>
+            <tbody>
+              {audit.map((a) => (
+                <tr key={a.reason} className={`cursor-pointer border-t border-neutral-800 hover:bg-neutral-800/60 ${reason === a.reason ? 'bg-neutral-800/60' : ''}`} onClick={() => setReason(reason === a.reason ? null : a.reason)}>
+                  <td className="py-1 text-neutral-300">{REASON[a.reason] ?? a.reason}</td>
+                  <td className="tabular-nums text-neutral-400">{a.n}</td>
+                  <td className="tabular-nums text-neutral-400">{a.graded}</td>
+                  <td className="tabular-nums text-neutral-400">{a.graded ? `${a.won}/${a.won + a.lost}` : '–'}</td>
+                  <td className="tabular-nums text-neutral-400">{a.graded ? signed(a.units) : '–'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-neutral-600">Click a reason to list its candidates{day ? ` for ${dayLabel(day)}` : ''}. {shown.length} shown.</p>
+          <div className="max-h-72 space-y-0.5 overflow-y-auto">
+            {shown.slice(0, 150).map((r) => (
+              <div key={r.id} className="flex items-baseline gap-2 text-neutral-400" title={r.detail ?? ''}>
+                <span className="w-40 truncate text-neutral-200">{r.player}</span>
+                <span className="w-24">{r.side === 'over' ? 'O' : 'U'} {r.line} {STAT_LABEL[r.stat] ?? r.stat}</span>
+                <span className="w-10 tabular-nums">{r.price.toFixed(2)}</span>
+                <span className="min-w-0 flex-1 truncate text-neutral-500">{REASON[r.reason] ?? r.reason}{r.detail ? `: ${r.detail}` : ''}</span>
+                {r.result && <span className="w-12 text-right" style={{ color: STATE_COLOR[r.result] ?? '#737373' }}>{r.result}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Does "60%" win 60% of the time? By statistic and price band, over settled staked singles. */
+function CalibrationTable({ rows }: { rows: Calib[] }) {
+  return (
+    <div className="rounded-lg bg-neutral-900 px-3 py-2 text-xs">
+      <h3 className="mb-1 text-neutral-300">Calibration by statistic and price</h3>
+      <table className="w-full text-left">
+        <thead className="text-neutral-500"><tr><th className="py-1 font-normal">Stat</th><th className="font-normal">Price</th><th className="font-normal">Bets</th><th className="font-normal">Said</th><th className="font-normal">Conservative</th><th className="font-normal">Got</th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={`${r.stat}${r.band}`} className="border-t border-neutral-800 text-neutral-300">
+              <td className="py-1">{STAT_LABEL[r.stat] ?? r.stat}</td><td>{r.band}</td><td className="tabular-nums">{r.n}</td>
+              <td className="tabular-nums">{pct(r.said)}</td><td className="tabular-nums">{r.cons == null ? '–' : pct(r.cons)}</td><td className="tabular-nums">{pct(r.got)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-1 text-neutral-600">Small groups say nothing: wait for dozens of bets in a row of this table before reading it.</p>
     </div>
   )
 }

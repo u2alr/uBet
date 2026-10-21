@@ -605,6 +605,19 @@ async function recentBefore(db: D1Database, legs: { playerId: number; stat: stri
 
 // The minds' frozen cards and their record. Pure read; cards are written by minds/run.mjs, graded by ingest/sync.py.
 // ?version=minds-v1 shows an archived rule set; the default is the current one. Versions never mix in one record.
+const AGG = `COUNT(*) AS bets,
+  SUM(b.status IN ('won','lost','push')) AS settled, SUM(b.status = 'won') AS won, SUM(b.status = 'lost') AS lost,
+  SUM(b.status = 'open') AS open, COALESCE(SUM(b.profit), 0) AS units,
+  AVG(CASE WHEN b.status IN ('won','lost') THEN b.prob END) AS statedProb,
+  AVG(CASE WHEN b.status IN ('won','lost') THEN b.p_cons END) AS consProb,
+  AVG(CASE WHEN b.status IN ('won','lost') THEN (b.status = 'won') END) AS actualRate,
+  AVG(CASE WHEN b.status IN ('won','lost') THEN b.ev END) AS statedEv,
+  SUM(CASE WHEN b.status IN ('won','lost','push') THEN b.stake END) AS staked,
+  AVG(b.odds) AS avgOdds, AVG(b.ev) AS avgEv, AVG(b.ev_cons) AS avgEvCons, SUM(b.kind = 'combo') AS combos, SUM(b.kind = 'single') AS singles,
+  COUNT(DISTINCT b.day) AS days, MAX(b.profit) AS bestWin, MIN(b.profit) AS worstLoss`
+
+// The minds' frozen decisions and their record. Pure read; written by minds/run.mjs, graded by ingest/sync.py.
+// ?version=minds-v1 shows an archived rule set; the default is the current one. Versions never mix in one record.
 app.get('/minds', async (c) => {
   const db = c.env.DB
   const asked = c.req.query('version')
@@ -612,35 +625,60 @@ app.get('/minds', async (c) => {
   const version = asked ?? MINDS_VERSION
   const versions = (await db.prepare(
     `SELECT version, COUNT(*) AS bets, SUM(status IN ('won','lost','push')) AS settled, MIN(day) AS since FROM mind_bets GROUP BY version ORDER BY version DESC`,
-  ).all()).results
+  ).all()).results as { version: string; bets: number; settled: number; since: string | null }[]
+  if (!versions.some((v) => v.version === MINDS_VERSION)) versions.unshift({ version: MINDS_VERSION, bets: 0, settled: 0, since: null })
   const bets = (await db.prepare(
-    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000`,
+    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit, proposed_by AS proposedBy, p_cons AS pCons, ev_cons AS evCons, rationale, research
+     FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000`,
   ).bind(version).all()).results
   const legs = bets.length ? (await db.prepare(
-    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob,
+    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob, p_cons AS pCons,
             model_prob AS modelProb, market_prob AS marketProb, actual, result, event_id AS eventId, tip_off AS tipOff, home_team AS homeTeam, away_team AS awayTeam,
+            matchup_score AS matchupScore, skeptic_flags AS skepticFlags,
             (SELECT team FROM players WHERE id = mind_legs.player_id) AS team
      FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000)) ORDER BY bet_id, idx`,
   ).bind(version).all()).results : []
   // Each leg's last 10 regular-season games BEFORE its game date (what was known when the bet was made), oldest first.
   const recent = await recentBefore(db, legs as { playerId: number; stat: string; gameDate: string }[])
   legs.forEach((l, i) => { l.recent = recent[i] })
-  const summary = (await db.prepare(
-    `SELECT mind, COUNT(*) AS bets,
-            SUM(status IN ('won','lost','push')) AS settled, SUM(status = 'won') AS won, SUM(status = 'lost') AS lost,
-            SUM(status = 'open') AS open, COALESCE(SUM(profit), 0) AS units,
-            AVG(CASE WHEN status IN ('won','lost') THEN prob END) AS statedProb,
-            AVG(CASE WHEN status IN ('won','lost') THEN (status = 'won') END) AS actualRate,
-            AVG(CASE WHEN status IN ('won','lost') THEN ev END) AS statedEv,
-            SUM(CASE WHEN status IN ('won','lost','push') THEN stake END) AS staked,
-            AVG(odds) AS avgOdds, AVG(ev) AS avgEv, SUM(kind = 'combo') AS combos, SUM(kind = 'single') AS singles,
-            COUNT(DISTINCT day) AS days, MAX(profit) AS bestWin, MIN(profit) AS worstLoss
-     FROM mind_bets WHERE version = ? GROUP BY mind`,
+
+  // A bet proposed by several personalities counts for each of them; "chief" is the real portfolio (every staked bet once).
+  const personalities = (await db.prepare(
+    `SELECT m.mind AS mind, ${AGG} FROM mind_bets b
+     JOIN (SELECT 'sam' AS mind UNION ALL SELECT 'val' UNION ALL SELECT 'lou' UNION ALL SELECT 'cat' UNION ALL SELECT 'control') m
+       ON (',' || COALESCE(b.proposed_by, b.mind) || ',') LIKE ('%,' || m.mind || ',%')
+     WHERE b.version = ? AND b.research = 0 GROUP BY m.mind`,
   ).bind(version).all()).results
+  const chief = (await db.prepare(`SELECT 'chief' AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.research = 0 HAVING COUNT(*) > 0`).bind(version).all()).results
+  const research = (await db.prepare(`SELECT 'research' AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.research = 1 HAVING COUNT(*) > 0`).bind(version).all()).results
+  const summary = [...chief, ...personalities, ...research]
   const curve = (await db.prepare(
-    `SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? GROUP BY mind, day ORDER BY day`,
+    `SELECT 'chief' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND research = 0 GROUP BY day
+     UNION ALL SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND proposed_by IS NULL GROUP BY mind, day
+     ORDER BY day`,
+  ).bind(version, version).all()).results
+
+  // The Chief's record of what it turned down: counts by reason, and what those would have done (graded like bets).
+  const days = (await db.prepare(`SELECT substr(key, length(?) + 1) AS day FROM meta WHERE key LIKE ? ORDER BY key DESC LIMIT 30`).bind(`minds_ran:${version}:`, `minds_ran:${version}:%`).all().catch(() => ({ results: [] }))).results
+  const audit = (await db.prepare(
+    `SELECT reason, COUNT(*) AS n, SUM(result IS NOT NULL) AS graded, SUM(result = 'won') AS won, SUM(result = 'lost') AS lost,
+            COALESCE(SUM(CASE result WHEN 'won' THEN price - 1 WHEN 'lost' THEN -1 ELSE 0 END), 0) AS units
+     FROM mind_rejections WHERE version = ? GROUP BY reason ORDER BY n DESC`,
   ).bind(version).all()).results
-  return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200 } })
+  const rejections = (await db.prepare(
+    `SELECT id, day, proposed_by AS proposedBy, player_id AS playerId, player, stat, side, line, price, game, tip_off AS tipOff, reason, detail,
+            p_cons AS pCons, ev_cons AS evCons, result, actual
+     FROM mind_rejections WHERE version = ? ORDER BY day DESC, ev_cons DESC LIMIT 400`,
+  ).bind(version).all()).results
+
+  // Calibration by statistic and price band, over settled singles in the staked portfolio.
+  const calibration = (await db.prepare(
+    `SELECT l.stat AS stat, CASE WHEN l.price < 1.7 THEN '<1.70' WHEN l.price < 2.1 THEN '1.70-2.09' ELSE '2.10+' END AS band,
+            COUNT(*) AS n, AVG(l.prob) AS said, AVG(l.p_cons) AS cons, AVG(b.status = 'won') AS got
+     FROM mind_legs l JOIN mind_bets b ON b.id = l.bet_id
+     WHERE b.version = ? AND b.kind = 'single' AND b.research = 0 AND b.status IN ('won','lost') GROUP BY l.stat, band ORDER BY l.stat, band`,
+  ).bind(version).all()).results
+  return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200, ranDays: days.map((d) => d.day), audit, rejections, calibration } })
 })
 
 // Manual prediction logging from the player page. Writes to the database, so it is not public.

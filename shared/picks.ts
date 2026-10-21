@@ -136,6 +136,8 @@ export interface Pick {
   injury?: Injury | null
   /** Minutes role from the last 10 games. */
   role?: Role | null
+  /** How much of this statistic the opponent allows compared with the league (1.05 = 5% more); filled in by the minds runner. */
+  oppFactor?: number | null
 }
 
 export interface Warning { code: string; message: string }

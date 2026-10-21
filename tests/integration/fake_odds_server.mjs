@@ -13,7 +13,11 @@ export const PORT = Number(process.argv[2] ?? 9977)
 
 // Fixed for the life of the process so two runs against one server instance see identical games.
 const HOUR = 3600_000
-const base = Math.ceil(Date.now() / HOUR) * HOUR + 26 * HOUR
+// Moved to noon Eastern, so the games share one Eastern date whatever time the tests run (they used to straddle midnight
+// when run in the late evening, which made the date-keyed projection tests fail at that hour only).
+const etHour = (t) => Number(new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false })) % 24
+let base = Math.ceil(Date.now() / HOUR) * HOUR + 6 * HOUR   // the next noon Eastern at least 6 hours away: always inside the 40 hour window
+while (etHour(base) !== 12) base += HOUR
 const iso = (ms) => new Date(ms).toISOString().replace('.000Z', 'Z')
 
 const EVENTS = [

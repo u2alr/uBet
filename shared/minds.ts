@@ -1,34 +1,64 @@
-// Rule-based "minds": each reads the day's picks and chooses bets in its own style. Pure; frozen config.
-// What changed from v2 and why: research/PREREG_MINDS_V3.md. Do not edit MINDS_V3 after the first v3 card; a change is minds-v4.
-import type { Pick } from './picks.ts'
+// The minds, version 4: four candidate-generating personalities, four evidence agents, and one strict Chief.
+// Pure and deterministic: every probability and price is calculated here in code; nothing is voted on.
+// Rules, evidence for each threshold, and what is NOT validated: research/PREREG_MINDS_V4.md.
+// Frozen after the first v4 card. A change is minds-v5.
+import { TEAM_NAMES, type Pick } from './picks.ts'
+import { blendProb, expectedValue } from './baseline.ts'
 
-export const MINDS_VERSION = 'minds-v3'
-export const MINDS_V3 = {
-  /** Singles per team, per game, for Safe Sam, Value Val and Contrarian Cat (fewer if the team's pool cannot supply them). */
-  betsPerTeamPerGame: 5,
-  /** Extras that span games: doubles and parlays, per day. */
-  samDoubles: 2,
-  valDoubles: 1,
-  louCombos: 5,
-  maxLegs: 5,
-  // Who is eligible: starters and stars only.
-  /** The team's top N players by recent minutes (the starting five plus the sixth man). */
-  starterTopN: 6,
-  minRoleMinutes: 24,
-  minutesDropFloor: -4,
-  // Shared gates
+export const MINDS_VERSION = 'minds-v4'
+
+export const CHIEF = {
+  // ---- eligibility: data complete, fresh, and a starter or star
   minMarketBooks: 2,
   minSample: 10,
-  /** A model/market gap this big (see BIG_GAP) usually means news the model cannot see, not an edge. */
+  minRoleMinutes: 24,
+  starterTopN: 6,
+  maxProjectionAgeHours: 24,
+
+  // ---- Quant: conservative probability = blended probability minus haircutZ standard errors
+  haircutZ: 0.5,
+  minEffectiveGames: 10,
+  maxEffectiveGames: 40,
+  /** Held-out calibration slopes of the boosted model (research/RESULTS.md): a model "70%" behaves like 50 + slope * 20. */
+  calibrationSlope: { pts: 0.851, reb: 0.889, ast: 0.919, fg3m: 0.866 } as Record<string, number>,
+  defaultCalibrationSlope: 0.85,
+
+  // ---- Market: executable price, and what the other books say
+  /** The price we may count is capped at this multiple of the second-best book, so one stale quote cannot manufacture an edge. */
+  priceCorroboration: 1.03,
+  /** Best price this far above the runner-up looks stale. */
+  staleLineRatio: 1.15,
+  /** The executable price must not be rich against the market's own fair price by more than this. */
+  minMarketEv: -0.05,
+
+  // ---- Matchup: corroborates or contradicts; it never adds probability (the model already sees opponent and pace)
+  minutesTrendEdge: 2,
+  opponentEdge: 0.04,
+
+  // ---- Skeptic
+  minSampleStrict: 15,
+  minutesDropVeto: -4,
+  /** Model/market gaps this big are rejected: no independent validated data exists to resolve them. */
   maxGap: 0.25,
-  // Diversification, per mind per day
+  /** From here a gap needs matchup corroboration before the Chief will consider the bet. */
+  reviewGap: 0.15,
+  formMinGames: 8,
+  formContradictionSd: 0.5,
+
+  // ---- Candidate generators
+  sam: { minProb: 0.6, minEvCons: 0 },
+  val: { minProb: 0.5, minEvCons: 0.03 },
+  cat: { minGap: 0.1, maxMarketProb: 0.5, minEvCons: 0.02, minMatchup: 1 },
+  lou: { minLegEvCons: 0.02, minLegPCons: 0.45, minLegs: 3, maxLegs: 5, minEvCons: 0.1, maxParlays: 3 },
+
+  // ---- Portfolio: caps, never quotas
   maxBetsPerPlayer: 2,
-  /** Per team-game group of 5: at most this many all-Under bets (the model leans Under). */
-  maxAllUnder: 3,
-  sam: { singleProb: 0.6, singleEv: 0, doubleLegProb: 0.6 },
-  val: { minEv: 0.03, minProb: 0.5, doubleLegEv: 0.03, doubleEv: 0.06 },
-  lou: { legProb: 0.38, legPrice: 1.6, minOdds: 6, minLegs: 3, fillDoubleOdds: 4 },
-  cat: { minGap: 0.1, minEv: 0.02, maxMarketProb: 0.5 },
+  maxBetsPerGame: 4,
+  maxUnderShare: 0.65,
+  underShareFrom: 6,
+  maxDailyBets: 12,
+  /** How many near misses (raw edge, removed by the haircut) are recorded per day. */
+  maxNearMisses: 60,
 } as const
 
 export type MindId = 'sam' | 'val' | 'lou' | 'cat'
@@ -37,166 +67,341 @@ export const MIND_NAMES: Record<MindId, string> = {
   sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat',
 }
 
-export interface Bet {
-  mind: MindId
-  kind: 'single' | 'combo'
-  legs: Pick[]
-  /** Product of leg prices (decimal). */
-  odds: number
-  /** Stated win probability: product of leg probabilities, legs assumed independent. */
-  prob: number
-  /** Expected profit per unit staked. */
-  ev: number
-}
+// ---------------------------------------------------------------------------------------------------------------
+// Evidence
 
+export interface QuantView {
+  modelCal: number
+  pBlend: number
+  nEff: number
+  se: number
+  pCons: number
+  /** Expected profit per unit at the executable price, using the blended (not conservative) probability. */
+  evHat: number
+  /** The same, using the conservative probability. This is the number every threshold uses. */
+  evCons: number
+}
+export interface MarketView {
+  execPrice: number
+  bestPrice: number
+  corroboratedBy: string | null
+  consensus: number | null
+  /** Expected profit if the market's own no-margin probability were the truth: how rich the price is. */
+  marketEv: number
+  vetoes: string[]
+  lineMovement: 'unavailable'
+}
+export interface MatchupView { score: number; notes: string[] }
+export interface SkepticView { vetoes: string[]; flags: string[]; notes: string[] }
+export interface Evidence { pick: Pick; quant: QuantView; market: MarketView; matchup: MatchupView; skeptic: SkepticView }
+
+const clamp = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi)
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+const sd = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1)) }
+const pct = (x: number, d = 0) => `${(x * 100).toFixed(d)}%`
 export const legKey = (p: Pick) => `${p.playerId}|${p.stat}|${p.line}|${p.side}`
 const groupKey = (p: Pick) => `${p.eventId}|${p.team}`
 
-function bet(mind: MindId, legs: Pick[]): Bet {
-  const odds = legs.reduce((a, l) => a * l.price, 1)
-  const prob = legs.reduce((a, l) => a * l.prob, 1)
-  return { mind, kind: legs.length === 1 ? 'single' : 'combo', legs, odds, prob, ev: prob * odds - 1 }
+/** Why a pick is not even considered. Anything here is a data problem, not a judgement about the bet. */
+export function ineligibleReason(p: Pick): string | null {
+  const c = CHIEF
+  if (p.team == null) return 'no_team'
+  if (p.model !== 'gbm-v1') return 'no_fresh_projection'
+  if (p.projectionAgeHours == null || p.projectionAgeHours > c.maxProjectionAgeHours) return 'stale_projection'
+  if (!Number.isFinite(p.modelProb) || !Number.isFinite(p.price) || p.price <= 1) return 'bad_numbers'
+  if (p.marketProb == null || !Number.isFinite(p.marketProb)) return 'no_market'
+  if (p.marketBooks < c.minMarketBooks) return 'too_few_books'
+  if (p.sample < c.minSample) return 'thin_history'
+  if (p.role == null) return 'no_minutes'
+  if (p.role.min10 < c.minRoleMinutes) return 'not_a_starter_or_star'
+  return null
 }
 
-/** Picks every mind may use, before the starters-and-stars cut. */
-function gated(picks: Pick[]): Pick[] {
-  const c = MINDS_V3
-  return picks.filter((p) =>
-    p.team != null
-    && p.model === 'gbm-v1' && p.sample >= c.minSample && p.marketBooks >= c.minMarketBooks
-    && Number.isFinite(p.prob) && Number.isFinite(p.ev) && p.price > 1
-    && !p.injury                                                         // anyone listed (Out is already gone): leave it
-    && p.role != null && p.role.min10 >= c.minRoleMinutes && (p.role.trend == null || p.role.trend > c.minutesDropFloor)
-    && !p.bigGap
-    && (p.marketProb == null || Math.abs(p.modelProb - p.marketProb) < c.maxGap),
-  )
+/** The price we may count: the best, but never more than 3% above the runner-up (a lone outlier is probably stale). */
+export function executablePrice(p: Pick): { execPrice: number; corroboratedBy: string | null } {
+  const prices = [...p.prices].sort((a, b) => b.price - a.price)
+  const best = prices[0]?.price ?? p.price
+  if (prices.length < 2) return { execPrice: best, corroboratedBy: null }
+  return { execPrice: Math.min(best, prices[1].price * CHIEF.priceCorroboration), corroboratedBy: prices[1].book }
 }
 
-/**
- * Picks every mind may use: healthy, steady, and a starter or star, i.e. among the team's top players by minutes in that game.
- * Those are the players whose minutes (and so whose props) are the most predictable.
- */
-export function sharedPool(picks: Pick[]): Pick[] {
-  const ok = gated(picks)
-  const minutes = new Map<string, Map<number, number>>()      // team-game -> player -> minutes
-  for (const p of ok) {
+export function quant(p: Pick, execPrice: number): QuantView {
+  const c = CHIEF
+  const slope = c.calibrationSlope[p.stat] ?? c.defaultCalibrationSlope
+  const modelCal = clamp(0.5 + slope * (p.modelProb - 0.5), 0, 1)
+  const pBlend = blendProb(modelCal, p.marketProb)
+  const nEff = clamp(p.sample, c.minEffectiveGames, c.maxEffectiveGames)
+  const se = Math.sqrt((pBlend * (1 - pBlend)) / nEff)
+  const pCons = clamp(pBlend - c.haircutZ * se, 0, 1)
+  return { modelCal, pBlend, nEff, se, pCons, evHat: expectedValue(pBlend, p.push, execPrice), evCons: expectedValue(pCons, p.push, execPrice) }
+}
+
+export function market(p: Pick, execPrice: number, corroboratedBy: string | null): MarketView {
+  const c = CHIEF
+  const prices = [...p.prices].sort((a, b) => b.price - a.price)
+  const vetoes: string[] = []
+  if (prices.length < 2) vetoes.push('single_price')
+  else if (prices[0].price > prices[1].price * c.staleLineRatio) vetoes.push('stale_line')
+  const marketEv = p.marketProb == null ? -1 : expectedValue(p.marketProb, p.push, execPrice)
+  if (marketEv < c.minMarketEv) vetoes.push('rich_price')
+  return { execPrice, bestPrice: prices[0]?.price ?? p.price, corroboratedBy, consensus: p.marketProb, marketEv, vetoes, lineMovement: 'unavailable' }
+}
+
+export function matchup(p: Pick): MatchupView {
+  const c = CHIEF
+  const dir = p.side === 'over' ? 1 : -1
+  let score = 0
+  const notes: string[] = []
+  const t = p.role?.trend ?? null
+  if (t != null && Math.abs(t) >= c.minutesTrendEdge) {
+    const s = Math.sign(t) * dir
+    score += s
+    notes.push(`minutes ${t > 0 ? 'up' : 'down'} ${Math.abs(t).toFixed(1)} lately, which ${s > 0 ? 'supports' : 'works against'} the ${p.side}`)
+  } else notes.push('minutes steady')
+  const f = p.oppFactor ?? null
+  if (f != null && Math.abs(f - 1) >= c.opponentEdge) {
+    const s = Math.sign(f - 1) * dir
+    score += s
+    notes.push(`opponent allows ${pct(Math.abs(f - 1))} ${f > 1 ? 'more' : 'less'} than average, which ${s > 0 ? 'supports' : 'works against'} the ${p.side}`)
+  } else if (f != null) notes.push('opponent about average for this stat')
+  else notes.push('opponent tendency unavailable')
+  return { score, notes }
+}
+
+export function skeptic(p: Pick): SkepticView {
+  const c = CHIEF
+  const vetoes: string[] = [], flags: string[] = [], notes: string[] = []
+  if (p.injury) { vetoes.push('injury_listed'); notes.push(`listed ${p.injury.label}`) }
+  if (p.sample < c.minSampleStrict) { vetoes.push('thin_history'); notes.push(`only ${p.sample} games of history`) }
+  if (p.role?.trend != null && p.role.trend <= c.minutesDropVeto) { vetoes.push('minutes_dropping'); notes.push(`minutes down ${Math.abs(p.role.trend).toFixed(1)} lately`) }
+  const gap = p.marketProb == null ? 0 : Math.abs(p.modelProb - p.marketProb)
+  if (gap >= c.maxGap) { vetoes.push('extreme_gap'); notes.push(`model and market ${pct(gap)} apart: usually news the model cannot see`) }
+  else if (gap >= c.reviewGap) { flags.push('review_gap'); notes.push(`model and market ${pct(gap)} apart: needs corroboration`) }
+  if (p.recent.length >= c.formMinGames) {
+    const m = mean(p.recent), s = Math.max(sd(p.recent), 0.5)
+    const against = p.side === 'under' ? m > p.line + c.formContradictionSd * s : m < p.line - c.formContradictionSd * s
+    if (against) { vetoes.push('form_contradiction'); notes.push(`recent games average ${m.toFixed(1)} against a ${p.side} ${p.line}`) }
+  }
+  if (p.push > 0.08) flags.push('push_risk')
+  return { vetoes, flags, notes }
+}
+
+export function buildEvidence(p: Pick): Evidence {
+  const { execPrice, corroboratedBy } = executablePrice(p)
+  return { pick: p, quant: quant(p, execPrice), market: market(p, execPrice, corroboratedBy), matchup: matchup(p), skeptic: skeptic(p) }
+}
+
+/** Fill in how generous the opponent is, from a team -> stat -> (allowed / league average) table. */
+export function attachOpponent<P extends Pick>(picks: P[], table: Record<string, Record<string, number>>): P[] {
+  const byName = new Map(Object.entries(TEAM_NAMES).map(([abbr, name]) => [name, abbr]))
+  return picks.map((p) => {
+    const [away, home] = p.game.split(' @ ')
+    const oppName = p.teamName === away ? home : p.teamName === home ? away : null
+    const opp = oppName ? byName.get(oppName) : undefined
+    return { ...p, oppFactor: opp ? table[opp]?.[p.stat] ?? null : null }
+  })
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Decisions
+
+export interface Bet {
+  /** The personality that proposed it first; `proposedBy` lists every one that did. */
+  mind: MindId
+  proposedBy: MindId[]
+  kind: 'single' | 'combo'
+  legs: Pick[]
+  /** Executable price per leg, in leg order: the price the bet is graded at. */
+  legPrices: number[]
+  legEvidence: Evidence[]
+  odds: number
+  /** Win chance at the blended probability (what the bet "says"). */
+  prob: number
+  /** Win chance at the conservative probability. */
+  pCons: number
+  ev: number
+  evCons: number
+  /** Parlays are research-only: tracked and graded, but not part of the staked portfolio. */
+  research: boolean
+  rationale: string[]
+}
+export interface Rejection {
+  proposedBy: MindId[]
+  pick: Pick
+  reason: string
+  detail: string
+  pCons: number
+  evCons: number
+}
+export interface Decision {
+  approved: Bet[]
+  research: Bet[]
+  rejected: Rejection[]
+  stats: { picks: number; eligible: number; ineligible: Record<string, number>; candidates: number; approved: number; research: number; rejected: number }
+}
+
+/** What the Chief checks after the proposer's own thresholds. First failure wins. */
+function chiefCheck(e: Evidence): { reason: string; detail: string } | null {
+  if (e.skeptic.vetoes.length) return { reason: e.skeptic.vetoes[0], detail: e.skeptic.notes.join('; ') || e.skeptic.vetoes[0] }
+  if (e.market.vetoes.length) {
+    const v = e.market.vetoes[0]
+    return { reason: v, detail: v === 'rich_price' ? `price is ${pct(-e.market.marketEv, 1)} below the market's fair price` : v === 'stale_line' ? 'the best price is far above every other book: likely stale' : 'only one book offers this price' }
+  }
+  if (e.matchup.score < 0) return { reason: 'matchup_contradicted', detail: e.matchup.notes.join('; ') }
+  if (e.skeptic.flags.includes('review_gap') && e.matchup.score < 1) return { reason: 'unresolved_review', detail: `${e.skeptic.notes.join('; ')}; the matchup does not corroborate it` }
+  return null
+}
+
+function rationaleFor(e: Evidence, proposers: MindId[]): string[] {
+  const { pick: p, quant: q, market: m } = e
+  const why: Record<MindId, string> = {
+    sam: `Safe Sam: win chance ${pct(q.pBlend)} (needs ${pct(CHIEF.sam.minProb)}+) with non-negative value`,
+    val: `Value Val: conservative EV ${q.evCons >= 0 ? '+' : ''}${pct(q.evCons, 1)} (needs +${pct(CHIEF.val.minEvCons)}+)`,
+    cat: `Contrarian Cat: the market rates this side ${pct(p.marketProb ?? 0)}, the model ${pct(p.modelProb)}`,
+    lou: 'Longshot Lou: qualifies as a parlay leg',
+  }
+  return [
+    `Proposed by ${proposers.map((x) => why[x]).join('; ')}.`,
+    `Quant: model ${pct(p.modelProb)} corrected to ${pct(q.modelCal)} for known overconfidence, blended with the market to ${pct(q.pBlend)}; ${q.nEff} games of evidence give a conservative ${pct(q.pCons)}. At ${m.execPrice.toFixed(2)} that is ${q.evHat >= 0 ? '+' : ''}${pct(q.evHat, 1)} expected, ${q.evCons >= 0 ? '+' : ''}${pct(q.evCons, 1)} conservative.`,
+    `Market: best ${m.bestPrice.toFixed(2)}${m.corroboratedBy ? `, counted at ${m.execPrice.toFixed(2)} because ${m.corroboratedBy} is close` : ''}; market-implied chance ${pct(m.consensus ?? 0)}, so the price is ${m.marketEv >= 0 ? 'above' : `${pct(-m.marketEv, 1)} below`} fair by the market's own measure. Line movement unavailable.`,
+    `Matchup: ${e.matchup.notes.join('; ')}.`,
+    `Skeptic: ${e.skeptic.notes.length ? e.skeptic.notes.join('; ') : 'no vetoes'}${e.skeptic.flags.length ? ` (flags: ${e.skeptic.flags.join(', ')})` : ''}.`,
+  ]
+}
+
+function singleBet(e: Evidence, proposers: MindId[]): Bet {
+  return {
+    mind: proposers[0], proposedBy: proposers, kind: 'single', legs: [e.pick], legPrices: [e.market.execPrice], legEvidence: [e],
+    odds: e.market.execPrice, prob: e.quant.pBlend, pCons: e.quant.pCons, ev: e.quant.evHat, evCons: e.quant.evCons, research: false,
+    rationale: rationaleFor(e, proposers),
+  }
+}
+
+/** The proposers whose own thresholds this evidence meets. */
+function proposers(e: Evidence): { who: MindId[]; failed: Partial<Record<MindId, { reason: string; detail: string }>> } {
+  const c = CHIEF
+  const p = e.pick, q = e.quant
+  const who: MindId[] = []
+  const failed: Partial<Record<MindId, { reason: string; detail: string }>> = {}
+  if (q.pBlend >= c.sam.minProb && q.evCons >= c.sam.minEvCons) who.push('sam')
+  if (q.pBlend >= c.val.minProb && q.evCons >= c.val.minEvCons) who.push('val')
+  if (p.marketProb != null && p.marketProb < c.cat.maxMarketProb && p.modelProb - p.marketProb >= c.cat.minGap && q.evCons >= c.cat.minEvCons) {
+    if (e.matchup.score >= c.cat.minMatchup) who.push('cat')
+    else failed.cat = { reason: 'cat_uncorroborated', detail: `the market disagrees by ${pct(p.modelProb - p.marketProb)} and nothing in the matchup explains it` }
+  }
+  return { who, failed }
+}
+
+export function decide(allPicks: Pick[]): Decision {
+  const c = CHIEF
+  const ineligible: Record<string, number> = {}
+  const eligible: Pick[] = []
+  for (const p of allPicks) {
+    const r = ineligibleReason(p)
+    if (r) ineligible[r] = (ineligible[r] ?? 0) + 1
+    else eligible.push(p)
+  }
+  // Starters and stars: a team's top N by minutes among the eligible, per game.
+  const minutes = new Map<string, Map<number, number>>()
+  for (const p of eligible) {
     const g = minutes.get(groupKey(p)) ?? minutes.set(groupKey(p), new Map()).get(groupKey(p))!
     g.set(p.playerId, p.role!.min10)
   }
   const starters = new Set<string>()
-  for (const [g, m] of minutes)
-    [...m].sort((a, b) => b[1] - a[1]).slice(0, MINDS_V3.starterTopN).forEach(([id]) => starters.add(`${g}|${id}`))
-  return ok.filter((p) => starters.has(`${groupKey(p)}|${p.playerId}`))
-}
+  for (const [g, m] of minutes) [...m].sort((a, b) => b[1] - a[1]).slice(0, c.starterTopN).forEach(([id]) => starters.add(`${g}|${id}`))
+  const pool = eligible.filter((p) => starters.has(`${groupKey(p)}|${p.playerId}`))
+  ineligible.not_a_starter_or_star = (ineligible.not_a_starter_or_star ?? 0) + (eligible.length - pool.length)
+  if (!ineligible.not_a_starter_or_star) delete ineligible.not_a_starter_or_star
 
-const byDesc = (f: (p: Pick) => number) => (a: Pick, b: Pick) => f(b) - f(a)
-const noPush = (p: Pick) => p.push === 0
-const gapOf = (p: Pick) => Math.abs(p.modelProb - (p.marketProb ?? p.modelProb))
+  const evidence = pool.map(buildEvidence)
+  const rejected: Rejection[] = []
+  const rej = (e: Evidence, who: MindId[], r: { reason: string; detail: string }) =>
+    rejected.push({ proposedBy: who, pick: e.pick, reason: r.reason, detail: r.detail, pCons: e.quant.pCons, evCons: e.quant.evCons })
 
-/** One leg per player+stat+line: a mind never takes both sides of the same line. */
-function dedupeLines(sorted: Pick[]): Pick[] {
-  const seen = new Set<string>(), out: Pick[] = []
-  for (const p of sorted) {
-    const k = `${p.playerId}|${p.stat}|${p.line}`
-    if (seen.has(k)) continue
-    seen.add(k); out.push(p)
+  // 1. Candidates: each personality's own thresholds. 2. The Chief's checks.
+  const survivors = new Map<string, { e: Evidence; who: MindId[] }>()
+  let candidates = 0
+  for (const e of evidence) {
+    const { who, failed } = proposers(e)
+    for (const [m, r] of Object.entries(failed)) rej(e, [m as MindId], r!)
+    if (!who.length) continue
+    candidates++
+    const verdict = chiefCheck(e)
+    if (verdict) { rej(e, who, verdict); continue }
+    survivors.set(legKey(e.pick), { e, who })
   }
-  return out
-}
 
-/** Disjoint pairs, two legs from different games and players, taken greedily down the sorted list. */
-function pairUp(sorted: Pick[]): Pick[][] {
-  const pairs: Pick[][] = []
-  const taken = new Set<string>()
-  for (let i = 0; i < sorted.length; i++) {
-    if (taken.has(legKey(sorted[i]))) continue
-    for (let j = i + 1; j < sorted.length; j++) {
-      const a = sorted[i], b = sorted[j]
-      if (taken.has(legKey(b)) || a.eventId === b.eventId || a.playerId === b.playerId) continue
-      pairs.push([a, b]); taken.add(legKey(a)); taken.add(legKey(b))
-      break
-    }
+  // Near misses: a raw edge that the uncertainty haircut removed. Not bets, but the most useful rejections to record,
+  // because grading them later shows whether the haircut is too strict or about right.
+  const candidateKeys = new Set(rejected.map((r) => legKey(r.pick)).concat([...survivors.keys()]))
+  const near = evidence
+    .filter((e) => !candidateKeys.has(legKey(e.pick)) && !chiefCheck(e) && e.quant.pBlend >= c.val.minProb && e.quant.evHat >= c.val.minEvCons)
+    .sort((a, b) => b.quant.evHat - a.quant.evHat).slice(0, c.maxNearMisses)
+  for (const e of near) rej(e, ['val'], { reason: 'uncertainty_haircut', detail: `raw expected value ${pct(e.quant.evHat, 1)}, but ${pct(e.quant.evCons, 1)} once the uncertainty from ${e.quant.nEff} games is counted` })
+
+  // 3. Portfolio: one bet per player+stat, then caps in order of conservative value. Caps drop bets; nothing is added.
+  const ranked = [...survivors.values()].sort((a, b) => b.e.quant.evCons - a.e.quant.evCons || b.e.quant.pCons - a.e.quant.pCons)
+  const approved: Bet[] = []
+  const seenStat = new Set<string>()
+  const players = new Map<number, number>(), games = new Map<string, number>()
+  let unders = 0
+  for (const { e, who } of ranked) {
+    const p = e.pick
+    const stat = `${p.playerId}|${p.stat}`
+    const drop = (reason: string, detail: string) => rej(e, who, { reason, detail })
+    if (seenStat.has(stat)) { drop('duplicate_exposure', 'a better line on the same player and stat is already chosen'); continue }
+    if ((players.get(p.playerId) ?? 0) >= c.maxBetsPerPlayer) { drop('player_cap', `already ${c.maxBetsPerPlayer} bets on ${p.player}`); continue }
+    if ((games.get(p.eventId) ?? 0) >= c.maxBetsPerGame) { drop('game_cap', `already ${c.maxBetsPerGame} bets in this game: they share pace and blowout risk`); continue }
+    if (approved.length >= c.maxDailyBets) { drop('daily_cap', `the day's limit of ${c.maxDailyBets} bets is reached`); continue }
+    const under = p.side === 'under'
+    if (under && approved.length + 1 >= c.underShareFrom && (unders + 1) / (approved.length + 1) > c.maxUnderShare) { drop('under_share_cap', 'too much of the card would rest on the model leaning Under'); continue }
+    seenStat.add(stat); players.set(p.playerId, (players.get(p.playerId) ?? 0) + 1); games.set(p.eventId, (games.get(p.eventId) ?? 0) + 1)
+    if (under) unders++
+    approved.push(singleBet(e, who))
   }
-  return pairs
+
+  // 4. Parlays (research only): individually qualified legs, different games, product of conservative chances.
+  const research = buildParlays(evidence.filter((e) => !chiefCheck(e) && e.pick.push === 0 && e.quant.evCons >= c.lou.minLegEvCons && e.quant.pCons >= c.lou.minLegPCons))
+
+  return {
+    approved, research, rejected,
+    stats: { picks: allPicks.length, eligible: pool.length, ineligible, candidates, approved: approved.length, research: research.length, rejected: rejected.length },
+  }
 }
 
-/** Keep the first `n` candidates (already in the mind's own order) that do not overload one player or lean all-Under. */
-function pickDiverse(candidates: Bet[], n: number, players = new Map<number, number>()): Bet[] {
-  const c = MINDS_V3
+function buildParlays(legs: Evidence[]): Bet[] {
+  const c = CHIEF
+  const sorted = [...legs].sort((a, b) => b.quant.evCons - a.quant.evCons)
+  const used = new Set<string>()
   const out: Bet[] = []
-  let allUnder = 0
-  for (const b of candidates) {
-    if (out.length >= n) break
-    const under = b.legs.every((l) => l.side === 'under')
-    if (under && allUnder >= c.maxAllUnder) continue
-    const ps = new Set(b.legs.map((l) => l.playerId))
-    if ([...ps].some((id) => (players.get(id) ?? 0) >= c.maxBetsPerPlayer)) continue
-    out.push(b)
-    if (under) allUnder++
-    ps.forEach((id) => players.set(id, (players.get(id) ?? 0) + 1))
-  }
-  return out
-}
-
-/** Singles for every team in every game: the first `betsPerTeamPerGame` of each group, in the order `rank` gives. */
-function perTeamGame(mind: MindId, legs: Pick[], rank: (p: Pick) => number): Bet[] {
-  const groups = new Map<string, Pick[]>()
-  for (const p of legs) (groups.get(groupKey(p)) ?? groups.set(groupKey(p), []).get(groupKey(p))!).push(p)
-  const players = new Map<number, number>()   // the per-player cap is per mind per day, across stats
-  const out: Bet[] = []
-  for (const list of groups.values())
-    out.push(...pickDiverse(dedupeLines(list.sort(byDesc(rank))).map((p) => bet(mind, [p])), MINDS_V3.betsPerTeamPerGame, players))
-  return out
-}
-
-/** `done` lists the minds that already have a card for the day: they are skipped, so a re-run cannot add bets or rewrite a card. */
-export function runMinds(allPicks: Pick[], _day: string, done: ReadonlySet<string> = new Set()): Bet[] {
-  const c = MINDS_V3
-  const pool = sharedPool(allPicks)
-  const bets: Bet[] = []
-  const add = (mind: MindId, list: Bet[]) => { if (!done.has(mind)) bets.push(...list) }
-
-  // Safe Sam: the likeliest outcomes. Singles per team-game, plus a couple of doubles of the likeliest pairs.
-  {
-    const legs = pool.filter((p) => p.prob >= c.sam.singleProb && p.ev >= c.sam.singleEv)
-    const doubles = pairUp(dedupeLines(legs.filter((p) => p.prob >= c.sam.doubleLegProb && noPush(p)).sort(byDesc((p) => p.prob))))
-      .map((l) => bet('sam', l)).sort((a, b) => b.prob - a.prob)
-    add('sam', [...perTeamGame('sam', legs, (p) => p.prob), ...pickDiverse(doubles, c.samDoubles)])
-  }
-  // Value Val: the biggest expected profit per unit.
-  {
-    const legs = pool.filter((p) => p.ev >= c.val.minEv && p.prob >= c.val.minProb)
-    const doubles = pairUp(dedupeLines(legs.filter((p) => p.ev >= c.val.doubleLegEv && noPush(p)).sort(byDesc((p) => p.ev))))
-      .map((l) => bet('val', l)).filter((b) => b.ev >= c.val.doubleEv).sort((a, b) => b.ev - a.ev)
-    add('val', [...perTeamGame('val', legs, (p) => p.ev), ...pickDiverse(doubles, c.valDoubles)])
-  }
-  // Longshot Lou: parlays of 3 to 5 legs across games, each leg used once on the card.
-  {
-    const ok = dedupeLines(pool.filter((p) => p.prob >= c.lou.legProb && p.price >= c.lou.legPrice && noPush(p)).sort(byDesc((p) => p.ev)))
-    const used = new Set<string>(), combos: Bet[] = []
-    for (let k = 0; k < c.louCombos; k++) {
-      const legs: Pick[] = []
-      const games = new Set<string>(), players = new Set<number>()
-      for (const p of ok) {
-        if (legs.length >= c.maxLegs) break
-        if (used.has(legKey(p)) || games.has(p.eventId) || players.has(p.playerId)) continue
-        legs.push(p); games.add(p.eventId); players.add(p.playerId)
-        if (legs.length >= c.lou.minLegs && legs.reduce((a, l) => a * l.price, 1) >= c.lou.minOdds) break
+  for (let n = 0; n < c.lou.maxParlays; n++) {
+    let best: Evidence[] | null = null, bestEv = -Infinity
+    const free = sorted.filter((e) => !used.has(legKey(e.pick)))
+    const chosen: Evidence[] = []
+    const games = new Set<string>(), players = new Set<number>()
+    for (const e of free) {
+      if (chosen.length >= c.lou.maxLegs) break
+      if (games.has(e.pick.eventId) || players.has(e.pick.playerId)) continue   // same-game legs are correlated; the product rule does not hold
+      chosen.push(e); games.add(e.pick.eventId); players.add(e.pick.playerId)
+      if (chosen.length >= c.lou.minLegs) {
+        const ev = chosen.reduce((a, x) => a * x.quant.pCons * x.market.execPrice, 1) - 1
+        if (ev > bestEv) { bestEv = ev; best = [...chosen] }
       }
-      const b = bet('lou', legs)
-      if (legs.length < c.lou.minLegs || b.odds < c.lou.minOdds) break
-      legs.forEach((l) => used.add(legKey(l)))
-      combos.push(b)
     }
-    // If the pool cannot supply five parlays, the card is topped up with 2-leg longshots that still pay well.
-    const doubles = pairUp(ok.filter((p) => !used.has(legKey(p)))).map((l) => bet('lou', l)).filter((b) => b.odds >= c.lou.fillDoubleOdds).sort((a, b) => b.ev - a.ev)
-    add('lou', pickDiverse([...combos, ...doubles], c.louCombos))
+    if (!best || bestEv < c.lou.minEvCons) break
+    best.forEach((e) => used.add(legKey(e.pick)))
+    const odds = best.reduce((a, e) => a * e.market.execPrice, 1)
+    const prob = best.reduce((a, e) => a * e.quant.pBlend, 1)
+    const pCons = best.reduce((a, e) => a * e.quant.pCons, 1)
+    out.push({
+      mind: 'lou', proposedBy: ['lou'], kind: 'combo', legs: best.map((e) => e.pick), legPrices: best.map((e) => e.market.execPrice), legEvidence: best,
+      odds, prob, pCons, ev: prob * odds - 1, evCons: pCons * odds - 1, research: true,
+      rationale: [
+        `Longshot Lou: ${best.length} legs from ${best.length} different games, each individually clearing +${pct(c.lou.minLegEvCons)} conservative value and ${pct(c.lou.minLegPCons)} conservative chance.`,
+        `Joint chance ${pct(pCons, 1)} (conservative) at ${odds.toFixed(2)}x is ${pct(pCons * odds - 1, 1)} expected; the floor is +${pct(c.lou.minEvCons)}.`,
+        'The legs are assumed independent because they are from different games. That assumption is not validated, so this parlay is research-only and not staked.',
+      ],
+    })
   }
-  // Contrarian Cat: takes the side the market thinks LESS likely (below 50%) when the model rates it clearly higher. The
-  // biggest gaps are the model's likeliest mistakes, so the shared gate caps them (maxGap) and a value floor still applies.
-  {
-    const legs = pool.filter((p) => p.marketProb !== null && p.marketProb < c.cat.maxMarketProb && p.modelProb - p.marketProb >= c.cat.minGap && p.ev >= c.cat.minEv)
-    add('cat', perTeamGame('cat', legs, gapOf))
-  }
-  return bets
+  return out
 }

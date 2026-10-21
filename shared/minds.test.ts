@@ -1,154 +1,376 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MIND_IDS, runMinds, sharedPool, type Bet } from './minds.ts'
+import {
+  attachOpponent, buildEvidence, decide, executablePrice, ineligibleReason, legKey, market, matchup, quant, skeptic,
+} from './minds.ts'
 import type { Pick } from './picks.ts'
 
 let n = 0
-/** A pick that passes every shared gate unless a field is overridden. */
+/** A pick that passes every data gate and is strong enough for Sam and Val. Override anything. */
 const pick = (o: Partial<Pick> = {}): Pick => {
   n++
   return {
-    playerId: n, player: `P${n}`, team: 'AAA', teamName: 'Team A', stat: 'pts', side: 'over', line: 20.5 + (n % 7), price: 1.9,
-    book: 'DraftKings', prices: [], oddsId: `id${n}`, eventId: `G${n}`, marketBooks: 3, modelProb: 0.6, marketProb: 0.5,
-    prob: 0.55, push: 0, impliedProb: 0.526, ev: 0.05, risk: 'medium', model: 'gbm-v1', bigGap: false, projection: 22,
-    hitRate10: null, recent: [], sample: 15, projectionAgeHours: 2, game: 'x', gameDate: '2026-10-21',
-    injury: null, role: { label: 'Starter', min10: 32, trend: 0, games: 40 }, ...o,
+    playerId: 1000 + n, player: `P${n}`, team: 'BOS', teamName: 'Boston Celtics', stat: 'pts', side: 'over', line: 20.5 + (n % 9) * 0.5,
+    price: 1.9, book: 'DraftKings', prices: [{ book: 'DraftKings', price: 1.9 }, { book: 'FanDuel', price: 1.88 }], oddsId: `o${n}`,
+    eventId: `G${n}`, marketBooks: 3, modelProb: 0.7, marketProb: 0.62, prob: 0.64, push: 0, impliedProb: 0.526, ev: 0.1, risk: 'safe',
+    model: 'gbm-v1', bigGap: false, projection: 24, hitRate10: 0.7, recent: [], sample: 40, projectionAgeHours: 2, game: 'Boston Celtics @ Detroit Pistons',
+    gameDate: '2026-10-21', injury: null, role: { label: 'Starter', min10: 34, trend: 0, games: 60 }, oppFactor: null, ...o,
   } as unknown as Pick
 }
-const of = (bets: Bet[], m: string) => bets.filter((b) => b.mind === m)
+const near = (a: number, b: number, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} vs ${b}`)
 
-/** `players` players on one team in one game, each with `lines` lines; minutes fall from 36 by 1.5 a player. */
-function teamGame(eventId: string, team: string, players: number, lines: number, o: Partial<Pick> = {}): Pick[] {
-  const out: Pick[] = []
-  for (let i = 0; i < players; i++) {
-    const id = 10_000 + n * 100 + i
-    for (let j = 0; j < lines; j++)
-      out.push(pick({ playerId: id, player: `${team}${i}`, eventId, team, line: 10.5 + j, stat: (['pts', 'reb', 'ast', 'fg3m'] as const)[j % 4],
-        role: { label: 'Starter', min10: 36 - i * 1.5, trend: 0, games: 40 }, ...o }))
-    n++
-  }
-  return out
-}
-const strong = { prob: 0.66, ev: 0.12, price: 2.0, modelProb: 0.66, marketProb: 0.45, side: 'over' as const }
-const groupOf = (b: Bet) => `${b.legs[0].eventId}|${b.legs[0].team}`
+/** `k` starters on one team in one game, each a different player, minutes falling from 36. */
+const team = (eventId: string, abbr: string, name: string, k: number, o: Partial<Pick> = {}): Pick[] =>
+  Array.from({ length: k }, (_, i) => pick({ eventId, team: abbr, teamName: name, role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 }, game: 'Boston Celtics @ Detroit Pistons', ...o }))
 
-test('shared gates drop weak evidence, shaky roles, injured players and model blind spots', () => {
-  const bad: Pick[] = [
-    pick({ model: 'baseline-v2' as never }), pick({ marketBooks: 1 }), pick({ sample: 5 }), pick({ prob: NaN }), pick({ team: null }),
-    pick({ injury: { status: 'questionable', label: 'Questionable', note: '' } }),
-    pick({ role: null }), pick({ role: { label: 'Rotation', min10: 20, trend: 0, games: 30 } }),
-    pick({ role: { label: 'Starter', min10: 30, trend: -6, games: 30 } }),
-    pick({ bigGap: true }), pick({ modelProb: 0.9, marketProb: 0.6 }),
-  ]
-  assert.equal(sharedPool([...bad, pick()]).length, 1)
+// ------------------------------------------------------------------ eligibility
+
+test('data gates: each reason is reported, and a good pick passes', () => {
+  assert.equal(ineligibleReason(pick()), null)
+  assert.equal(ineligibleReason(pick({ team: null })), 'no_team')
+  assert.equal(ineligibleReason(pick({ model: 'baseline-v2' as never })), 'no_fresh_projection')
+  assert.equal(ineligibleReason(pick({ projectionAgeHours: 25 })), 'stale_projection')
+  assert.equal(ineligibleReason(pick({ projectionAgeHours: null })), 'stale_projection')
+  assert.equal(ineligibleReason(pick({ price: 1 })), 'bad_numbers')
+  assert.equal(ineligibleReason(pick({ modelProb: NaN })), 'bad_numbers')
+  assert.equal(ineligibleReason(pick({ marketProb: null })), 'no_market')
+  assert.equal(ineligibleReason(pick({ marketBooks: 1 })), 'too_few_books')
+  assert.equal(ineligibleReason(pick({ sample: 9 })), 'thin_history')
+  assert.equal(ineligibleReason(pick({ role: null })), 'no_minutes')
+  assert.equal(ineligibleReason(pick({ role: { label: 'Rotation', min10: 23.9, trend: 0, games: 40 } })), 'not_a_starter_or_star')
+  assert.equal(ineligibleReason(pick({ projectionAgeHours: 24 })), null)           // the limit is inclusive
 })
 
-test('only starters and stars: a team\'s top 6 by minutes', () => {
-  const picks = teamGame('G1', 'AAA', 10, 1, strong)           // players AAA0..AAA9, minutes 36 down to 22.5; 24+ passes for AAA0..AAA8
-  const pool = sharedPool(picks)
-  assert.deepEqual([...new Set(pool.map((p) => p.player))].sort(), ['AAA0', 'AAA1', 'AAA2', 'AAA3', 'AAA4', 'AAA5'])
-  const bets = runMinds(picks, 'd')
-  assert.ok(bets.every((b) => b.legs.every((l) => ['AAA0', 'AAA1', 'AAA2', 'AAA3', 'AAA4', 'AAA5'].includes(l.player))))
+// ------------------------------------------------------------------ Quant
+
+test('Quant: corrects the model for its measured overconfidence, blends with the market, then takes a haircut', () => {
+  const p = pick({ stat: 'pts', modelProb: 0.7, marketProb: 0.5, sample: 30, push: 0 })
+  const q = quant(p, 1.9)
+  near(q.modelCal, 0.5 + 0.851 * 0.2)                            // points slope from the held-out test
+  near(q.pBlend, 0.3 * q.modelCal + 0.7 * 0.5)
+  near(q.nEff, 30)
+  near(q.se, Math.sqrt((q.pBlend * (1 - q.pBlend)) / 30))
+  near(q.pCons, q.pBlend - 0.5 * q.se)
+  near(q.evHat, q.pBlend * 1.9 - 1)
+  near(q.evCons, q.pCons * 1.9 - 1)
+  assert.ok(q.evHat > 0 && q.evCons < 0, 'a raw edge of +4.7% disappears once the uncertainty is counted')
 })
 
-test('there is no random control mind', () => {
-  assert.deepEqual([...MIND_IDS], ['sam', 'val', 'lou', 'cat'])
-  assert.equal(runMinds(teamGame('G1', 'AAA', 6, 3, strong), 'd').filter((b) => !MIND_IDS.includes(b.mind)).length, 0)
+test('Quant: little history means a bigger haircut; a lot is capped; a stat with no measured slope uses the cautious default', () => {
+  const few = quant(pick({ sample: 10 }), 1.9), many = quant(pick({ sample: 200 }), 1.9)
+  assert.ok(few.se > many.se)
+  near(many.nEff, 40)
+  near(quant(pick({ sample: 3 }), 1.9).nEff, 10)
+  near(quant(pick({ stat: 'stl' as never, modelProb: 0.7 }), 1.9).modelCal, 0.5 + 0.85 * 0.2)
 })
 
-test('with a rich pool, Sam, Val and Cat each place 5 singles for every team in every game', () => {
-  const picks = [...teamGame('G1', 'AAA', 6, 4, strong), ...teamGame('G1', 'BBB', 6, 4, strong), ...teamGame('G2', 'CCC', 6, 4, strong), ...teamGame('G2', 'DDD', 6, 4, strong)]
-  const bets = runMinds(picks, 'd')
-  for (const m of ['sam', 'val', 'cat']) {
-    const singles = of(bets, m).filter((b) => b.kind === 'single')
-    const perGroup = new Map<string, number>()
-    for (const b of singles) perGroup.set(groupOf(b), (perGroup.get(groupOf(b)) ?? 0) + 1)
-    assert.equal(perGroup.size, 4, `${m}: every team-game is covered`)
-    for (const [g, k] of perGroup) assert.equal(k, 5, `${m} ${g}`)
-  }
+test('Quant: a refund chance scales the expected value, exactly as the app does everywhere else', () => {
+  const noPush = quant(pick({ push: 0 }), 1.9), withPush = quant(pick({ push: 0.1 }), 1.9)
+  near(withPush.evHat, 0.9 * noPush.evHat)
+  near(withPush.evCons, 0.9 * noPush.evCons)
 })
 
-test('a team with too few qualifying lines gets fewer than 5 rather than a lowered floor', () => {
-  const picks = [...teamGame('G1', 'AAA', 6, 4, strong), ...teamGame('G1', 'BBB', 1, 1, strong)]
-  const val = of(runMinds(picks, 'd'), 'val').filter((b) => b.kind === 'single')
-  assert.equal(val.filter((b) => groupOf(b) === 'G1|BBB').length, 1)
-  assert.equal(val.filter((b) => groupOf(b) === 'G1|AAA').length, 5)
-  assert.equal(runMinds([], 'd').length, 0)
+// ------------------------------------------------------------------ Market
+
+test('Market: the price counted is the best, but never more than 3% above the runner-up', () => {
+  const ok = executablePrice(pick({ prices: [{ book: 'A', price: 2.0 }, { book: 'B', price: 1.95 }] }))
+  assert.equal(ok.execPrice, 2.0)
+  assert.equal(ok.corroboratedBy, 'B')
+  const outlier = executablePrice(pick({ prices: [{ book: 'A', price: 2.4 }, { book: 'B', price: 1.9 }] }))
+  near(outlier.execPrice, 1.9 * 1.03)
+  const single = executablePrice(pick({ prices: [{ book: 'A', price: 2.0 }] }))
+  assert.equal(single.corroboratedBy, null)
 })
 
-test('Safe Sam never takes a bet with negative expected value, however likely it is', () => {
-  assert.equal(of(runMinds(teamGame('G1', 'AAA', 6, 3, { prob: 0.75, ev: -0.05, price: 1.35 }), 'd'), 'sam').length, 0)
+test('Market: vetoes a lone price, a stale-looking line, and a price that is rich against the market\'s own fair price', () => {
+  const v = (o: Partial<Pick>) => { const p = pick(o); const e = executablePrice(p); return market(p, e.execPrice, e.corroboratedBy).vetoes }
+  assert.deepEqual(v({}), [])
+  assert.deepEqual(v({ prices: [{ book: 'A', price: 1.9 }] }), ['single_price'])
+  assert.ok(v({ prices: [{ book: 'A', price: 2.3 }, { book: 'B', price: 1.9 }] }).includes('stale_line'))
+  assert.ok(v({ marketProb: 0.4, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] }).includes('rich_price'))   // 0.4 * 1.9 - 1 = -24%
+  assert.equal(market(pick(), 1.9, null).lineMovement, 'unavailable')
 })
 
-test('Safe Sam: every leg is >= 60%, and he adds at most 2 doubles from different games', () => {
-  const picks = [...teamGame('G1', 'AAA', 6, 4, { ...strong, prob: 0.68, ev: 0.04, price: 1.6 }), ...teamGame('G2', 'BBB', 6, 4, { ...strong, prob: 0.68, ev: 0.04, price: 1.6 })]
-  const sam = of(runMinds(picks, 'd'), 'sam')
-  for (const b of sam) for (const l of b.legs) assert.ok(l.prob >= 0.6)
-  const dbl = sam.filter((b) => b.kind === 'combo')
-  assert.ok(dbl.length >= 1 && dbl.length <= 2)
-  for (const b of dbl) assert.equal(new Set(b.legs.map((l) => l.eventId)).size, 2)
+// ------------------------------------------------------------------ Matchup
+
+test('Matchup: minutes and the opponent corroborate or contradict, in the direction of the bet', () => {
+  const m = (o: Partial<Pick>) => matchup(pick(o)).score
+  assert.equal(m({ side: 'over', role: { label: 'Starter', min10: 34, trend: 3, games: 40 } }), 1)
+  assert.equal(m({ side: 'under', role: { label: 'Starter', min10: 34, trend: 3, games: 40 } }), -1)
+  assert.equal(m({ side: 'under', role: { label: 'Starter', min10: 34, trend: -3, games: 40 } }), 1)
+  assert.equal(m({ side: 'over', oppFactor: 1.08 }), 1)
+  assert.equal(m({ side: 'over', oppFactor: 0.9 }), -1)
+  assert.equal(m({ side: 'under', oppFactor: 0.9 }), 1)
+  assert.equal(m({ side: 'over', oppFactor: 1.01 }), 0)
+  assert.equal(m({ side: 'over', oppFactor: null }), 0)
+  assert.equal(m({ side: 'over', oppFactor: 1.08, role: { label: 'Starter', min10: 34, trend: 3, games: 40 } }), 2)
+  assert.equal(m({ side: 'over', oppFactor: 1.08, role: { label: 'Starter', min10: 34, trend: -3, games: 40 } }), 0)
 })
 
-test('Value Val needs EV and probability; at most one double, clearing the combined-EV bar', () => {
-  const picks = [...teamGame('G1', 'AAA', 6, 4, { ...strong, ev: 0.1, prob: 0.58, price: 1.95 }), ...teamGame('G2', 'BBB', 6, 4, { ...strong, ev: 0.1, prob: 0.58, price: 1.95 })]
-  const val = of(runMinds(picks, 'd'), 'val')
-  assert.ok(val.every((b) => b.ev >= 0.03))
-  assert.ok(val.filter((b) => b.kind === 'combo').length <= 1)
-  assert.equal(of(runMinds(teamGame('G1', 'AAA', 6, 4, { ...strong, ev: 0.2, prob: 0.45 }), 'd'), 'val').length, 0)
+test('attachOpponent finds the other team in the game and reads its tendency for the stat', () => {
+  const table = { DET: { pts: 1.06, ast: 0.93 }, BOS: { pts: 0.97 } }
+  const [a] = attachOpponent([pick({ teamName: 'Boston Celtics', stat: 'pts', game: 'Boston Celtics @ Detroit Pistons' })], table)
+  assert.equal(a.oppFactor, 1.06)
+  const [b] = attachOpponent([pick({ teamName: 'Detroit Pistons', stat: 'pts', game: 'Boston Celtics @ Detroit Pistons' })], table)
+  assert.equal(b.oppFactor, 0.97)
+  assert.equal(attachOpponent([pick({ teamName: 'Boston Celtics', stat: 'blk' as never })], table)[0].oppFactor, null)
+  assert.equal(attachOpponent([pick({ teamName: null })], table)[0].oppFactor, null)
 })
 
-test('Longshot Lou builds parlays across games, each leg once, topped up with doubles', () => {
-  const picks = ['G1', 'G2', 'G3', 'G4'].flatMap((g, i) => [...teamGame(g, `T${i}a`, 6, 2, { prob: 0.45, price: 2.3, ev: 0.03 }), ...teamGame(g, `T${i}b`, 6, 2, { prob: 0.45, price: 2.3, ev: 0.03 })])
-  const lou = of(runMinds(picks, 'd'), 'lou')
-  assert.ok(lou.length >= 1 && lou.length <= 5)
-  for (const b of lou) { assert.ok(b.odds >= 4 && b.legs.length >= 2 && b.legs.length <= 5); assert.equal(new Set(b.legs.map((l) => l.eventId)).size, b.legs.length) }
-  const legs = lou.flatMap((b) => b.legs.map((l) => `${l.playerId}|${l.line}`))
-  assert.equal(new Set(legs).size, legs.length, 'no leg is used twice')
+// ------------------------------------------------------------------ Skeptic
+
+test('Skeptic: vetoes injuries, thin history, falling minutes, extreme gaps, and recent form that contradicts the bet', () => {
+  const s = (o: Partial<Pick>) => skeptic(pick(o))
+  assert.deepEqual(s({}).vetoes, [])
+  assert.ok(s({ injury: { status: 'questionable', label: 'Questionable', note: '' } }).vetoes.includes('injury_listed'))
+  assert.ok(s({ sample: 14 }).vetoes.includes('thin_history'))
+  assert.ok(!s({ sample: 15 }).vetoes.includes('thin_history'))
+  assert.ok(s({ role: { label: 'Starter', min10: 34, trend: -4, games: 40 } }).vetoes.includes('minutes_dropping'))
+  assert.ok(s({ modelProb: 0.9, marketProb: 0.65 }).vetoes.includes('extreme_gap'))
+  // Under 6.5, but the last 10 games average 9.4: Castle's case
+  const castle = s({ side: 'under', line: 6.5, recent: [12, 6, 9, 10, 10, 11, 5, 9, 13, 9] })
+  assert.ok(castle.vetoes.includes('form_contradiction'))
+  assert.ok(!s({ side: 'under', line: 6.5, recent: [4, 5, 6, 3, 7, 5, 4, 6, 5, 5] }).vetoes.includes('form_contradiction'))
+  assert.ok(s({ side: 'over', line: 20.5, recent: [10, 12, 15, 11, 9, 14, 12, 13] }).vetoes.includes('form_contradiction'))
+  assert.ok(!s({ side: 'under', line: 6.5, recent: [12, 6, 9] }).vetoes.includes('form_contradiction'), 'too few games to judge form')
 })
 
-test('Contrarian Cat takes the side the market rates below 50% when the model is clearly higher', () => {
-  const base = { role: { label: 'Starter' as const, min10: 32, trend: 0, games: 40 } }
-  const ps = [
-    pick({ ...base, eventId: 'G1', team: 'AAA', modelProb: 0.66, marketProb: 0.45, ev: 0.08 }),   // yes
-    pick({ ...base, eventId: 'G1', team: 'AAA', modelProb: 0.80, marketProb: 0.55, ev: 0.20 }),   // the market already favours it
-    pick({ ...base, eventId: 'G1', team: 'AAA', modelProb: 0.52, marketProb: 0.45, ev: 0.08 }),   // gap too small
-    pick({ ...base, eventId: 'G1', team: 'AAA', modelProb: 0.7, marketProb: null, ev: 0.1 }),     // no market to disagree with
-  ]
-  const cat = of(runMinds(ps, 'd'), 'cat')
-  assert.equal(cat.length, 1)
-  assert.equal(cat[0].legs[0].modelProb, 0.66)
+test('Skeptic: a gap of 15 to 25 points is a review flag, not a veto; a high refund chance is flagged', () => {
+  const r = skeptic(pick({ modelProb: 0.78, marketProb: 0.6 }))
+  assert.deepEqual(r.vetoes, [])
+  assert.ok(r.flags.includes('review_gap'))
+  assert.ok(skeptic(pick({ push: 0.1 })).flags.includes('push_risk'))
 })
 
-test('a mind never takes both sides of one line, and never stacks one player', () => {
-  const same = { playerId: 500, line: 22.5, eventId: 'GX', team: 'AAA', prob: 0.8, ev: 0.2, price: 1.9 }
-  const both = [pick({ ...same, side: 'over' }), pick({ ...same, side: 'under' })]
-  assert.equal(of(runMinds(both, 'd'), 'sam').filter((b) => b.kind === 'single').length, 1)
+// ------------------------------------------------------------------ the Chief
 
-  const one = teamGame('G1', 'AAA', 1, 12, { ...strong, ev: 0.15 })      // one star with 12 strong lines
-  const val = of(runMinds(one, 'd'), 'val')
-  assert.ok(val.length <= 2)
+test('no quotas: a slate with nothing worth betting returns no bets, no parlays and no filler', () => {
+  const dull = Array.from({ length: 40 }, () => pick({ modelProb: 0.52, marketProb: 0.5, prob: 0.5, price: 1.9 }))
+  const d = decide(dull)
+  assert.equal(d.approved.length, 0)
+  assert.equal(d.research.length, 0)
+  assert.equal(decide([]).approved.length, 0)
 })
 
-test('at most 3 of a team-game\'s 5 bets are all-Under, so one lean cannot decide a card', () => {
-  const unders = teamGame('G1', 'AAA', 6, 4, { ...strong, side: 'under' })
-  assert.ok(of(runMinds(unders, 'd'), 'val').filter((b) => b.kind === 'single').length <= 3)
-  const mixed = [...teamGame('G1', 'AAA', 3, 4, { ...strong, side: 'under' }), ...teamGame('G1', 'AAA', 3, 4, { ...strong, side: 'over', ev: 0.1 })]
-  const val = of(runMinds(mixed, 'd'), 'val').filter((b) => b.kind === 'single')
-  assert.equal(val.length, 5)
-  assert.ok(val.filter((b) => b.legs.every((l) => l.side === 'under')).length <= 3)
+test('a raw edge that does not survive the uncertainty haircut is not even a candidate', () => {
+  const thin = [pick({ modelProb: 0.7, marketProb: 0.5, sample: 30, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] })]
+  const q = quant(thin[0], 1.9)
+  assert.ok(q.evHat > 0 && q.evCons < 0)
+  assert.equal(decide(thin).stats.candidates, 0)
 })
 
-test('a mind that already has a card today is skipped, so a re-run cannot add bets or rewrite it', () => {
-  const picks = [...teamGame('G1', 'AAA', 6, 4, strong), ...teamGame('G2', 'BBB', 6, 4, strong)]
-  assert.ok(of(runMinds(picks, 'd'), 'val').length > 0)
-  const again = runMinds(picks, 'd', new Set(['val', 'sam']))
-  assert.equal(of(again, 'val').length, 0)
-  assert.equal(of(again, 'sam').length, 0)
-  assert.ok(of(again, 'cat').length > 0)
+test('a strong, healthy, corroborated pick is approved once, credited to every personality that proposed it, with its reasoning', () => {
+  const d = decide([pick()])
+  assert.equal(d.approved.length, 1)
+  const b = d.approved[0]
+  assert.deepEqual(b.proposedBy, ['sam', 'val'])
+  assert.equal(b.mind, 'sam')
+  assert.equal(b.kind, 'single')
+  assert.equal(b.research, false)
+  assert.ok(b.evCons >= 0.03 && b.pCons < b.prob)
+  assert.equal(b.legPrices[0], 1.9)
+  assert.equal(b.rationale.length, 5)
+  assert.match(b.rationale.join(' '), /Quant.*Market.*Matchup.*Skeptic/s)
 })
 
-test('bet maths', () => {
-  const picks = [...teamGame('G1', 'AAA', 6, 4, { prob: 0.9, ev: 0.3, price: 2.0 }), ...teamGame('G2', 'BBB', 6, 4, { prob: 0.9, ev: 0.3, price: 2.0 })]
-  const dbl = of(runMinds(picks, 'd'), 'sam').find((b) => b.kind === 'combo')!
-  assert.ok(Math.abs(dbl.odds - 4) < 1e-12 && Math.abs(dbl.prob - 0.81) < 1e-12 && Math.abs(dbl.ev - (0.81 * 4 - 1)) < 1e-12)
+test('the Skeptic can veto the Quant: an injured player is rejected, with the reason recorded', () => {
+  const d = decide([pick({ injury: { status: 'questionable', label: 'Questionable', note: 'ankle' } })])
+  assert.equal(d.approved.length, 0)
+  assert.equal(d.rejected.length, 1)
+  assert.equal(d.rejected[0].reason, 'injury_listed')
+  assert.match(d.rejected[0].detail, /Questionable/)
+})
+
+test('recent form that contradicts the model is rejected even though the Quant likes it', () => {
+  const d = decide([pick({ side: 'under', line: 6.5, stat: 'ast', recent: [12, 6, 9, 10, 10, 11, 5, 9, 13, 9] })])
+  assert.equal(d.approved.length, 0)
+  assert.equal(d.rejected[0].reason, 'form_contradiction')
+})
+
+test('the Market can reject: a lone price, and a price far above every other book', () => {
+  assert.equal(decide([pick({ prices: [{ book: 'A', price: 1.9 }] })]).rejected[0].reason, 'single_price')
+  const stale = decide([pick({ price: 2.3, prices: [{ book: 'A', price: 2.3 }, { book: 'B', price: 1.9 }] })])
+  assert.ok(stale.rejected.every((r) => r.reason === 'stale_line') && stale.approved.length === 0)
+})
+
+test('the Matchup can reject: an opponent that works against the bet', () => {
+  const d = decide([pick({ side: 'over', oppFactor: 0.9 })])
+  assert.equal(d.approved.length, 0)
+  assert.equal(d.rejected[0].reason, 'matchup_contradicted')
+})
+
+test('a large model/market gap triggers review: approved only if the matchup explains it, never at 25+ points', () => {
+  const gap = { modelProb: 0.74, marketProb: 0.58 }          // 16 points
+  assert.equal(decide([pick({ ...gap })]).rejected[0]?.reason, 'unresolved_review')
+  assert.equal(decide([pick({ ...gap, oppFactor: 1.08 })]).approved.length, 1)
+  assert.equal(decide([pick({ modelProb: 0.9, marketProb: 0.64, oppFactor: 1.08 })]).rejected[0].reason, 'extreme_gap')
+})
+
+test('Contrarian Cat only proposes where the market rates the side under 50% and the matchup explains the disagreement', () => {
+  const cat = { modelProb: 0.58, marketProb: 0.45, price: 2.4, prices: [{ book: 'A', price: 2.4 }, { book: 'B', price: 2.35 }], side: 'over' as const }
+  const without = decide([pick({ ...cat })])
+  assert.equal(without.approved.length, 0)
+  assert.equal(without.rejected[0].reason, 'cat_uncorroborated')
+  const withMatchup = decide([pick({ ...cat, oppFactor: 1.08 })])
+  assert.equal(withMatchup.approved.length, 1)
+  assert.ok(withMatchup.approved[0].proposedBy.includes('cat'))
+  assert.equal(decide([pick({ ...cat, marketProb: 0.52, oppFactor: 1.08 })]).approved.filter((b) => b.proposedBy.includes('cat')).length, 0)
+})
+
+test('portfolio: one bet per player and stat, at most 2 per player, 4 per game', () => {
+  const star = Array.from({ length: 5 }, (_, i) => pick({ playerId: 1, player: 'Star', eventId: 'G1', stat: (['pts', 'reb', 'ast', 'fg3m', 'pts'] as const)[i], line: 10.5 + i, role: { label: 'Starter', min10: 38, trend: 0, games: 60 } }))
+  const d = decide(star)
+  assert.ok(d.approved.length <= 2)
+  assert.ok(d.rejected.some((r) => r.reason === 'player_cap' || r.reason === 'duplicate_exposure'))
+
+  const oneGame = Array.from({ length: 6 }, (_, i) => pick({ eventId: 'G7', role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 } }))
+  const g = decide(oneGame)
+  assert.equal(g.approved.length, 4)
+  assert.equal(g.rejected.filter((r) => r.reason === 'game_cap').length, 2)
+})
+
+test('portfolio: a daily limit and an all-Under share cap drop bets; they never add any', () => {
+  const many = Array.from({ length: 5 }, (_, g) => team(`E${g}`, 'BOS', 'Boston Celtics', 6, { eventId: `E${g}` })).flat()
+  const d = decide(many)
+  assert.ok(d.approved.length <= 12)
+  assert.ok(d.approved.length > 0)
+  assert.ok(d.rejected.some((r) => r.reason === 'daily_cap' || r.reason === 'game_cap'))
+  const unders = Array.from({ length: 5 }, (_, g) => team(`U${g}`, 'BOS', 'Boston Celtics', 4, { eventId: `U${g}`, side: 'under' })).flat()
+  const u = decide(unders)
+  assert.ok(u.rejected.some((r) => r.reason === 'under_share_cap'))
+  assert.equal(u.approved.length, 5, 'the share cap starts to bite from the sixth bet of an all-Under card')
+  const mixed = [...unders, ...Array.from({ length: 4 }, (_, g) => team(`O${g}`, 'BOS', 'Boston Celtics', 4, { eventId: `O${g}`, side: 'over' })).flat()]
+  const m = decide(mixed)
+  const share = m.approved.filter((b) => b.legs[0].side === 'under').length / m.approved.length
+  assert.ok(share <= 0.75, `under share ${share}`)
+  assert.ok(m.approved.some((b) => b.legs[0].side === 'over'))
+})
+
+test('every rejected candidate is recorded with a reason, and totals add up', () => {
+  const mix = [pick(), pick({ injury: { status: 'out', label: 'Out', note: '' } }), pick({ prices: [{ book: 'A', price: 1.9 }] }), pick({ team: null })]
+  const d = decide(mix)
+  assert.equal(d.stats.picks, 4)
+  assert.equal(d.stats.ineligible.no_team, 1)
+  assert.equal(d.stats.candidates, 3)
+  assert.equal(d.approved.length + d.rejected.length, 3)
+  assert.ok(d.rejected.every((r) => r.reason.length > 0 && r.detail.length > 0 && r.proposedBy.length > 0))
+})
+
+// ------------------------------------------------------------------ parlays
+
+const leg = (eventId: string, o: Partial<Pick> = {}) => pick({ eventId, modelProb: 0.7, marketProb: 0.62, line: 10.5, ...o })
+
+test('parlays: research-only, different games, built only from individually qualified legs, assessed on conservative joint probability', () => {
+  const legs = ['A', 'B', 'C', 'D'].map((g) => leg(g, { price: 1.95, prices: [{ book: 'X', price: 1.95 }, { book: 'Y', price: 1.94 }] }))
+  const d = decide(legs)
+  assert.ok(d.research.length >= 1)
+  const p = d.research[0]
+  assert.equal(p.research, true)
+  assert.equal(p.kind, 'combo')
+  assert.ok(p.legs.length >= 3 && p.legs.length <= 5)
+  assert.equal(new Set(p.legs.map((l) => l.eventId)).size, p.legs.length, 'no two legs from one game')
+  near(p.pCons, p.legEvidence.reduce((a, e) => a * e.quant.pCons, 1))
+  near(p.odds, p.legPrices.reduce((a, x) => a * x, 1))
+  assert.ok(p.evCons >= 0.1)
+  assert.ok(d.approved.every((b) => !b.research))
+})
+
+test('parlays: never two legs from the same game, never a weak leg, and none if the product does not clear the floor', () => {
+  const sameGame = Array.from({ length: 6 }, (_, i) => leg('ONE', { role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 } }))
+  assert.equal(decide(sameGame).research.length, 0)
+  const weak = ['A', 'B', 'C'].map((g) => leg(g, { modelProb: 0.55, marketProb: 0.52 }))
+  assert.equal(decide(weak).research.length, 0)
+  const refund = ['A', 'B', 'C'].map((g) => leg(g, { push: 0.1 }))
+  assert.equal(decide(refund).research.length, 0, 'whole-number lines are left out of parlays')
+})
+
+test('parlays: never topped up, and never more than 3 a day', () => {
+  const many = Array.from({ length: 30 }, (_, i) => leg(`G${i}`, { price: 1.95, prices: [{ book: 'X', price: 1.95 }, { book: 'Y', price: 1.94 }] }))
+  const d = decide(many)
+  assert.equal(d.research.length, 3, 'six parlays are possible; three is the cap')
+  const used = d.research.flatMap((p) => p.legs.map(legKey))
+  assert.equal(new Set(used).size, used.length, 'no leg is used twice')
+  assert.equal(decide(many.slice(0, 2)).research.length, 0, 'two legs are not a parlay here')
+})
+
+test('buildEvidence ties the four views together on one executable price', () => {
+  const e = buildEvidence(pick({ prices: [{ book: 'A', price: 2.4 }, { book: 'B', price: 1.9 }] }))
+  near(e.market.execPrice, 1.9 * 1.03)
+  near(e.quant.evHat, e.quant.pBlend * e.market.execPrice - 1)
+})
+
+test('the daily limit of 12 bets binds, and the best conservative value is kept', () => {
+  const many = Array.from({ length: 30 }, (_, i) => leg(`G${i}`, { role: { label: 'Starter', min10: 34, trend: 0, games: 60 }, modelProb: 0.66 + (i % 10) * 0.005 }))
+  const d = decide(many)
+  assert.equal(d.approved.length, 12)
+  const kept = d.approved.map((b) => b.evCons)
+  assert.deepEqual([...kept].sort((a, b) => b - a), kept, 'approved in order of conservative value')
+  assert.equal(d.rejected.filter((r) => r.reason === 'daily_cap').length, 18)
+})
+
+test('only the six best players of a team by minutes are considered', () => {
+  const nine = Array.from({ length: 9 }, (_, i) => pick({ eventId: 'GX', team: 'BOS', role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 } }))
+  const d = decide(nine)
+  assert.equal(d.stats.eligible, 6)
+  assert.equal(d.stats.ineligible.not_a_starter_or_star, 3)
+})
+
+test('parlays: the floor is +10% conservative value for the whole parlay, so three thin legs do not make one', () => {
+  const thin = ['A', 'B', 'C'].map((g) => leg(g, { price: 1.725, prices: [{ book: 'X', price: 1.725 }, { book: 'Y', price: 1.72 }] }))
+  const evLeg = quant(thin[0], 1.725).evCons
+  assert.ok(evLeg > 0.025 && evLeg < 0.035, `leg value ${evLeg}`)          // each leg is individually fine...
+  assert.equal(decide(thin).research.length, 0)                              // ...but 1.03^3 is only about +9%
+  const richer = ['A', 'B', 'C'].map((g) => leg(g, { price: 1.79, prices: [{ book: 'X', price: 1.79 }, { book: 'Y', price: 1.78 }] }))
+  assert.equal(decide(richer).research.length, 1)
+})
+
+test('parlay legs need a conservative chance of 45%, however good the price looks', () => {
+  const longshots = ['A', 'B', 'C'].map((g) => pick({ eventId: g, modelProb: 0.52, marketProb: 0.45, price: 2.6, prices: [{ book: 'X', price: 2.6 }, { book: 'Y', price: 2.58 }] }))
+  const q = quant(longshots[0], 2.6)
+  assert.ok(q.pCons < 0.45 && q.evCons > 0.02, `pCons ${q.pCons} ev ${q.evCons}`)
+  assert.equal(decide(longshots).research.length, 0)
+})
+
+test('Safe Sam does not propose a likely bet that has negative conservative value', () => {
+  const short = pick({ price: 1.45, prices: [{ book: 'A', price: 1.45 }, { book: 'B', price: 1.44 }] })   // 63% at 1.45 loses money
+  const q = quant(short, 1.45)
+  assert.ok(q.pBlend >= 0.6 && q.evCons < 0, `pBlend ${q.pBlend} ev ${q.evCons}`)
+  assert.equal(decide([short]).stats.candidates, 0)
+})
+
+test('Contrarian Cat needs a gap of 10 points, however good the matchup looks', () => {
+  const small = pick({ modelProb: 0.52, marketProb: 0.45, price: 2.6, prices: [{ book: 'A', price: 2.6 }, { book: 'B', price: 2.58 }], oppFactor: 1.1 })
+  assert.ok(quant(small, 2.6).evCons > 0.02)
+  assert.equal(decide([small]).approved.filter((b) => b.proposedBy.includes('cat')).length, 0)
+})
+
+test('parlays: at most 5 legs, and a weak leg is not added just because it nudges the product up', () => {
+  const six = Array.from({ length: 7 }, (_, i) => leg(`S${i}`, { price: 1.9, prices: [{ book: 'X', price: 1.9 }, { book: 'Y', price: 1.89 }] }))
+  assert.ok(decide(six).research.every((p) => p.legs.length <= 5))
+  assert.equal(decide(six).research[0].legs.length, 5)
+  const strong = ['A', 'B', 'C', 'D'].map((g) => leg(g, { price: 1.85, prices: [{ book: 'X', price: 1.85 }, { book: 'Y', price: 1.84 }] }))
+  const weak = leg('E', { price: 1.69, prices: [{ book: 'X', price: 1.69 }, { book: 'Y', price: 1.68 }] })
+  const wq = quant(weak, 1.69).evCons
+  assert.ok(wq > 0 && wq < 0.02, `weak leg value ${wq}`)
+  const d = decide([...strong, weak])
+  assert.equal(d.research.length, 1)
+  assert.equal(d.research[0].legs.length, 4, 'the +1% leg is below the +2% leg floor')
+})
+
+test('a raw edge removed by the uncertainty haircut is recorded as a near miss, so the haircut itself can be audited later', () => {
+  const thin = pick({ modelProb: 0.66, marketProb: 0.54, sample: 30, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] })
+  const d = decide([thin])
+  assert.equal(d.approved.length, 0)
+  assert.equal(d.rejected.length, 1)
+  assert.equal(d.rejected[0].reason, 'uncertainty_haircut')
+  assert.match(d.rejected[0].detail, /raw expected value 8\.1%/)
+  assert.ok(d.rejected[0].evCons < 0)
+  // a pick with no raw edge at all is not worth recording
+  assert.equal(decide([pick({ modelProb: 0.5, marketProb: 0.5, price: 1.9 })]).rejected.length, 0)
+})
+
+test('at most 60 near misses are recorded a day', () => {
+  const many = Array.from({ length: 100 }, (_, i) => pick({ eventId: `N${i}`, modelProb: 0.66, marketProb: 0.54, sample: 30, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] }))
+  const d = decide(many)
+  assert.equal(d.rejected.filter((r) => r.reason === 'uncertainty_haircut').length, 60)
 })

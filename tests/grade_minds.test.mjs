@@ -5,7 +5,8 @@ import { describe, it } from 'node:test'
 import { DatabaseSync } from 'node:sqlite'
 
 const GRADE = readFileSync(new URL('../ingest/grade_minds.sql', import.meta.url), 'utf8')
-const MIG = readFileSync(new URL('../migrations/0010_minds.sql', import.meta.url), 'utf8')
+const MIG = ['0010_minds', '0011_leg_games', '0012_chief', '0013_rejection_results']
+  .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n')
 
 function fresh() {
   const db = new DatabaseSync(':memory:')
@@ -27,6 +28,25 @@ function bet(db, legs, date = '2026-10-01') {
   return Number(id)
 }
 const st = (db, id) => db.prepare('SELECT status, profit, settled_odds FROM mind_bets WHERE id = ?').get(id)
+
+describe('grading rejected candidates', () => {
+  it('grades what would have happened, without touching any bet', () => {
+    const db = fresh()
+    db.exec(`
+      INSERT INTO mind_rejections (day, version, proposed_by, player_id, player, stat, side, line, price, reason, game_date) VALUES
+        ('2026-10-01','minds-v4','val',7,'P','pts','over',23.5,1.9,'form_contradiction','2026-10-01'),
+        ('2026-10-01','minds-v4','val',7,'P','pts','under',23.5,1.9,'uncertainty_haircut','2026-10-01'),
+        ('2026-10-01','minds-v4','val',7,'P','pts','over',24,1.9,'player_cap','2026-10-01'),
+        ('2026-10-01','minds-v4','val',99,'Nobody','pts','over',10.5,1.9,'player_cap','2026-10-01'),
+        ('2999-01-01','minds-v4','val',7,'P','pts','over',10.5,1.9,'player_cap','2999-01-01');`)
+    db.exec(GRADE)
+    const r = db.prepare('SELECT result, actual FROM mind_rejections ORDER BY id').all()
+    assert.deepEqual(r.map((x) => x.result), ['won', 'lost', 'push', null, null])
+    assert.equal(r[0].actual, 24)
+    db.exec(GRADE)
+    assert.deepEqual(db.prepare('SELECT result FROM mind_rejections ORDER BY id').all().map((x) => x.result), ['won', 'lost', 'push', null, null])
+  })
+})
 
 describe('grading minds', () => {
   it('single win, loss and push', () => {

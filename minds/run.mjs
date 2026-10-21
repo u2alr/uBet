@@ -8,7 +8,7 @@ import path from 'node:path'
 import { buildPicks, etDate, normName } from '../shared/picks.ts'
 import { normalizeOddsBlaze, TWO_WAY_BOOKS } from '../shared/oddsblaze.ts'
 import { enrichPicks, parseInjuries } from '../shared/injuries.ts'
-import { runMinds, legKey, MINDS_VERSION } from '../shared/minds.ts'
+import { attachOpponent, decide, legKey, MINDS_VERSION } from '../shared/minds.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -83,30 +83,58 @@ const { picks, dropped } = enrichPicks(built.picks, history, injuries)
 console.log(`picks: ${picks.length} (${dropped.length} players listed Out removed)`, JSON.stringify(built.diagnostics).slice(0, 200))
 
 const day = etDate(new Date(now).toISOString())
-// Only tonight's and tomorrow's games: a card made today must be gradeable within a day or two.
+// Only tonight's and tomorrow's games: a bet made today must be gradeable within a day or two.
 const horizon = now + 36 * 3600_000
-const eligible = picks.filter((p) => { const t = events.find((e) => e.id === p.eventId); return t && Date.parse(t.commence_time) > now && Date.parse(t.commence_time) < horizon })
-// A mind that already has a card today keeps it: the card is frozen, and the daily cap holds across repeated runs.
-const done = new Set(d1(`SELECT DISTINCT mind FROM mind_bets WHERE day = '${day}' AND version = '${MINDS_VERSION}'`).map((r) => r.mind))
-if (done.size) console.log(`already carded today, left alone: ${[...done].join(', ')}`)
-const bets = runMinds(eligible, day, done)
+const upcoming = picks.filter((p) => { const t = events.find((e) => e.id === p.eventId); return t && Date.parse(t.commence_time) > now && Date.parse(t.commence_time) < horizon })
+
+// The Chief decides once a day. A "no bets" day still counts, so a re-run cannot quietly add bets afterwards.
+const ranKey = `minds_ran:${MINDS_VERSION}:${day}`
+if (!dry && d1(`SELECT value FROM meta WHERE key = '${ranKey}'`).length) { console.log(`The Chief already decided for ${day}. Nothing changed.`); process.exit(0) }
+
+// Matchup evidence from raw box scores: how much of each stat a team has allowed over its last 20 games, relative to the league.
+const allowed = d1(`WITH tg AS (
+    SELECT pg.opp AS team, g.id AS gid, g.date, SUM(pg.pts) AS pts, SUM(pg.reb) AS reb, SUM(pg.ast) AS ast, SUM(pg.fg3m) AS fg3m
+    FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.opp IS NOT NULL AND g.game_type = 'regular' GROUP BY pg.opp, g.id),
+  r AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY team ORDER BY date DESC) AS rn FROM tg)
+  SELECT team, AVG(pts) AS pts, AVG(reb) AS reb, AVG(ast) AS ast, AVG(fg3m) AS fg3m, COUNT(*) AS n FROM r WHERE rn <= 20 GROUP BY team HAVING n >= 10`)
+const league = Object.fromEntries(['pts', 'reb', 'ast', 'fg3m'].map((s) => [s, allowed.reduce((a, r) => a + r[s], 0) / (allowed.length || 1)]))
+const oppTable = Object.fromEntries(allowed.map((r) => [r.team, Object.fromEntries(['pts', 'reb', 'ast', 'fg3m'].map((s) => [s, r[s] / league[s]]))]))
+console.log(`opponent tendencies for ${allowed.length} teams`)
+
+const decision = decide(attachOpponent(upcoming, oppTable))
+const { approved, research, rejected } = decision
+const sd = decision.stats
+console.log(`picks ${sd.picks} -> eligible ${sd.eligible} -> candidates ${sd.candidates} -> approved ${sd.approved} (+${sd.research} research parlays), rejected ${sd.rejected}`)
+console.log('not eligible:', JSON.stringify(sd.ineligible))
+const why = rejected.reduce((a, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {})
+console.log('rejected because:', JSON.stringify(why))
 
 const gameOf = (id) => events.find((e) => e.id === id)
 const q = (v) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`)
 const lines = []
-for (const b of bets) {
-  const betKey = [day, b.mind, MINDS_VERSION, ...b.legs.map(legKey).sort()].join('|')
-  lines.push(`INSERT OR IGNORE INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev) VALUES (${q(betKey)}, ${q(day)}, ${q(b.mind)}, ${q(MINDS_VERSION)}, ${q(b.kind)}, ${b.odds}, ${b.prob}, ${b.ev});`)
-  b.legs.forEach((l, i) => lines.push(
-    `INSERT OR IGNORE INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, book, odds_id, event_id, game_date, prob, model_prob, market_prob, tip_off, home_team, away_team) ` +
-    `SELECT id, ${i}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${l.price}, ${q(l.book)}, ${q(l.oddsId)}, ${q(l.eventId)}, ${q(l.gameDate)}, ${l.prob}, ${l.modelProb}, ${q(l.marketProb)}, ${q(gameOf(l.eventId)?.commence_time)}, ${q(gameOf(l.eventId)?.home_team)}, ${q(gameOf(l.eventId)?.away_team)} FROM mind_bets WHERE bet_key = ${q(betKey)};`))
+for (const b of [...approved, ...research]) {
+  const betKey = [day, 'chief', MINDS_VERSION, ...b.legs.map(legKey).sort()].join('|')
+  lines.push(`INSERT OR IGNORE INTO mind_bets (bet_key, day, mind, version, kind, odds, prob, ev, proposed_by, p_cons, ev_cons, rationale, research) VALUES (${q(betKey)}, ${q(day)}, ${q(b.mind)}, ${q(MINDS_VERSION)}, ${q(b.kind)}, ${b.odds}, ${b.prob}, ${b.ev}, ${q(b.proposedBy.join(','))}, ${b.pCons}, ${b.evCons}, ${q(JSON.stringify(b.rationale))}, ${b.research ? 1 : 0});`)
+  b.legs.forEach((l, i) => {
+    const e = b.legEvidence[i]
+    lines.push(
+      `INSERT OR IGNORE INTO mind_legs (bet_id, idx, player_id, player, stat, side, line, price, book, odds_id, event_id, game_date, prob, model_prob, market_prob, tip_off, home_team, away_team, p_cons, matchup_score, skeptic_flags) ` +
+      `SELECT id, ${i}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${b.legPrices[i]}, ${q(l.book)}, ${q(l.oddsId)}, ${q(l.eventId)}, ${q(l.gameDate)}, ${e.quant.pBlend}, ${l.modelProb}, ${q(l.marketProb)}, ${q(gameOf(l.eventId)?.commence_time)}, ${q(gameOf(l.eventId)?.home_team)}, ${q(gameOf(l.eventId)?.away_team)}, ${e.quant.pCons}, ${e.matchup.score}, ${q(e.skeptic.flags.join(','))} FROM mind_bets WHERE bet_key = ${q(betKey)};`)
+  })
 }
-console.log(`bets: ${bets.length}`, Object.entries(bets.reduce((a, b) => ((a[b.mind] = (a[b.mind] ?? 0) + 1), a), {})).map(([m, n]) => `${m}=${n}`).join(' '))
-for (const b of bets) console.log(`  ${b.mind.padEnd(7)} ${b.kind.padEnd(6)} ${b.odds.toFixed(2)}x p=${(b.prob * 100).toFixed(0)}% ev=${(b.ev * 100).toFixed(1)}%  ${b.legs.map((l) => `${l.player} ${l.side} ${l.line} ${l.stat}`).join(' + ')}`)
-if (dry || !lines.length) { console.log(dry ? '(dry run: nothing written)' : 'nothing to write'); process.exit(0) }
+for (const r of rejected) {
+  const l = r.pick, g = gameOf(l.eventId)
+  lines.push(`INSERT INTO mind_rejections (day, version, proposed_by, player_id, player, stat, side, line, price, game, tip_off, game_date, reason, detail, p_cons, ev_cons) VALUES (${q(day)}, ${q(MINDS_VERSION)}, ${q(r.proposedBy.join(','))}, ${l.playerId}, ${q(l.player)}, ${q(l.stat)}, ${q(l.side)}, ${l.line}, ${l.price}, ${q(l.game)}, ${q(g?.commence_time)}, ${q(l.gameDate)}, ${q(r.reason)}, ${q(r.detail)}, ${r.pCons}, ${r.evCons});`)
+}
+console.log(`\nAPPROVED BETS (${approved.length}):`)
+for (const b of approved) console.log(`  ${b.proposedBy.join('+').padEnd(8)} ${b.odds.toFixed(2)}x says ${(b.prob * 100).toFixed(0)}% cons ${(b.pCons * 100).toFixed(0)}% ev ${(b.ev * 100).toFixed(1)}% cons ${(b.evCons * 100).toFixed(1)}%  ${b.legs[0].player} ${b.legs[0].side} ${b.legs[0].line} ${b.legs[0].stat}`)
+console.log(`RESEARCH PARLAYS (${research.length}):`)
+for (const b of research) console.log(`  ${b.odds.toFixed(2)}x cons ${(b.pCons * 100).toFixed(1)}% ev cons ${(b.evCons * 100).toFixed(1)}%  ${b.legs.map((l) => `${l.player} ${l.side} ${l.line} ${l.stat}`).join(' + ')}`)
+if (dry) { console.log('(dry run: nothing written)'); process.exit(0) }
 
+lines.push(`INSERT OR REPLACE INTO meta (key, value) VALUES (${q(ranKey)}, datetime('now'));`)
 mkdirSync(path.join(ROOT, 'minds', 'out'), { recursive: true })
 const f = path.join(ROOT, 'minds', 'out', 'cards.sql')
 writeFileSync(f, lines.join('\n'))
 execFileSync('npx', ['wrangler', 'd1', 'execute', 'ubet', remote ? '--remote' : '--local', '--file', f], { cwd: ROOT, shell: true, stdio: 'inherit' })
-console.log('cards frozen')
+console.log('decision recorded')
