@@ -36,3 +36,12 @@ than 30 qualifying lines exist, that is the number. The app shows how many games
 ## How it will be judged
 Calibration of the whole board and of its top-ranked lines, compared with the strict and lean tiers. If the top-ranked
 volume lines do not beat the bottom-ranked ones, the model's ranking has no information and that is worth knowing.
+
+## Amendment, same day, before the first v6 card was relied on: lines per game
+"For example ATL@ORL 30 bets and CHI@TOR another 30." Counting only one line per player and statistic, today's books post too
+few lines for 30 in most games (CHI@TOR: 24 lines in all, before any filter). The board therefore takes **up to 3 distinct
+lines per player and statistic** (the better side of each, within the 1.50 to 2.60 price window) and keeps each game's **best 40**.
+- These ladders are the same outcome asked several ways (over 5.5, over 6.5 and over 7.5 rebounds). They are correlated, so
+  30 lines in a game are worth far fewer than 30 independent observations. They are paper, so nothing is staked on them.
+- It still cannot guarantee 30: where a game has fewer than 30 qualifying lines in total, that is the number.
+- A game whose projections are missing has no lines (today that was OKC@SAS until projections were refreshed).

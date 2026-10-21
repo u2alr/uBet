@@ -66,13 +66,13 @@ export const CHIEF = {
   // Point estimates, not conservative ones, so these are exactly the bets the strict tier turns down. Small stake, tracked apart.
   lean: { minEvHat: 0.02, minProb: 0.5, stake: 0.5, maxPerDay: 8 },
 
-  // ---- Volume board: PAPER ONLY. For every game, the best line of each of a team's top `topN` players' four statistics (at most
-  // 10 x 4 = 40 per team-game), ranked by raw model
+  // ---- Volume board: PAPER ONLY. For every game, up to `linesPerStat` lines of each of a team's top `topN` players' four statistics,
+  // best `perGame` by raw model
   // value. It exists to produce graded evidence at scale (calibration by stat and price), not to be bet: most of these lines have
   // no edge, and a book's margin makes the average one lose. It has no market check, so it is not a place to look for value.
   /** Only lines priced like a real main line (a coin flip plus margin). Far alternates and stale or promotional quotes pay 5x to 30x and
    *  would top any ranking by raw value, because the model overrates tails. */
-  volume: { topN: 10, minRoleMinutes: 18, minPrice: 1.5, maxPrice: 2.6 },
+  volume: { topN: 10, minRoleMinutes: 18, minPrice: 1.5, maxPrice: 2.6, linesPerStat: 3, perGame: 40 },
 } as const
 
 export type MindId = 'sam' | 'val' | 'lou' | 'cat'
@@ -329,7 +329,7 @@ function volumeReason(p: Pick): string | null {
   return null
 }
 
-/** Paper only. Per game: each rotation player's best line of each statistic (either side), best raw value first. */
+/** Paper only. Per game: each rotation player's best few lines of each statistic (the better side of each), best raw value first. */
 export function volumeBoard(allPicks: Pick[]): { bets: Bet[]; byGame: Record<string, number> } {
   const c = CHIEF
   const ok = allPicks.filter((p) => !volumeReason(p))
@@ -347,20 +347,27 @@ export function volumeBoard(allPicks: Pick[]): { bets: Bet[]; byGame: Record<str
   }
   const bets: Bet[] = []
   const counts: Record<string, number> = {}
-  for (const [eventId, list] of byGame) {
-    const best = new Map<string, Evidence>()                                  // one line per player and statistic: the better side
+  for (const list of byGame.values()) {
+    // Per player and statistic: the better side of each distinct line, then the best few lines (a ladder is one outcome asked
+    // several ways, so these are correlated; they count as separate paper bets but not as separate facts).
+    const perLine = new Map<string, Evidence>()
     for (const e of list) {
-      const k = `${e.pick.playerId}|${e.pick.stat}`
-      const cur = best.get(k)
-      if (!cur || e.quant.evHat > cur.quant.evHat) best.set(k, e)
+      const k = `${e.pick.playerId}|${e.pick.stat}|${e.pick.line}`
+      const cur = perLine.get(k)
+      if (!cur || e.quant.evHat > cur.quant.evHat) perLine.set(k, e)
     }
-    const top = [...best.values()].sort((a, b) => b.quant.evHat - a.quant.evHat)
+    const perStat = new Map<string, Evidence[]>()
+    for (const e of perLine.values()) {
+      const k = `${e.pick.playerId}|${e.pick.stat}`
+      ;(perStat.get(k) ?? perStat.set(k, []).get(k)!).push(e)
+    }
+    const kept = [...perStat.values()].flatMap((l) => l.sort((a, b) => b.quant.evHat - a.quant.evHat).slice(0, c.volume.linesPerStat))
+    const top = kept.sort((a, b) => b.quant.evHat - a.quant.evHat).slice(0, c.volume.perGame)
     counts[list[0].pick.game] = top.length
     for (const e of top) {
       const b = singleBet(e, ['val'])
       bets.push({ ...b, tier: 'volume', rationale: [`VOLUME BOARD (paper, never staked): ranked by the model's raw value, ${e.quant.evHat >= 0 ? '+' : ''}${pct(e.quant.evHat, 1)} at ${e.market.execPrice.toFixed(2)}. Most lines on this board have no edge and a book's margin makes the average one lose; it is here to be graded, not to be bet.`, ...b.rationale.slice(1, 2), ...b.rationale.slice(4)] })
     }
-    void eventId
   }
   return { bets, byGame: counts }
 }

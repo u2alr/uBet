@@ -102,12 +102,14 @@ const oppTable = Object.fromEntries(allowed.map((r) => [r.team, Object.fromEntri
 console.log(`opponent tendencies for ${allowed.length} teams`)
 
 const decision = decide(attachOpponent(upcoming, oppTable))
-if (process.env.LINE_COUNT) {   // developer aid: how many distinct player-stat lines per game could a volume board draw on?
-  const { ineligibleReason } = await import('../shared/minds.ts')
-  const ok = upcoming.filter((p) => { const r = ineligibleReason(p); return !r || r === 'no_market' || r === 'too_few_books' })
-  const per = new Map()
-  for (const p of ok) { const k = p.game; const set = per.get(k) ?? per.set(k, new Set()).get(k); set.add(`${p.playerId}|${p.stat}`) }
-  console.log('distinct player-stat lines per game (starters/stars, fresh projection):', [...per].map(([g, s]) => `${g.split(' @ ').map((x) => x.split(' ').pop()).join('@')}=${s.size}`).join('  '))
+if (process.env.LINE_COUNT) {   // developer aid: where do lines drop out, per game?
+  const stages = { 'all lines': () => true, 'has fresh projection': (p) => p.model === 'gbm-v1' && p.projectionAgeHours != null && p.projectionAgeHours <= 24, 'main-line price': (p) => p.price >= 1.5 && p.price <= 2.6, 'has role/minutes': (p) => p.role != null, '18+ min': (p) => p.role != null && p.role.min10 >= 18, 'not injured': (p) => !p.injury, '10+ games': (p) => p.sample >= 10 }
+  const games = [...new Set(upcoming.map((p) => p.game))]
+  let cur = upcoming
+  console.log('game'.padEnd(34), Object.keys(stages).map((k) => k.slice(0, 12).padStart(13)).join(''))
+  const rows = Object.fromEntries(games.map((g) => [g, []]))
+  for (const f of Object.values(stages)) { cur = cur.filter(f); for (const g of games) rows[g].push(new Set(cur.filter((p) => p.game === g).map((p) => `${p.playerId}|${p.stat}`)).size) }
+  for (const g of games) console.log(g.split(' @ ').map((x) => x.split(' ').pop()).join('@').padEnd(34), rows[g].map((n) => String(n).padStart(13)).join(''))
 }
 if (process.env.EV_DIST) {   // developer aid: how much raw edge exists on this slate, at each threshold
   const { buildEvidence, ineligibleReason } = await import('../shared/minds.ts')

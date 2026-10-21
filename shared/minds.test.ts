@@ -456,26 +456,26 @@ test('volume board: paper only, every starter\'s statistics even with no market,
   const ev = b.bets.map((x) => x.ev)
   assert.deepEqual([...ev].sort((x, y) => y - x), ev, 'best first')
   assert.equal(Object.values(b.byGame)[0], 32)
-  assert.equal(volumeBoard(board('V2', 14, {})).bets.length, 40, 'only the best 10 by minutes, so at most 40 a game')
+  assert.equal(volumeBoard(board('V2', 14, {})).bets.length, 40, 'only the best 10 by minutes, and a game keeps its best 40')
 })
 
-test('volume board: one line per player and statistic, and it is the better one', () => {
-  const many = ['A', 'B', 'C', 'D', 'E'].flatMap((g) => board(g, 8))
-  assert.ok(volumeBoard(many).bets.length <= 5 * 40)
-  const wide = Array.from({ length: 8 }, (_, i) => (['pts', 'reb', 'ast', 'fg3m'] as const).flatMap((stat) =>
-    Array.from({ length: 3 }, (_, k) => pick({ eventId: 'W1', team: 'BOS', stat, line: 5.5 + k, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }], role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 }, playerId: 8000 + i, player: `W${i}`, game: 'Boston Celtics @ Detroit Pistons' }))))
-    .flat()
-  const b = volumeBoard(wide)
-  assert.equal(b.bets.length, 32, 'a ladder of three lines is one bet, not three')
+test('volume board: up to 3 lines per player and statistic (the better side of each), at most 40 a game, best first', () => {
+  const ladder = (n: number, eventId = 'W1', players = 1) => Array.from({ length: players }, (_, i) => (['pts', 'reb', 'ast', 'fg3m'] as const).flatMap((stat) =>
+    Array.from({ length: n }, (_, k) => pick({ eventId, team: 'BOS', stat, line: 5.5 + k, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }], modelProb: 0.5 + 0.01 * k,
+      role: { label: 'Starter', min10: 36 - i, trend: 0, games: 60 }, playerId: 8000 + i, player: `W${i}`, game: 'Boston Celtics @ Detroit Pistons' })))).flat()
+  const one = volumeBoard(ladder(5)).bets
+  assert.equal(one.length, 12, 'five lines per statistic: the best three of each of four statistics')
+  const lines = one.filter((x) => x.legs[0].stat === 'pts').map((x) => x.legs[0].line).sort()
+  assert.deepEqual(lines, [7.5, 8.5, 9.5], 'the three best by value, not the first three')
+  const big = volumeBoard(ladder(5, 'W2', 8))
+  assert.equal(big.bets.length, 40, '8 players x 4 stats x 3 lines is 96; a game keeps its best 40')
+  assert.equal(Object.values(big.byGame)[0], 40)
+  assert.deepEqual(big.bets.map((x) => x.ev), [...big.bets.map((x) => x.ev)].sort((a, b) => b - a), 'best first')
   const sides = [pick({ eventId: 'S1', playerId: 31, player: 'Pair', stat: 'pts', side: 'over', line: 20.5, modelProb: 0.45, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }] }),
     pick({ eventId: 'S1', playerId: 31, player: 'Pair', stat: 'pts', side: 'under', line: 20.5, modelProb: 0.55, marketProb: null, marketBooks: 1, prices: [{ book: 'A', price: 1.9 }] })]
   const pair = volumeBoard(sides).bets
-  assert.equal(pair.length, 1)
+  assert.equal(pair.length, 1, 'both sides of one line are one bet')
   assert.equal(pair[0].legs[0].side, 'under', 'the side with the better value is kept')
-  const keys = b.bets.map((x) => `${x.legs[0].playerId}|${x.legs[0].stat}`)
-  assert.equal(new Set(keys).size, keys.length)
-  const dense = volumeBoard(Array.from({ length: 6 }, (_, g) => board(`D${g}`, 8)).flat().filter((_, i) => i % 1 === 0))
-  assert.ok(Object.values(dense.byGame).every((n) => n <= 40))
 })
 
 test('volume board: leaves out injured players, falling minutes, stale projections and non-rotation players', () => {
