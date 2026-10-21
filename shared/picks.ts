@@ -235,6 +235,8 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
   const { events, players, history, projections, now } = input
   const maxAgeMs = (input.maxProjectionAgeHours ?? MAX_PROJECTION_AGE_HOURS) * 3600_000
   const byName = new Map(players.map((p) => [normName(p.name), p]))
+  const nameCount = new Map<string, number>()
+  for (const p of players) nameCount.set(normName(p.name), (nameCount.get(normName(p.name)) ?? 0) + 1)
   const rowsByPlayer = new Map<number, HistoryRow[]>()
   for (const r of history) (rowsByPlayer.get(r.player_id) ?? rowsByPlayer.set(r.player_id, []).get(r.player_id)!).push(r)
   const proj = new Map(projections.map((r) => [`${r.player_id}|${r.game_date}|${r.stat}`, r]))
@@ -319,7 +321,12 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
       const allQuotes = [...L.over, ...L.under]
       const mainKnown = allQuotes.some((x) => x.main !== undefined)
       const mainLine = allQuotes.some((x) => x.main === true)
-      const identity: 'verified' | 'unverified' = allQuotes.some((x) => x.nbaId === L.pl.id) ? 'verified' : 'unverified'
+      // A provider id equal to ours verifies. A provider that sends no ids at all (name-only feeds) is accepted only when the name is unique
+      // in our roster AND the player's team is one of the two in this game; any provider id that disagrees was already dropped above.
+      const providerSendsIds = allQuotes.some((x) => x.nbaId !== undefined)
+      const teamPlays = !!L.pl.team && [TEAM_NAMES[L.pl.team], L.pl.team].some((t) => t === ev.home_team || t === ev.away_team)
+      const identity: 'verified' | 'unverified' = allQuotes.some((x) => x.nbaId === L.pl.id) ? 'verified'
+        : !providerSendsIds && nameCount.get(normName(L.pl.name)) === 1 && teamPlays ? 'verified' : 'unverified'
       const both = [...perBook.values()].filter((v) => v.o && v.u)
       const marketOver = both.length ? both.reduce((a, v) => a + devigPair(v.o!, v.u!), 0) / both.length : null
 

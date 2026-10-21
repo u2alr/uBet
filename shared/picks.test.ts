@@ -360,10 +360,14 @@ describe('quote timestamps, identity and the per-book detail the engine needs', 
     assert.equal(r.diagnostics.identityMismatches.length, 1)
     assert.match(r.diagnostics.identityMismatches[0], /999 vs 7/)
   })
-  it('marks identity unverified, not verified, when the provider gives no id; plain quotes carry no invented timestamp', () => {
+  it('a name-only provider is verified only for a unique name on a team in the game; plain quotes carry no invented timestamp', () => {
     const r = buildPicks(base())
     const over = find(r, 'over')!
-    assert.equal(over.identity, 'unverified')
+    assert.equal(over.identity, 'verified', 'unique name, team plays in the event')
+    const dup = buildPicks(base({ players: [...base().players, { id: 99, name: base().players[0].name, team: null }] }))
+    assert.ok(dup.picks.every((p) => p.identity === 'unverified'), 'a duplicated name is never verified')
+    const elsewhere = buildPicks(base({ players: base().players.map((p) => ({ ...p, team: 'LAL' })) }))
+    assert.ok(elsewhere.picks.every((p) => p.identity === 'unverified'), 'a team not in this game is never verified')
     assert.equal(over.mainKnown, false)
     assert.ok(over.bookQuotes!.every((q) => q.overUpdated === null && q.underUpdated === null))
   })

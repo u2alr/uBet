@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { buildPicks, etDate, normName } from '../shared/picks.ts'
 import { normalizeOddsBlaze, TWO_WAY_BOOKS } from '../shared/oddsblaze.ts'
+import { normalizeOddsApi, ODDS_API_BOOKS, ODDS_API_MARKETS, ODDS_API_REGIONS } from '../shared/oddsapi.ts'
 import { enrichPicks, parseInjuries } from '../shared/injuries.ts'
 import { gzipSync } from 'node:zlib'
 import { attachOpponent, decide, legKey, MINDS_VERSION } from '../shared/minds.ts'
@@ -23,11 +24,29 @@ const bi = args.indexOf('--books')
 const books = bi >= 0 ? args[bi + 1].split(',') : TWO_WAY_BOOKS
 const MARKETS = 'Player Points,Player Rebounds,Player Assists,Player Threes Made'
 
-function key() {
-  if (process.env.ODDSBLAZE_KEY) return process.env.ODDSBLAZE_KEY
-  const m = /^ODDSBLAZE_KEY=(.+)$/m.exec(readFileSync(path.join(ROOT, '.dev.vars'), 'utf8'))
-  if (!m) throw new Error('ODDSBLAZE_KEY missing')
-  return m[1].trim()
+function secret(name) {
+  if (process.env[name]) return process.env[name]
+  try { const m = new RegExp(`^${name}=(.+)$`, 'm').exec(readFileSync(path.join(ROOT, '.dev.vars'), 'utf8')); return m ? m[1].trim() : '' } catch { return '' }
+}
+// The Odds API (FanDuel, DraftKings, bet365 only) when its key is set; OddsBlaze otherwise. --provider oddsblaze|oddsapi forces one.
+const pi = args.indexOf('--provider')
+const provider = pi >= 0 ? args[pi + 1] : secret('ODDS_API_KEY') ? 'oddsapi' : 'oddsblaze'
+const key = () => { const k = secret(provider === 'oddsapi' ? 'ODDS_API_KEY' : 'ODDSBLAZE_KEY'); if (!k) throw new Error(`${provider} key missing`); return k }
+
+async function fetchOddsApi(k, horizonMs) {
+  const base = 'https://api.the-odds-api.com/v4/sports/basketball_nba'
+  const list = await fetch(`${base}/events?apiKey=${k}`)
+  if (!list.ok) throw new Error(`events: HTTP ${list.status}`)
+  const soon = (await list.json()).filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + horizonMs)
+  const out = []
+  for (const e of soon) {   // one request per game; props are only served per event
+    const u = new URL(`${base}/events/${e.id}/odds`)
+    u.search = new URLSearchParams({ apiKey: k, regions: ODDS_API_REGIONS, markets: ODDS_API_MARKETS, bookmakers: ODDS_API_BOOKS.join(','), oddsFormat: 'decimal' })
+    const r = await fetch(u)
+    if (!r.ok) { console.error('skip game', e.id, `HTTP ${r.status}`); continue }
+    out.push(await r.json())
+  }
+  return out
 }
 
 function d1(sql) {
@@ -50,23 +69,25 @@ async function fetchBook(k, book) {
 let now = Date.now()
 const k = key()
 const responses = []
-const cacheFile = path.join(ROOT, 'minds', 'out', 'odds_cache.json')
+const cacheFile = path.join(ROOT, 'minds', 'out', `odds_cache${provider === 'oddsapi' ? '_oddsapi' : ''}.json`)
 if (useCache && existsSync(cacheFile) && Date.now() - statSync(cacheFile).mtimeMs < 3 * 3600_000) {
   responses.push(...JSON.parse(readFileSync(cacheFile, 'utf8')))
   // judge the cached lines as of when they were downloaded: just after the newest quote timestamp inside them
-  const stamps = [...readFileSync(cacheFile, 'utf8').matchAll(/"updated":\s*"([^"]+)"/g)].map((m) => Date.parse(m[1])).filter(Number.isFinite)
+  const stamps = [...readFileSync(cacheFile, 'utf8').matchAll(/"(?:updated|last_update)":\s*"([^"]+)"/g)].map((m) => Date.parse(m[1])).filter(Number.isFinite)
   now = stamps.length ? Math.max(...stamps) + 120_000 : statSync(cacheFile).mtimeMs
   console.log('using cached odds from', new Date(now).toLocaleTimeString())
 } else {
-  for (const b of books) {
+  if (provider === 'oddsapi') {
+    try { responses.push(...(await fetchOddsApi(k, 36 * 3600_000))) } catch (e) { console.error('odds api failed:', String(e.message).replace(k, '***')) }
+  } else for (const b of books) {
     try { responses.push(await fetchBook(k, b)) } catch (e) { console.error('skip', String(e.message).replace(k, '***')) }
   }
   if (dry && responses.length) { mkdirSync(path.dirname(cacheFile), { recursive: true }); writeFileSync(cacheFile, JSON.stringify(responses)) }
 }
 if (!responses.length) { console.error('no odds fetched'); process.exit(1) }
 
-const { events, stats } = normalizeOddsBlaze(responses)
-console.log(`odds: ${events.length} games, ${stats.kept} quotes from ${responses.length} books`)
+const { events, stats } = provider === 'oddsapi' ? normalizeOddsApi(responses) : normalizeOddsBlaze(responses)
+console.log(`odds (${provider}): ${events.length} games, ${stats.kept} quotes${provider === 'oddsapi' ? ` from ${stats.booksSeen.join(', ')}` : ` from ${responses.length} books`}`)
 
 const players = d1('SELECT id, name, team FROM players')
 const byName = new Map(players.map((p) => [normName(p.name), p]))
