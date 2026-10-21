@@ -59,6 +59,8 @@ export const CHIEF = {
   maxDailyBets: 12,
   /** How many near misses (raw edge, removed by the haircut) are recorded per day. */
   maxNearMisses: 60,
+  /** The closest eligible picks that did not qualify, recorded on every day (including no-bet days) so there is always something to read and grade. Never bets. */
+  maxWatchlist: 25,
 } as const
 
 export type MindId = 'sam' | 'val' | 'lou' | 'cat'
@@ -338,6 +340,14 @@ export function decide(allPicks: Pick[]): Decision {
     .filter((e) => !candidateKeys.has(legKey(e.pick)) && !chiefCheck(e) && e.quant.pBlend >= c.val.minProb && e.quant.evHat >= c.val.minEvCons)
     .sort((a, b) => b.quant.evHat - a.quant.evHat).slice(0, c.maxNearMisses)
   for (const e of near) rej(e, ['val'], { reason: 'uncertainty_haircut', detail: `raw expected value ${pct(e.quant.evHat, 1)}, but ${pct(e.quant.evCons, 1)} once the uncertainty from ${e.quant.nEff} games is counted` })
+
+  // Watchlist: the best of the rest. Not candidates, not bets: they show how far the slate was from qualifying, and grading
+  // them later shows whether the thresholds are too strict. Ranked by conservative value; anything the Chief would veto is excluded.
+  const seen = new Set([...rejected.map((r) => legKey(r.pick)), ...survivors.keys()])
+  const watch = evidence
+    .filter((e) => !seen.has(legKey(e.pick)) && !chiefCheck(e))
+    .sort((a, b) => b.quant.evCons - a.quant.evCons).slice(0, c.maxWatchlist)
+  for (const e of watch) rej(e, [], { reason: 'watchlist', detail: `closest to qualifying: conservative value ${e.quant.evCons >= 0 ? '+' : ''}${pct(e.quant.evCons, 1)} (Value Val needs +${pct(c.val.minEvCons)}), win chance ${pct(e.quant.pBlend)} (Safe Sam needs ${pct(c.sam.minProb)})` })
 
   // 3. Portfolio: one bet per player+stat, then caps in order of conservative value. Caps drop bets; nothing is added.
   const ranked = [...survivors.values()].sort((a, b) => b.e.quant.evCons - a.e.quant.evCons || b.e.quant.pCons - a.e.quant.pCons)

@@ -516,6 +516,7 @@ function Why({ b, l }: { b: Bet; l?: Leg }) {
 }
 
 const REASON: Record<string, string> = {
+  watchlist: 'closest to qualifying (not a bet)',
   uncertainty_haircut: 'a raw edge that did not survive the uncertainty haircut',
   injury_listed: 'listed on the injury report',
   thin_history: 'too few games behind the estimate',
@@ -536,11 +537,28 @@ const REASON: Record<string, string> = {
 }
 
 function NoBets({ day, rejections }: { day: string; rejections: Rejection[] }) {
-  const top = Object.entries(rejections.reduce<Record<string, number>>((a, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {})).sort((a, b) => b[1] - a[1]).slice(0, 4)
+  const rejected = rejections.filter((r) => r.reason !== 'watchlist')
+  const watch = rejections.filter((r) => r.reason === 'watchlist').sort((a, b) => (b.evCons ?? -1) - (a.evCons ?? -1)).slice(0, 6)
+  const top = Object.entries(rejected.reduce<Record<string, number>>((a, r) => ((a[r.reason] = (a[r.reason] ?? 0) + 1), a), {})).sort((a, b) => b[1] - a[1]).slice(0, 4)
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-neutral-300">
-      <b className="font-medium text-neutral-100">No bets for {dayLabel(day)}.</b> The Chief reviewed the slate and nothing cleared the thresholds. That is the intended default, not a failure.
-      {top.length > 0 && <span className="text-neutral-500"> The candidates it looked at and turned down: {top.map(([r, n]) => `${n} ${REASON[r] ?? r}`).join('; ')}.</span>}
+    <div className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-neutral-300">
+      <div>
+        <b className="font-medium text-neutral-100">No bets for {dayLabel(day)}.</b> The Chief reviewed the slate and nothing cleared the thresholds. That is the intended default, not a failure.
+        {top.length > 0 && <span className="text-neutral-500"> Candidates it turned down: {top.map(([r, n]) => `${n} ${REASON[r] ?? r}`).join('; ')}.</span>}
+      </div>
+      {watch.length > 0 && (
+        <div className="text-xs">
+          <div className="mb-1 uppercase tracking-widest text-neutral-500">Closest to qualifying <span className="normal-case tracking-normal text-neutral-600">watchlist: tracked and graded, never bet</span></div>
+          {watch.map((r) => (
+            <div key={r.id} className="flex items-baseline gap-2 text-neutral-400" title={r.detail ?? ''}>
+              <span className="w-40 truncate text-neutral-200">{r.player}</span>
+              <span className="w-24">{r.side === 'over' ? 'O' : 'U'} {r.line} {STAT_LABEL[r.stat] ?? r.stat}</span>
+              <span className="w-10 tabular-nums">{r.price.toFixed(2)}</span>
+              <span className="tabular-nums text-neutral-500">conservative value {r.evCons == null ? '–' : `${signed(r.evCons * 100, 1)}%`}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

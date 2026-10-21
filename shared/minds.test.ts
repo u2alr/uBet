@@ -374,3 +374,24 @@ test('at most 60 near misses are recorded a day', () => {
   const d = decide(many)
   assert.equal(d.rejected.filter((r) => r.reason === 'uncertainty_haircut').length, 60)
 })
+
+test('a no-bet day still lists the closest candidates as a watchlist: never bets, best first, vetoed picks excluded', () => {
+  const slate = Array.from({ length: 40 }, (_, i) => pick({ eventId: `W${i}`, modelProb: 0.52 + i * 0.002, marketProb: 0.52, price: 1.9, prices: [{ book: 'A', price: 1.9 }, { book: 'B', price: 1.9 }] }))
+  const injured = pick({ eventId: 'WX', modelProb: 0.6, marketProb: 0.52, injury: { status: 'questionable', label: 'Questionable', note: '' } })
+  const d = decide([...slate, injured])
+  assert.equal(d.approved.length, 0)
+  assert.equal(d.research.length, 0)
+  const watch = d.rejected.filter((r) => r.reason === 'watchlist')
+  assert.equal(watch.length, 25)
+  assert.deepEqual(watch.map((r) => r.evCons), [...watch.map((r) => r.evCons)].sort((a, b) => b - a), 'closest first')
+  assert.ok(watch.every((r) => r.pick.player !== injured.player), 'a vetoed pick is not "close"')
+  assert.match(watch[0].detail, /closest to qualifying/)
+  assert.equal(decide([]).rejected.length, 0)
+})
+
+test('a candidate that is already rejected or approved is not repeated on the watchlist', () => {
+  const d = decide([pick(), pick({ prices: [{ book: 'A', price: 1.9 }] }), pick({ modelProb: 0.5, marketProb: 0.5 })])
+  assert.equal(d.approved.length, 1)
+  const keys = d.rejected.map((r) => `${r.pick.playerId}|${r.pick.line}|${r.pick.side}`)
+  assert.equal(new Set(keys).size, keys.length)
+})
