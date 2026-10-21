@@ -86,7 +86,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const [board, setBoard] = useState<'bets' | 'volume'>('bets')
   const [dayPick, setDayPick] = useState<string | null>(null)
   const [version, setVersion] = useState<string | null>(null)
-  useEffect(() => { api<Res>(`/minds${version ? `?version=${version}` : ''}`).then(setRes).catch((e) => setError(e.message)) }, [refreshKey, version])
+  useEffect(() => { api<Res>(`/minds${version ? `?version=${version}` : ''}`).then((r) => { setRes(r); if (r.data.bets.length && r.data.bets.every((b) => b.tier === 'volume')) setBoard('volume') }).catch((e) => setError(e.message)) }, [refreshKey, version])
 
   const ORDER = orderFor(res)
 
@@ -387,8 +387,12 @@ function GameCard({ g, legsOf }: { g: GameGroup; legsOf: (id: number) => Leg[] }
   const done = g.bets.filter((b) => b.status !== 'open')
   const net = done.reduce((a, b) => a + (b.profit ?? 0), 0)
   // away team's bets first, then the home team's
+  // A game can hold 40 paper lines: show the 12 with the most value first, the rest on request.
+  const [all, setAll] = useState(false)
+  const TOP = 12
+  const shown = all || g.bets.length <= TOP ? g.bets : [...g.bets].sort((a, b) => b.ev - a.ev).slice(0, TOP)
   const byTeam = new Map<string, Bet[]>()
-  for (const b of g.bets) { const t = legsOf(b.id)[0]?.team ?? '?'; (byTeam.get(t) ?? byTeam.set(t, []).get(t)!).push(b) }
+  for (const b of shown) { const t = legsOf(b.id)[0]?.team ?? '?'; (byTeam.get(t) ?? byTeam.set(t, []).get(t)!).push(b) }
   const awayAbbr = abbr(g.away)
   const teams = [...byTeam].sort((a, b) => (a[0] === awayAbbr ? -1 : b[0] === awayAbbr ? 1 : 0))
   return (
@@ -405,6 +409,11 @@ function GameCard({ g, legsOf }: { g: GameGroup; legsOf: (id: number) => Leg[] }
             {mergeSame(bs, legsOf).map((m) => <MiniBet key={m.bets[0].id} bets={m.bets} l={m.leg} />)}
           </div>
         ))}
+        {g.bets.length > TOP && (
+          <button onClick={() => setAll(!all)} className="w-full px-2 py-1.5 text-center text-[11px] text-neutral-500 hover:text-neutral-300">
+            {all ? `Show the top ${TOP} only` : `Show all ${g.bets.length}`}
+          </button>
+        )}
       </div>
     </div>
   )

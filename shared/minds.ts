@@ -375,7 +375,9 @@ export function volumeBoard(allPicks: Pick[], c: EngineConfig, calibration: Cali
     const rank = ranks.get(`${p.eventId}|${p.team}|${p.playerId}`)
     if (rank === undefined || rank > v.topN) continue
     const cal = calibrateSide(calibration, p.stat, p.side, p.modelProb, c.probability.confidenceLevel)
-    const prob = cal.calibrated ?? p.modelProb                                   // labelled paper: an uncalibrated statistic still gets a line to grade
+    const model = cal.calibrated ?? p.modelProb                                  // labelled paper: an uncalibrated statistic still gets a line to grade
+    // Where books quote both sides, the market's vig-free view is blended in exactly as the strict tier does, so the board ranks by edge over the market, not by the model alone.
+    const prob = typeof p.marketProb === 'number' && Number.isFinite(p.marketProb) && p.marketBooks >= 1 ? c.probability.marketWeight * p.marketProb + (1 - c.probability.marketWeight) * model : model
     ;(byGame.get(p.eventId) ?? byGame.set(p.eventId, []).get(p.eventId)!).push({ p, prob, price: p.price, ev: binaryExpectedReturn(prob, p.push, p.price) })
   }
   const bets: Bet[] = []
@@ -392,7 +394,7 @@ export function volumeBoard(allPicks: Pick[], c: EngineConfig, calibration: Cali
       bets.push({
         mind: 'val', proposedBy: [], kind: 'single', legs: [x.p], records: [rec], legPrices: [x.price], odds: x.price, prob: x.prob, pCons: x.prob, ev: x.ev, evCons: x.ev,
         tier: 'volume', label: 'PAPER_VOLUME', experimental: true, research: true, stake: c.portfolio.unitStake,
-        rationale: [`PAPER_VOLUME (never staked): ranked by the model's own value ${signed(x.ev)} at ${x.price.toFixed(2)}, with no market check. Most lines on this board have no edge and a book's margin makes the average one lose; it is here to be graded, not to be bet.`],
+        rationale: [`PAPER_VOLUME (never staked): ranked by value ${signed(x.ev)} at ${x.price.toFixed(2)} (model blended with the market's fair price where books quote both sides). Most lines on this board have no edge and a book's margin makes the average one lose; it is here to be graded, not to be bet.`],
       })
     }
   }
