@@ -1,13 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { useEffect, useState } from 'react'
 import { CHIEF } from '../../shared/minds'
-import { INK, MIND_COLOR } from '../lib/colors'
+import { MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import { teamByName } from '../lib/teams'
 import Headshot from './Headshot'
-import LazyMount from './LazyMount'
 import { PickBars, PickSpark } from './PickSpark'
-import MindsCharts from './MindsCharts'
 
 interface Bet {
   id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null
@@ -92,17 +89,6 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   useEffect(() => { api<Res>(`/minds${version ? `?version=${version}` : ''}`).then(setRes).catch((e) => setError(e.message)) }, [refreshKey, version])
 
   const ORDER = orderFor(res)
-  const series = useMemo(() => {
-    if (!res) return []
-    const days = [...new Set(res.data.curve.map((x) => x.day))].sort()
-    const run: Record<string, number> = {}
-    return days.map((day) => {
-      const row: Record<string, number | string> = { day }
-      for (const x of res.data.curve) if (x.day === day) run[x.mind] = (run[x.mind] ?? 0) + x.units
-      for (const m of ORDER) if (m in run) row[m] = Number(run[m].toFixed(2))
-      return row
-    })
-  }, [res]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <p className="text-sm text-neutral-500">{error}</p>
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
@@ -119,10 +105,6 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   const inGroup = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'volume' ? b.tier === 'volume' : m === 'research' ? b.tier === 'research' : proposers(b).includes(m) && b.tier === 'strict')
   const visible = bets.filter((b) =>
     (board === 'volume' ? b.tier === 'volume' : b.tier !== 'volume') && (!pick || inGroup(b, pick)) && (show === 'all' || (show === 'open' ? b.status === 'open' : b.status !== 'open')))
-  // The charts describe whichever board is showing: the paper volume board would otherwise swamp the real bets.
-  const chartBets = bets.filter((b) => (board === 'volume') === (b.tier === 'volume'))
-  const chartIds = new Set(chartBets.map((b) => b.id))
-  const chartLegs = legs.filter((l) => chartIds.has(l.betId))
   const days = [...new Set([...bets.map((b) => b.day), ...res.data.ranDays])].sort().reverse()
   const selDay = dayPick && days.includes(dayPick) ? dayPick : days[0]
   const byDay = new Map<string, Bet[]>()
@@ -213,31 +195,6 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
           </div>
         )}
       </details>
-
-      <div className="rounded-lg bg-neutral-900 p-3">
-        <h2 className="mb-1 text-sm text-neutral-300">Units by day (cumulative)</h2>
-        {series.length < 2 ? (
-          <p className="py-6 text-center text-sm text-neutral-500">The chart starts once two days of bets have settled.</p>
-        ) : (
-          <div className="h-52">
-            <ResponsiveContainer>
-              <LineChart data={series}>
-                <CartesianGrid stroke={INK.grid} vertical={false} />
-                <XAxis dataKey="day" stroke={INK.axis} tick={{ fill: INK.legend, fontSize: 11 }} />
-                <YAxis stroke={INK.axis} tick={{ fill: INK.legend, fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: '#171717', border: '1px solid #262626', color: INK.tooltip, fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 12, color: INK.legend }} formatter={(v: string) => NAMES[v] ?? v} />
-                {ORDER.map((m) => (
-                  <Line key={m} type="monotone" dataKey={m} stroke={MIND_COLOR[m]} strokeWidth={pick === m ? 3 : 2} strokeOpacity={pick && pick !== m ? 0.25 : 1}
-                    dot={false} connectNulls strokeDasharray={m === 'control' ? '5 4' : undefined} />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-
-      <LazyMount height={560}><MindsCharts bets={chartBets} legs={chartLegs} pick={pick} /></LazyMount>
 
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="mr-2 text-sm text-neutral-300">Bets{pick ? `: ${NAMES[pick]}` : ''} <span className="text-xs text-neutral-600">{visible.length}</span></h2>
