@@ -240,6 +240,34 @@ app.get('/players/:id/log', async (c) => {
   return c.json({ data: results })
 })
 
+// Head-to-head: each requested player's most recent games against the requested opponent. ?pairs=<playerId>:<OPP>,... (at most 200).
+app.get('/h2h', async (c) => {
+  const raw = (c.req.query('pairs') ?? '').split(',').filter(Boolean)
+  if (raw.length === 0 || raw.length > 200) return c.json({ error: 'pairs must hold 1 to 200 entries' }, 400)
+  const pairs: { id: number; opp: string }[] = []
+  for (const x of raw) {
+    const m = /^(\d{1,12}):([A-Z]{2,4})$/.exec(x)
+    if (!m) return c.json({ error: 'bad pair' }, 400)
+    pairs.push({ id: Number(m[1]), opp: m[2] })
+  }
+  const ids = [...new Set(pairs.map((p) => p.id))], opps = [...new Set(pairs.map((p) => p.opp))]
+  const { results } = await c.env.DB.prepare(
+    `SELECT pg.player_id AS id, pg.opp, g.date, pg.minutes, pg.pts, pg.reb, pg.ast, pg.fg3m
+     FROM player_games pg JOIN games g ON g.id = pg.game_id
+     WHERE pg.player_id IN (${ids.map(() => '?').join(',')}) AND pg.opp IN (${opps.map(() => '?').join(',')}) AND g.game_type != 'preseason' AND pg.minutes > 0
+     ORDER BY g.date DESC`,
+  ).bind(...ids, ...opps).all<{ id: number; opp: string; date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }>()
+  const want = new Set(pairs.map((p) => `${p.id}:${p.opp}`))
+  const out: Record<string, typeof results> = {}
+  for (const r of results) {
+    const k = `${r.id}:${r.opp}`
+    if (!want.has(k)) continue
+    const list = (out[k] ??= [])
+    if (list.length < 8) list.push(r)
+  }
+  return c.json({ data: out })
+})
+
 // Current teammates this player has played games without, most-missed first: the choices for the "without" filter.
 app.get('/players/:id/teammates', async (c) => {
   const id = parseId(c.req.param('id'))

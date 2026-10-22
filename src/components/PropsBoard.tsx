@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { PicksMeta } from '../../shared/picks.ts'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
 import type { Pick } from '../lib/picks'
-import { logoUrl, teamId } from '../lib/teams'
+import { logoUrl, teamByName, teamId } from '../lib/teams'
 import { InjuryTag, RoleTag } from './Availability'
 import Headshot from './Headshot'
 import Notices from './Notices'
@@ -35,6 +35,17 @@ const hit = (c: Card) => {
   return p.recent.filter((v) => (p.side === 'over' ? v > p.line : v < p.line)).length / p.recent.length
 }
 
+interface H2HGame { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }
+type H2H = Record<string, H2HGame[]>
+
+/** The opponent's abbreviation: the other team in "Away @ Home". */
+function opponentOf(p: Pick): string | null {
+  const [away, home] = p.game.split(' @ ')
+  const mine = p.teamName
+  const other = mine === away ? home : mine === home ? away : null
+  return other ? teamByName(other)?.[0] ?? null : null
+}
+
 export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: number; onOpenPlayer: (id: number) => void }) {
   const [picks, setPicks] = useState<Pick[] | null>(null)
   const [configured, setConfigured] = useState(true)
@@ -45,12 +56,23 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<SortKey>('edge')
   const [positive, setPositive] = useState(false)
+  const [h2h, setH2h] = useState<H2H>({})
 
   useEffect(() => {
     api<{ configured: boolean; data: Pick[]; meta: PicksMeta }>('/picks')
       .then((r) => { setConfigured(r.configured); setPicks(r.data); setMeta(r.meta ?? null) })
       .catch((e) => setError(e.message))
   }, [refreshKey])
+
+  // Head-to-head: every listed player's recent games against tonight's opponent, fetched once the props are in.
+  useEffect(() => {
+    if (!picks?.length) return
+    const pairs = [...new Set(picks.map((p) => { const o = opponentOf(p); return o ? `${p.playerId}:${o}` : '' }).filter(Boolean))].slice(0, 200)
+    if (!pairs.length) return
+    let live = true
+    api<{ data: H2H }>(`/h2h?pairs=${pairs.join(',')}`).then((r) => live && setH2h(r.data)).catch(() => live && setH2h({}))
+    return () => { live = false }
+  }, [picks])
 
   const games = useMemo(() => [...new Set((picks ?? []).map((p) => p.game))].sort(), [picks])
   const cards = useMemo(() => {
@@ -68,6 +90,11 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
 
   // The page size resets whenever a filter changes, derived from the filters themselves rather than reset in an effect.
   const sig = `${stat}|${game}|${q}|${sort}|${positive}`
+  const byGame = useMemo(() => {
+    const m = new Map<string, { game: string; date: string; cards: Card[] }>()
+    for (const c of cards) { const g = m.get(c.lead.game) ?? m.set(c.lead.game, { game: c.lead.game, date: c.lead.gameDate, cards: [] }).get(c.lead.game)!; g.cards.push(c) }
+    return [...m.values()].sort((a, b) => a.date.localeCompare(b.date) || a.game.localeCompare(b.game))
+  }, [cards])
   const [paged, setPaged] = useState({ sig, n: 60 })
   const limit = paged.sig === sig ? paged.n : 60
   const setLimit = (n: number) => setPaged({ sig, n })
@@ -109,22 +136,59 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
       ) : cards.length === 0 ? (
         <Empty>No props match these filters. Lines appear once books post them, for players you have synced.</Empty>
       ) : (
-        <>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {cards.slice(0, limit).map((c) => <PropTile key={c.key} c={c} onOpenPlayer={onOpenPlayer} />)}
-          </div>
-          {cards.length > limit && (
-            <button onClick={() => setLimit(limit + 60)} className="mx-auto block rounded-full bg-neutral-900 px-4 py-1.5 text-xs text-neutral-300 hover:text-neutral-100">
-              Show {Math.min(60, cards.length - limit)} more of {cards.length - limit}
-            </button>
-          )}
-        </>
+        <div className="space-y-5">
+          {byGame.map((g) => <GameSection key={g.game} g={g} h2h={h2h} limit={limit} more={() => setLimit(limit + 60)} onOpenPlayer={onOpenPlayer} />)}
+        </div>
       )}
     </div>
   )
 }
 
-function PropTile({ c, onOpenPlayer }: { c: Card; onOpenPlayer: (id: number) => void }) {
+function GameSection({ g, h2h, limit, more, onOpenPlayer }: { g: { game: string; date: string; cards: Card[] }; h2h: H2H; limit: number; more: () => void; onOpenPlayer: (id: number) => void }) {
+  const [open, setOpen] = useState(true)
+  const [away, home] = g.game.split(' @ ')
+  const ids = [away, home].map((n) => teamByName(n))
+  const players = new Set(g.cards.map((c) => c.lead.playerId)).size
+  return (
+    <section>
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="mb-2 flex w-full items-center gap-2 text-left">
+        {ids.map((t, i) => t && <img key={i} src={logoUrl(t[1])} alt="" className="h-6 w-6" loading="lazy" />)}
+        <h2 className="text-sm font-medium text-neutral-100">{away} <span className="text-neutral-600">@</span> {home}</h2>
+        <span className="text-xs text-neutral-500">{g.cards.length} props · {players} players</span>
+        <span className="ml-auto text-xs text-neutral-600">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {g.cards.slice(0, limit).map((c) => <PropTile key={c.key} c={c} h2h={h2h} onOpenPlayer={onOpenPlayer} />)}
+          {g.cards.length > limit && (
+            <button onClick={more} className="rounded-xl border border-dashed border-neutral-800 py-6 text-xs text-neutral-500 hover:text-neutral-200">Show more of {g.cards.length - limit}</button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function H2HLine({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
+  const opp = opponentOf(p)
+  if (!opp) return null
+  if (!rows?.length) return <div className="px-3 pb-2 text-[11px] text-neutral-700">vs {opp}: no earlier games</div>
+  const vals = rows.map((r) => r[p.stat as 'pts' | 'reb' | 'ast' | 'fg3m'])
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length
+  const landed = vals.filter((v) => (p.side === 'over' ? v > p.line : v < p.line)).length
+  return (
+    <div className="flex items-center gap-2 px-3 pb-2 text-[11px] tabular-nums text-neutral-500" title={rows.map((r) => `${r.date}: ${r[p.stat as 'pts']}`).join(' · ')}>
+      <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300">vs {opp}</span>
+      <span>{rows.length} gm{rows.length === 1 ? '' : 's'} · avg {avg.toFixed(1)}</span>
+      <span className={landed * 2 >= rows.length ? 'text-emerald-400' : 'text-neutral-500'}>{landed}/{rows.length} {p.side}</span>
+      <span className="ml-auto flex gap-0.5">
+        {vals.slice().reverse().map((v, i) => <span key={i} className={`h-3 w-1.5 rounded-sm ${(p.side === 'over' ? v > p.line : v < p.line) ? 'bg-emerald-500' : 'bg-neutral-700'}`} />)}
+      </span>
+    </div>
+  )
+}
+
+function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2H; onOpenPlayer: (id: number) => void }) {
   const p = c.lead
   const [open, setOpen] = useState(false)
   const tid = teamId(p.team)
@@ -137,7 +201,7 @@ function PropTile({ c, onOpenPlayer }: { c: Card; onOpenPlayer: (id: number) => 
           <span className="min-w-0 leading-tight">
             <span className="flex items-center gap-1.5 truncate text-sm text-neutral-100">{p.player}<InjuryTag injury={p.injury} /></span>
             <span className="flex items-center gap-1 text-[11px] text-neutral-500">
-              {tid && <img src={logoUrl(tid)} alt="" className="h-3.5 w-3.5" loading="lazy" />}{p.team} · {p.game.split(' @ ').map((t) => t.split(' ').pop()).join(' @ ')}
+              {tid && <img src={logoUrl(tid)} alt="" className="h-3.5 w-3.5" loading="lazy" />}{p.team}
             </span>
             <RoleTag role={p.role} />
           </span>
@@ -171,6 +235,7 @@ function PropTile({ c, onOpenPlayer }: { c: Card; onOpenPlayer: (id: number) => 
           <Stat label="Edge" value={`${p.ev > 0 ? '+' : ''}${(p.ev * 100).toFixed(1)}%`} tone={p.ev > 0 ? 'text-emerald-400' : 'text-neutral-400'} />
         </span>
       </button>
+      <H2HLine p={p} rows={h2h[`${p.playerId}:${opponentOf(p)}`]} />
       {open && <div className="border-t border-neutral-800 px-1 pb-2"><PickBars p={p} /></div>}
     </div>
   )
