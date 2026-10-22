@@ -10,6 +10,8 @@ test('every kind of route survives a format then parse', () => {
     { tab: 'Players', gameId: null, playerId: null },
     { tab: 'Minds', gameId: null, playerId: null },
     { tab: 'Slip', gameId: null, playerId: null },
+    { tab: 'Props', gameId: null, playerId: null },
+    { tab: 'Today', gameId: null, playerId: null },
     { tab: 'Results', gameId: null, playerId: null },
   ]
   for (const r of routes) assert.deepEqual(parseRoute(formatRoute(r)), r, formatRoute(r))
