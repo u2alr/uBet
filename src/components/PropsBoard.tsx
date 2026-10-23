@@ -9,13 +9,17 @@ import Notices from './Notices'
 import { SlipButton } from './PickTable'
 import { PickBars, PickSpark } from './PickSpark'
 
-// One card per player, stat and line, with both sides priced next to each other. Filters live in one sticky row above the grid.
+// One card per player, stat and line, with both sides priced next to each other, grouped by game in tip-off order.
 const STATS = [['all', 'All props'], ['pts', 'Points'], ['reb', 'Rebounds'], ['ast', 'Assists'], ['fg3m', 'Threes']] as const
 const SORTS = [['edge', 'Best edge'], ['hit', 'Hit rate'], ['line', 'Line'], ['name', 'Player']] as const
 type StatKey = (typeof STATS)[number][0]
 type SortKey = (typeof SORTS)[number][0]
 
 interface Card { key: string; over: Pick | null; under: Pick | null; lead: Pick }
+interface GameInfo { id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; score: string }; away: { abbr: string; score: string } }
+interface H2HGame { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }
+type H2H = Record<string, H2HGame[]>
+interface Section { game: string; date: string; cards: Card[]; info: GameInfo | null }
 
 function toCards(picks: Pick[]): Card[] {
   const m = new Map<string, Card>()
@@ -34,9 +38,6 @@ const hit = (c: Card) => {
   if (!p.recent.length) return -1
   return p.recent.filter((v) => (p.side === 'over' ? v > p.line : v < p.line)).length / p.recent.length
 }
-
-interface H2HGame { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }
-type H2H = Record<string, H2HGame[]>
 
 /** The opponent's abbreviation: the other team in "Away @ Home". */
 function opponentOf(p: Pick): string | null {
@@ -57,12 +58,23 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   const [sort, setSort] = useState<SortKey>('edge')
   const [positive, setPositive] = useState(false)
   const [h2h, setH2h] = useState<H2H>({})
+  const [sched, setSched] = useState<GameInfo[]>([])
 
   useEffect(() => {
     api<{ configured: boolean; data: Pick[]; meta: PicksMeta }>('/picks')
       .then((r) => { setConfigured(r.configured); setPicks(r.data); setMeta(r.meta ?? null) })
       .catch((e) => setError(e.message))
   }, [refreshKey])
+
+  // The schedule decides the order of the games, and live scores come from it. While any game is in progress it refreshes every 30 seconds.
+  const anyLive = sched.some((g) => g.state === 'in')
+  useEffect(() => {
+    let live = true
+    const load = () => api<{ data: GameInfo[] }>('/games').then((r) => live && setSched(r.data)).catch(() => {})
+    load()
+    const t = anyLive ? setInterval(load, 30_000) : undefined
+    return () => { live = false; if (t) clearInterval(t) }
+  }, [refreshKey, anyLive])
 
   // Head-to-head: every listed player's recent games against tonight's opponent, fetched once the props are in.
   useEffect(() => {
@@ -88,41 +100,50 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
     return list.sort(by[sort])
   }, [picks, stat, game, q, sort, positive])
 
+  const sections = useMemo<Section[]>(() => {
+    const m = new Map<string, Section>()
+    for (const c of cards) {
+      const g = m.get(c.lead.game) ?? m.set(c.lead.game, { game: c.lead.game, date: c.lead.gameDate, cards: [], info: null }).get(c.lead.game)!
+      g.cards.push(c)
+    }
+    for (const g of m.values()) {
+      const [a, h] = g.game.split(' @ ').map((n) => teamByName(n)?.[0])
+      g.info = sched.find((x) => x.away.abbr === a && x.home.abbr === h) ?? null
+    }
+    // Tip-off order from the schedule; a game the schedule does not know goes last, by date.
+    return [...m.values()].sort((a, b) => (a.info?.date ?? `${a.date}T99`).localeCompare(b.info?.date ?? `${b.date}T99`) || a.game.localeCompare(b.game))
+  }, [cards, sched])
+
   // The page size resets whenever a filter changes, derived from the filters themselves rather than reset in an effect.
   const sig = `${stat}|${game}|${q}|${sort}|${positive}`
-  const byGame = useMemo(() => {
-    const m = new Map<string, { game: string; date: string; cards: Card[] }>()
-    for (const c of cards) { const g = m.get(c.lead.game) ?? m.set(c.lead.game, { game: c.lead.game, date: c.lead.gameDate, cards: [] }).get(c.lead.game)!; g.cards.push(c) }
-    return [...m.values()].sort((a, b) => a.date.localeCompare(b.date) || a.game.localeCompare(b.game))
-  }, [cards])
-  const [paged, setPaged] = useState({ sig, n: 60 })
-  const limit = paged.sig === sig ? paged.n : 60
+  const [paged, setPaged] = useState({ sig, n: 30 })
+  const limit = paged.sig === sig ? paged.n : 30
   const setLimit = (n: number) => setPaged({ sig, n })
 
   return (
-    <div className="space-y-3">
-      <div className="sticky top-12 z-10 -mx-3 space-y-2 border-b border-neutral-800/80 bg-neutral-950/90 px-3 py-2 backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-8 lg:px-8">
+    <div className="space-y-5">
+      <div className="sticky top-12 z-10 -mx-3 space-y-3 border-b border-neutral-800/80 bg-neutral-950/90 px-3 py-3 backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-8 lg:px-8">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-1 overflow-x-auto">
+          <div className="flex gap-1.5 overflow-x-auto">
             {STATS.map(([k, label]) => (
               <button key={k} onClick={() => setStat(k)}
-                className={`whitespace-nowrap rounded-full px-3 py-1 text-xs ${stat === k ? 'bg-emerald-500 font-medium text-neutral-950' : 'bg-neutral-900 text-neutral-400 hover:text-neutral-100'}`}>
+                className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm ${stat === k ? 'bg-emerald-500 font-medium text-neutral-950' : 'bg-neutral-900 text-neutral-400 hover:text-neutral-100'}`}>
                 {label}
               </button>
             ))}
           </div>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search players" aria-label="Search players"
-            className="ml-auto w-44 rounded-full bg-neutral-900 px-3 py-1 text-xs text-neutral-100 outline-none placeholder:text-neutral-600 focus:ring-1 focus:ring-emerald-500" />
+            className="ml-auto w-56 rounded-full bg-neutral-900 px-4 py-1.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:ring-1 focus:ring-emerald-500" />
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <select value={game} onChange={(e) => setGame(e.target.value)} aria-label="Game" className="rounded-md bg-neutral-900 px-2 py-1 text-neutral-300">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <select value={game} onChange={(e) => setGame(e.target.value)} aria-label="Game" className="rounded-lg bg-neutral-900 px-3 py-1.5 text-neutral-300">
             <option value="all">All games</option>
             {games.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
-          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Sort" className="rounded-md bg-neutral-900 px-2 py-1 text-neutral-300">
+          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Sort" className="rounded-lg bg-neutral-900 px-3 py-1.5 text-neutral-300">
             {SORTS.map(([k, label]) => <option key={k} value={k}>Sort: {label}</option>)}
           </select>
-          <label className="flex cursor-pointer items-center gap-1.5 text-neutral-400">
+          <label className="flex cursor-pointer items-center gap-2 text-neutral-400">
             <input type="checkbox" checked={positive} onChange={(e) => setPositive(e.target.checked)} className="accent-emerald-500" /> Positive edge only
           </label>
           <span className="ml-auto tabular-nums text-neutral-600">{picks ? `${cards.length} props` : ''}</span>
@@ -136,32 +157,32 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
       ) : cards.length === 0 ? (
         <Empty>No props match these filters. Lines appear once books post them, for players you have synced.</Empty>
       ) : (
-        <div className="space-y-5">
-          {byGame.map((g) => <GameSection key={g.game} g={g} h2h={h2h} limit={limit} more={() => setLimit(limit + 60)} onOpenPlayer={onOpenPlayer} />)}
+        <div className="space-y-10">
+          {sections.map((g) => <GameSection key={g.game} g={g} h2h={h2h} limit={limit} more={() => setLimit(limit + 30)} onOpenPlayer={onOpenPlayer} />)}
         </div>
       )}
     </div>
   )
 }
 
-function GameSection({ g, h2h, limit, more, onOpenPlayer }: { g: { game: string; date: string; cards: Card[] }; h2h: H2H; limit: number; more: () => void; onOpenPlayer: (id: number) => void }) {
+function GameSection({ g, h2h, limit, more, onOpenPlayer }: { g: Section; h2h: H2H; limit: number; more: () => void; onOpenPlayer: (id: number) => void }) {
   const [open, setOpen] = useState(true)
   const [away, home] = g.game.split(' @ ')
-  const ids = [away, home].map((n) => teamByName(n))
   const players = new Set(g.cards.map((c) => c.lead.playerId)).size
   return (
     <section>
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="mb-2 flex w-full items-center gap-2 text-left">
-        {ids.map((t, i) => t && <img key={i} src={logoUrl(t[1])} alt="" className="h-6 w-6" loading="lazy" />)}
-        <h2 className="text-sm font-medium text-neutral-100">{away} <span className="text-neutral-600">@</span> {home}</h2>
-        <span className="text-xs text-neutral-500">{g.cards.length} props · {players} players</span>
-        <span className="ml-auto text-xs text-neutral-600">{open ? 'Hide' : 'Show'}</span>
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="mb-4 flex w-full flex-wrap items-center gap-3 text-left">
+        {[away, home].map((n) => { const t = teamByName(n); return t && <img key={n} src={logoUrl(t[1])} alt="" className="h-10 w-10" loading="lazy" /> })}
+        <h2 className="text-xl font-semibold text-neutral-100">{away} <span className="text-neutral-600">@</span> {home}</h2>
+        <GameStatus info={g.info} />
+        <span className="text-sm text-neutral-500">{g.cards.length} props · {players} players</span>
+        <span className="ml-auto text-sm text-neutral-600">{open ? 'Hide' : 'Show'}</span>
       </button>
       {open && (
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {g.cards.slice(0, limit).map((c) => <PropTile key={c.key} c={c} h2h={h2h} onOpenPlayer={onOpenPlayer} />)}
           {g.cards.length > limit && (
-            <button onClick={more} className="rounded-xl border border-dashed border-neutral-800 py-6 text-xs text-neutral-500 hover:text-neutral-200">Show more of {g.cards.length - limit}</button>
+            <button onClick={more} className="rounded-2xl border border-dashed border-neutral-800 py-10 text-sm text-neutral-500 hover:text-neutral-200">Show more ({g.cards.length - limit} left)</button>
           )}
         </div>
       )}
@@ -169,20 +190,29 @@ function GameSection({ g, h2h, limit, more, onOpenPlayer }: { g: { game: string;
   )
 }
 
+function GameStatus({ info }: { info: GameInfo | null }) {
+  if (!info) return null
+  if (info.state === 'pre') return <span className="rounded-full bg-neutral-800 px-3 py-1 text-sm text-neutral-300">{new Date(info.date).toLocaleTimeString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>
+  const score = `${info.away.abbr} ${info.away.score} – ${info.home.score} ${info.home.abbr}`
+  return info.state === 'in'
+    ? <span className="flex items-center gap-2 rounded-full bg-red-500/15 px-3 py-1 text-sm tabular-nums text-red-300"><span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />LIVE · {score} · {info.status}</span>
+    : <span className="rounded-full bg-neutral-800 px-3 py-1 text-sm tabular-nums text-neutral-400">Final · {score}</span>
+}
+
 function H2HLine({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
   const opp = opponentOf(p)
   if (!opp) return null
-  if (!rows?.length) return <div className="px-3 pb-2 text-[11px] text-neutral-700">vs {opp}: no earlier games</div>
+  if (!rows?.length) return <div className="px-4 pb-4 text-xs text-neutral-600">vs {opp}: no earlier games</div>
   const vals = rows.map((r) => r[p.stat as 'pts' | 'reb' | 'ast' | 'fg3m'])
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length
   const landed = vals.filter((v) => (p.side === 'over' ? v > p.line : v < p.line)).length
   return (
-    <div className="flex items-center gap-2 px-3 pb-2 text-[11px] tabular-nums text-neutral-500" title={rows.map((r) => `${r.date}: ${r[p.stat as 'pts']}`).join(' · ')}>
+    <div className="flex items-center gap-2 px-4 pb-4 text-xs tabular-nums text-neutral-500" title={rows.map((r) => `${r.date}: ${r[p.stat as 'pts']}`).join(' · ')}>
       <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300">vs {opp}</span>
       <span>{rows.length} gm{rows.length === 1 ? '' : 's'} · avg {avg.toFixed(1)}</span>
       <span className={landed * 2 >= rows.length ? 'text-emerald-400' : 'text-neutral-500'}>{landed}/{rows.length} {p.side}</span>
       <span className="ml-auto flex gap-0.5">
-        {vals.slice().reverse().map((v, i) => <span key={i} className={`h-3 w-1.5 rounded-sm ${(p.side === 'over' ? v > p.line : v < p.line) ? 'bg-emerald-500' : 'bg-neutral-700'}`} />)}
+        {vals.slice().reverse().map((v, i) => <span key={i} className={`h-3.5 w-1.5 rounded-sm ${(p.side === 'over' ? v > p.line : v < p.line) ? 'bg-emerald-500' : 'bg-neutral-700'}`} />)}
       </span>
     </div>
   )
@@ -195,9 +225,9 @@ function H2HAll({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
   const opp = opponentOf(p)
   if (!opp || !rows?.length) return null
   return (
-    <div className="border-t border-neutral-800 px-3 py-2">
-      <div className="mb-1 text-[10px] uppercase tracking-widest text-neutral-500">{p.player.split(' ').pop()} vs {opp}, last {rows.length}</div>
-      <table className="w-full text-[11px] tabular-nums">
+    <div className="border-t border-neutral-800 px-4 py-3">
+      <div className="mb-1.5 text-xs uppercase tracking-widest text-neutral-500">{p.player.split(' ').pop()} vs {opp}, last {rows.length}</div>
+      <table className="w-full text-xs tabular-nums sm:text-sm">
         <thead className="text-neutral-600">
           <tr><th className="text-left font-normal" />{rows.map((r) => <th key={r.date} className="px-1 text-right font-normal" title={r.date}>{r.date.slice(5)}</th>)}<th className="pl-2 text-right font-normal">Avg</th></tr>
         </thead>
@@ -227,56 +257,72 @@ function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2H; onOpenPlayer: (
   const [open, setOpen] = useState(false)
   const tid = teamId(p.team)
   const h = hit(c)
+  const rows = h2h[`${p.playerId}:${opponentOf(p)}`]
   return (
-    <div className="lift overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900">
-      <div className="flex items-center gap-2 px-3 pt-2">
-        <button onClick={() => onOpenPlayer(p.playerId)} className="flex min-w-0 flex-1 items-center gap-2 text-left" title="Open player">
-          <Headshot id={p.playerId} name={p.player} size={42} />
+    <div className="lift overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900">
+      <div className="flex items-center gap-3 px-4 pt-4">
+        <button onClick={() => onOpenPlayer(p.playerId)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Open player">
+          <Headshot id={p.playerId} name={p.player} size={56} />
           <span className="min-w-0 leading-tight">
-            <span className="flex items-center gap-1.5 truncate text-sm text-neutral-100">{p.player}<InjuryTag injury={p.injury} /></span>
-            <span className="flex items-center gap-1 text-[11px] text-neutral-500">
-              {tid && <img src={logoUrl(tid)} alt="" className="h-3.5 w-3.5" loading="lazy" />}{p.team}
+            <span className="flex items-center gap-1.5 truncate text-base font-medium text-neutral-100">{p.player}<InjuryTag injury={p.injury} /></span>
+            <span className="mt-0.5 flex items-center gap-1 text-xs text-neutral-500">
+              {tid && <img src={logoUrl(tid)} alt="" className="h-4 w-4" loading="lazy" />}{p.team}
             </span>
             <RoleTag role={p.role} />
           </span>
         </button>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-widest text-neutral-500">{STAT_LABEL[p.stat]}</div>
-          <div className="text-xl font-semibold tabular-nums text-neutral-100">{p.line}</div>
+          <div className="text-xs uppercase tracking-widest text-neutral-500">{STAT_LABEL[p.stat]}</div>
+          <div className="text-3xl font-semibold tabular-nums text-neutral-100">{p.line}</div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-1.5 px-3 pt-2">
+      <div className="grid grid-cols-2 gap-2 px-4 pt-3">
         {([['over', c.over], ['under', c.under]] as const).map(([side, x]) => (
-          <div key={side} className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 ${x && x === p && x.ev > 0 ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'bg-neutral-800/70'}`}>
-            <span className="text-xs">
-              <span className="text-neutral-400">{side === 'over' ? 'Over' : 'Under'}</span>
-              <span className="block text-[10px] tabular-nums text-neutral-600">{x ? `${x.book} · ${pct(x.prob)}` : 'not posted'}</span>
+          <div key={side} className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 ${x && x === p && x.ev > 0 ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'bg-neutral-800/70'}`}>
+            <span className="text-sm">
+              <span className="text-neutral-300">{side === 'over' ? 'Over' : 'Under'}</span>
+              <span className="block text-xs tabular-nums text-neutral-500">{x ? `${x.book} · ${pct(x.prob)}` : 'not posted'}</span>
             </span>
-            <span className="flex items-center gap-1.5">
-              <span className="text-sm font-medium tabular-nums text-neutral-100">{x ? x.price.toFixed(2) : '–'}</span>
+            <span className="flex items-center gap-2">
+              <span className="text-lg font-semibold tabular-nums text-neutral-100">{x ? x.price.toFixed(2) : '–'}</span>
               {x && <SlipButton pick={x} />}
             </span>
           </div>
         ))}
       </div>
 
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-3 px-3 py-2 text-left" title="Show the last games large">
-        <PickSpark p={p} w={120} h={30} />
-        <span className="ml-auto grid grid-cols-3 gap-x-3 text-right text-[11px] tabular-nums">
+      <div className="mx-4 mt-3 grid grid-cols-4 gap-2 rounded-xl bg-neutral-950/60 px-3 py-2 text-center">
+        <Fact label="Model" value={pct(p.modelProb)} />
+        <Fact label="Market" value={pct(p.marketProb)} />
+        <Fact label="Hit L10" value={h < 0 ? '–' : `${Math.round(h * 100)}%`} />
+        <Fact label="Games" value={String(p.sample)} />
+      </div>
+      {p.prices.length > 1 && (
+        <div className="mx-4 mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs tabular-nums text-neutral-500">
+          {p.prices.map((x) => <span key={x.book}>{x.book} <span className="text-neutral-300">{x.price.toFixed(2)}</span></span>)}
+        </div>
+      )}
+
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-4 px-4 py-3 text-left" title="Show the last games large">
+        <PickSpark p={p} w={150} h={40} />
+        <span className="ml-auto grid grid-cols-2 gap-x-4 text-right text-sm tabular-nums">
           <Stat label="Proj" value={fmt(p.projection)} />
-          <Stat label="L10" value={h < 0 ? '–' : `${Math.round(h * 100)}%`} />
           <Stat label="Edge" value={`${p.ev > 0 ? '+' : ''}${(p.ev * 100).toFixed(1)}%`} tone={p.ev > 0 ? 'text-emerald-400' : 'text-neutral-400'} />
         </span>
       </button>
-      <H2HLine p={p} rows={h2h[`${p.playerId}:${opponentOf(p)}`]} />
-      {open && <><div className="border-t border-neutral-800 px-1 pb-2"><PickBars p={p} /></div><H2HAll p={p} rows={h2h[`${p.playerId}:${opponentOf(p)}`]} /></>}
+      <H2HLine p={p} rows={rows} />
+      {open && <><div className="border-t border-neutral-800 px-1 pb-2"><PickBars p={p} /></div><H2HAll p={p} rows={rows} /></>}
     </div>
   )
 }
 
+function Fact({ label, value }: { label: string; value: string }) {
+  return <span><span className="block text-[10px] uppercase tracking-wider text-neutral-500">{label}</span><span className="text-base font-medium tabular-nums text-neutral-100">{value}</span></span>
+}
+
 function Stat({ label, value, tone = 'text-neutral-200' }: { label: string; value: string; tone?: string }) {
-  return <span><span className="block text-[9px] uppercase tracking-wider text-neutral-600">{label}</span><span className={tone}>{value}</span></span>
+  return <span><span className="block text-[10px] uppercase tracking-wider text-neutral-500">{label}</span><span className={tone}>{value}</span></span>
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
