@@ -62,3 +62,16 @@ which would have made the "conservative" probability equal the raw one.
   size of the lean is not stable between seasons (assists: fold B 0.437 vs 0.442, final 0.389 vs 0.442). A fixed intercept
   would not have generalised, which is why the selection rule preferred identity.
 - Statistics that failed a gate on the final season: points (slope 0.828 < 0.85), assists (ECE 0.053 > 0.03). Rebounds and threes passed.
+
+## Amendment B: PRA (points + rebounds + assists), written before `research/calibrate_pra.py` was run
+PRA became a bettable market after this pre-registration, so it has no calibration entry and the engine treats it as research-only.
+- **Scope**: exactly the method, gates, populations and folds above, applied to a fifth statistic `pra`. Nothing is changed for the other four;
+  their entries in `shared/calibration.json` are kept byte for byte and the artifact hash is recomputed.
+- **Model**: the production recipe for PRA (`research/project.py`): boosted model, Poisson loss, the same features, target = points + rebounds + assists;
+  negative-binomial tail with dispersion fitted on the last 20% of the training period. Pseudo-line = nearest half-integer to the last-10 PRA mean
+  (the sum of the three last-10 means, which is exactly the last-10 PRA mean).
+- **Folds**: calibrator trained on fold A out-of-sample predictions, method chosen by fold B log loss, refit on A and B, evaluated once on 2025-26.
+  The final season has not been used to evaluate PRA before. The same lock rule applies: `research/out/CALIBRATION_PRA_DONE` stops a second look.
+- **Gates**: identical (n >= 3,000; slope 0.85 to 1.15; ECE <= 0.03; log loss no worse than raw + 0.001) on BOTH fold B and the final season.
+  Failing any leaves PRA `unvalidated` (research-only in the Chief).
+- **Still true**: pseudo-lines are not sportsbook lines; passing says the model's PRA distribution is honest about itself, not that it beats a market.
