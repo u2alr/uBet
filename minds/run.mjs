@@ -132,6 +132,7 @@ let calibration = null
 try { calibration = parseCalibration(JSON.parse(readFileSync(path.join(ROOT, 'shared', 'calibration.json'), 'utf8'))) } catch (e) { console.error(`WARNING: calibration artifact unusable (${e.message}); nothing can be approved`) }
 const config = makeConfig()
 const inputs = attachOpponent(upcoming, oppTable)
+if (process.env.DUMP_PICKS) writeFileSync(process.env.DUMP_PICKS, JSON.stringify({ configured: true, data: upcoming, meta: { warnings: [] } }))   // developer aid: a picks payload for UI checks
 const decision = decide(inputs, { now, config, calibration, injuryChecked: injuries != null })
 const runId = `${day}-${MINDS_VERSION}-${decision.run.configHash.slice(0, 8)}-${now}`
 const { approved, leans, volume, research, rejected } = decision
