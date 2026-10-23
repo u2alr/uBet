@@ -10,6 +10,7 @@ import LazyMount from './LazyMount'
 import GameTypeSplit from './GameTypeSplit'
 import Headshot from './Headshot'
 import PlayerCharts from './PlayerCharts'
+import PlayerH2H from './PlayerH2H'
 import PlayerProps from './PlayerProps'
 import PropCard from './PropCard'
 import { usePlayerPicks } from '../lib/usePlayerPicks'
@@ -213,6 +214,7 @@ export default function PlayerView({ initialId, refreshKey, onSelect }: { initia
               )}
             </>
           )}
+          {log.length > 0 && <PlayerH2H key={player.id} games={log} picks={props.picks} stat={stat} line={line.trim() !== '' && Number.isFinite(Number(line)) ? Number(line) : null} />}
           {shown.length > 0 && (
             <>
               <LazyMount height={220}><GameTypeSplit games={log} stat={stat} line={line ? Number(line) : null} /></LazyMount>
