@@ -31,3 +31,23 @@ unit tests (174 pass), DB tests (11 pass), ingest tests (4 pass), integration (4
 ## Plan (done autonomously after this audit, in this order)
 Fix 1, then 2 to 4 together, then 5 to 7, then add a Minds report endpoint using `shared/metrics.ts`, refresh the docs, add tests for the new code, re-run every
 suite and the UI audit, and record the after-scores. Nothing is pushed and nothing is written to production.
+
+## After the fixes (same evidence, re-measured)
+| Area | Before | After | What changed |
+|---|---|---|---|
+| Probability, EV and settlement maths | 8 | 8 | unchanged |
+| Data integrity and provenance | 7 | 7 | unchanged (still two books quoting) |
+| Calibration and validation | 5 | 5.5 | PRA calibrated once under Amendment B: unvalidated (final-season slope 0.837, ECE 0.0353), so it stays research-only. Honest, not a gain in validated coverage. |
+| Decision enforcement | 8.5 | 8.5 | unchanged |
+| Auditability and reporting | 6 | 7.5 | `GET /api/minds/report` and an Evaluation report panel (yield, units, Brier, log loss, calibration bins, 95% ranges, multiple-testing note) |
+| Test suite | 7 | 8 | 177 unit + 11 DB + 4 ingest + 52 integration, all passing; new tests for the H2H helpers, `/api/h2h` (including the 200-pair case) and `/api/minds/report` |
+| Security and operations | 7 | 7.5 | H2H endpoint chunked under D1's variable limit and still validates every pair; key rotation still advised |
+| Performance | 4 | 7 | props board 23,345 to 2,769 DOM nodes; first-load JS 750 KB to 249 KB (charts load on demand); heap 93 MB to about 25 to 77 MB depending on page |
+| UI visual design | 7 | 7.5 | logo fallbacks, consistent 11 px floor, mobile header |
+| UI accessibility and semantics | 5 | 8 | one `h1` and a `main` landmark on every page; 0 text under 11 px; mobile nav no longer clips; Minds no longer overflows; 1 click target under 24 px left (a 16 px text toggle on Minds) |
+| UI correctness and honesty of copy | 5 | 8 | H2H failure now says "unavailable" instead of "no earlier games"; Minds copy matches v7; every reason code has a plain label; the verdict bar needs 200 bets across 20 days |
+| Documentation | 4 | 7 | `minds/README.md` and the README rewritten |
+
+Still open: validating anything against sportsbook prices (no historical lines or closing odds), a third book, points/assists/PRA calibration,
+line movement, and live player stats. The Odds API free credits are used up, so nothing here could be re-tested against live lines; the UI audit used a
+cached download. Nothing was pushed or written to production.

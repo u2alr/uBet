@@ -27,3 +27,9 @@ candidate, and running it anyway would only add a comparison to pick from.
   The drift correction would address exactly that, and the 2025-26 evidence for it was not tested. It is the best candidate if the lean persists in the forward record.
 - Head-to-head history carries almost no extra signal beyond what the model already sees. It is useful for people reading the page, not for the probabilities.
 - None of this involves a sportsbook line. Better accuracy against naive baselines is not an edge over the market.
+
+## PRA calibration (PREREG_CALIBRATION.md, Amendment B; `research/calibrate_pra.py`)
+The PRA projection was calibrated once under the pre-registered gates. Method chosen: identity (nothing beat the raw model on fold B).
+Fold B: slope 0.895, ECE 0.0277 (passes). Final season 2025-26: slope 0.837 (below 0.85) and ECE 0.0353 (above 0.03), so **PRA is `unvalidated`**
+and stays research-only in the Chief. Same pattern as points and assists: the model's PRA lean toward Under is not stable between seasons.
+The other four entries in `shared/calibration.json` are unchanged (checked entry by entry); only the artifact hash and version changed.

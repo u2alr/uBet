@@ -5,8 +5,8 @@ import { parseCalibration } from './calibration.ts'
 
 const art = parseCalibration(JSON.parse(readFileSync(new URL('../calibration.json', import.meta.url), 'utf8')))
 
-test('the shipped calibration artifact parses, covers all four statistics, and has real (non-zero) uncertainty', () => {
-  assert.deepEqual(Object.keys(art.stats).sort(), ['ast', 'fg3m', 'pts', 'reb'])
+test('the shipped calibration artifact parses, covers all five statistics, and has real (non-zero) uncertainty', () => {
+  assert.deepEqual(Object.keys(art.stats).sort(), ['ast', 'fg3m', 'pra', 'pts', 'reb'])
   for (const s of Object.values(art.stats)) {
     const i = s.grid.p.indexOf(0.6)
     assert.ok(s.grid.lo90[i] < s.grid.cal[i], 'the 90% lower bound sits below the calibrated value')
