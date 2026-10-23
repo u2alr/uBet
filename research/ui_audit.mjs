@@ -39,12 +39,15 @@ const CHECKS = `(() => {
   const inputs = [...document.querySelectorAll('input, select, textarea')].filter(vis)
   const unlabeledInputs = inputs.filter((i) => !i.getAttribute('aria-label') && !i.id && !i.closest('label') && !i.getAttribute('placeholder')).length
   const imgsNoAlt = [...document.querySelectorAll('img')].filter((i) => !i.hasAttribute('alt')).length
-  const small = buttons.filter((b) => { const r = b.getBoundingClientRect(); return r.width < 24 || r.height < 24 }).length
+  const smallEls = buttons.filter((b) => { const r = b.getBoundingClientRect(); return r.width < 24 || r.height < 24 })
+  const small = smallEls.length
+  const smallExamples = smallEls.slice(0, 3).map((b) => b.outerHTML.slice(0, 160) + ' ' + Math.round(b.getBoundingClientRect().width) + 'x' + Math.round(b.getBoundingClientRect().height))
   let tiny = 0
   for (const el of document.querySelectorAll('body *')) { if (!el.childNodes.length || ![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue; if (!vis(el)) continue; if (parseFloat(getComputedStyle(el).fontSize) < 11) tiny++ }
+  const culprits = [...document.querySelectorAll('body *')].filter((el) => el.getBoundingClientRect().right > document.documentElement.clientWidth + 1 && vis(el)).slice(0, 3).map((el) => el.tagName + '.' + String(el.className).slice(0, 80) + ' right=' + Math.round(el.getBoundingClientRect().right))
   const overflowX = document.documentElement.scrollWidth - document.documentElement.clientWidth
   const heading = [...document.querySelectorAll('h1,h2,h3')].map((h) => h.tagName).join(',')
-  return { buttons: buttons.length, unlabeled, inputs: inputs.length, unlabeledInputs, imgsNoAlt, smallTargets: small, tinyTextNodes: tiny, overflowX, nodes: document.querySelectorAll('*').length, headings: heading.slice(0, 80), h1: document.querySelectorAll('h1').length, lang: document.documentElement.lang, title: document.title, landmarks: ['header','nav','main','footer'].filter((t) => document.querySelector(t)).join(',') }
+  return { culprits, smallExamples, buttons: buttons.length, unlabeled, inputs: inputs.length, unlabeledInputs, imgsNoAlt, smallTargets: small, tinyTextNodes: tiny, overflowX, nodes: document.querySelectorAll('*').length, headings: heading.slice(0, 80), h1: document.querySelectorAll('h1').length, lang: document.documentElement.lang, title: document.title, landmarks: ['header','nav','main','footer'].filter((t) => document.querySelector(t)).join(',') }
 })()`
 
 const TABS = ['Props', 'Today', 'Slip', 'Minds', 'Results', 'Players']

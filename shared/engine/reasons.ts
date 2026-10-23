@@ -32,3 +32,22 @@ export interface Reason { code: ReasonCode; detail: string }
 export const reason = (code: ReasonCode, detail: string): Reason => ({ code, detail })
 export const classOf = (code: ReasonCode): ReasonClass => REASON_CLASS[code]
 export const isReasonCode = (x: unknown): x is ReasonCode => typeof x === 'string' && Object.prototype.hasOwnProperty.call(REASON_CLASS, x)
+
+/** Plain-language label for every code. `Record<ReasonCode, string>` makes the compiler demand a label when a code is added. */
+export const REASON_LABEL: Record<ReasonCode, string> = {
+  NO_TEAM: "the player's team is unknown", NO_FRESH_PROJECTION: 'no fresh model projection', STALE_PROJECTION: 'the projection is too old', INVALID_NUMBERS: 'a number was missing or invalid',
+  NO_MINUTES_DATA: 'no minutes history', LOW_MINUTES: 'too few minutes per game', NOT_TOP_BY_MINUTES: "not among the team's top players by minutes", MINUTES_DECLINE: 'minutes falling',
+  THIN_HISTORY: 'too few games behind the estimate', INJURY_LISTED: 'listed on the injury report', INJURY_STATUS_UNVERIFIED: 'injury status could not be checked', IDENTITY_UNVERIFIED: 'player identity could not be verified',
+  TOO_FEW_INDEPENDENT_BOOKS: 'fewer than two independent books quote both sides', NO_USABLE_QUOTES: 'no usable two-sided quote', BOOKS_DISAGREE: 'the books disagree with each other',
+  NO_FRESH_QUOTE: 'no recent quote', UNVERIFIED_PRICE: 'the price could not be confirmed by a second book', STALE_LINE_SUSPECT: 'the best price looks stale', RICH_PRICE: 'the price is rich against the market',
+  EXTREME_GAP: 'model and market too far apart', UNEXPLAINED_GAP: 'a big model/market gap the matchup did not explain', FORM_CONTRADICTION: 'recent games contradict the bet', MATCHUP_CONTRADICTED: 'the opponent works against it',
+  RESEARCH_THIN_HISTORY: 'research only: 10 to 14 games of history', CALIBRATION_MISSING: 'research only: no calibration for this statistic', CALIBRATION_UNVALIDATED: 'research only: calibration has not passed validation',
+  GAP_NEEDS_MATCHUP: 'a sizeable gap that needs a matchup reason', PUSH_RISK: 'the line can land exactly (refund)', CALIBRATION_CLAMPED: 'probability was clamped to the calibrated range', TIMESTAMP_FROM_FEED_ONLY: 'quote time comes from the whole feed', LINE_MOVEMENT_UNAVAILABLE: 'line movement is not available',
+  FAILS_CONSERVATIVE_THRESHOLD: 'a raw edge that fails the conservative test', BELOW_SAM_THRESHOLD: "below Safe Sam's thresholds", BELOW_VAL_THRESHOLD: "below Value Val's thresholds", BELOW_CAT_THRESHOLD: "below Contrarian Cat's thresholds",
+  CAT_NO_SPECIFIC_REASON: 'the market disagrees and nothing specific explains why', PARLAY_BELOW_EV_FLOOR: 'the parlay does not clear its value floor', PARLAY_LEG_BELOW_FLOOR: 'a leg does not clear the parlay leg floor', NOT_A_LEAN: 'not a shadow lean',
+  DUPLICATE_EXPOSURE: 'a better line on the same player and stat was chosen', PLAYER_STAT_CAP: 'one strict bet per player and statistic', PLAYER_CAP: 'two strict bets per player', GAME_CAP: 'four strict bets per game',
+  DAILY_CAP: 'twelve strict bets per day', UNDER_SHARE_CAP: 'too many Unders in the day', LEAN_CAP: 'the lean limit was reached',
+  INVALID_PROPOSAL: 'a malformed proposal was dropped', PROPOSAL_FIELD_IGNORED: 'a proposal field was ignored', UNKNOWN_CANDIDATE: 'a proposal named a candidate that does not exist',
+}
+/** Labels for codes stored by older rule sets (lowercase) and for anything unknown: the raw code is shown rather than nothing. */
+export const reasonLabel = (code: string): string => REASON_LABEL[code as ReasonCode] ?? REASON_LABEL[code.toUpperCase() as ReasonCode] ?? code.replace(/_/g, ' ')

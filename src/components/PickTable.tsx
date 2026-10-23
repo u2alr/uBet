@@ -1,11 +1,13 @@
-import { Fragment, useState } from 'react'
+import { Fragment, Suspense, lazy, useState } from 'react'
 import { STAT_LABEL, fmt, pct } from '../lib/format'
 import type { Risk } from '../../shared/baseline'
 import { groupByGame, type Pick } from '../lib/picks'
 import { useSlip } from '../lib/slipContext'
 import { InjuryTag, RoleTag } from './Availability'
 import Headshot from './Headshot'
-import { PickBars, PickSpark } from './PickSpark'
+import { PickSpark } from './PickSpark'
+
+const PickBars = lazy(() => import('./PickBars'))
 
 const RISK: Record<Risk, { label: string; cls: string }> = {
   safe: { label: 'Safe', cls: 'bg-neutral-200 text-neutral-900' },
@@ -14,7 +16,7 @@ const RISK: Record<Risk, { label: string; cls: string }> = {
 }
 
 export function RiskBadge({ risk }: { risk: Risk }) {
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${RISK[risk].cls}`}>{RISK[risk].label}</span>
+  return <span className={`rounded px-1.5 py-0.5 text-[11px] uppercase tracking-wider ${RISK[risk].cls}`}>{RISK[risk].label}</span>
 }
 
 export function SlipButton({ pick }: { pick: Pick }) {
@@ -118,7 +120,7 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
       <td className="px-2 py-0.5"><RiskBadge risk={p.risk} /></td>
       <td className="px-3 py-0.5 text-right"><SlipButton pick={p} /></td>
     </tr>
-    {open && <tr className="bg-neutral-950/40"><td colSpan={13}><PickBars p={p} /></td></tr>}
+    {open && <tr className="bg-neutral-950/40"><td colSpan={13}><Suspense fallback={<div className="h-32" />}><PickBars p={p} /></Suspense></td></tr>}
     </>
   )
 }

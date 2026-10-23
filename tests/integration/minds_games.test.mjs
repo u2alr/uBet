@@ -157,3 +157,46 @@ describe('Refresh on a game page', () => {
     assert.equal(spent['/events/:id/odds'] ?? 0, 0, JSON.stringify(spent))
   })
 })
+
+describe('/api/minds/report', () => {
+  it('summarises settled bets per tier with sample sizes, intervals and a multiple-testing note; pushes and open bets are not wins or losses', async () => {
+    const { status, body } = await api('/minds/report')
+    assert.equal(status, 200)
+    const strict = body.data.byTier.strict
+    assert.equal(strict.settled, 3)          // a, b, c (the open bet d and e are not settled)
+    assert.equal(strict.wins, 1); assert.equal(strict.losses, 1); assert.equal(strict.pushes, 1)
+    assert.equal(strict.units, 0)
+    assert.equal(body.data.byTier.lean.units, 0.5)
+    assert.equal(body.data.clv, null)
+    assert.ok(body.data.notes.some((n) => /exploratory/.test(n)))
+    assert.ok(body.data.days >= 1)
+    assert.ok(Array.isArray(strict.hitRateCI) && strict.hitRateCI[0] < strict.hitRateCI[1])
+  })
+  it('keeps archived versions out, and refuses a malformed version', async () => {
+    const v1 = await api('/minds/report?version=minds-v1')
+    assert.equal(v1.body.data.byTier.strict.settled, 1)
+    assert.equal((await api('/minds/report?version=nope')).status, 400)
+  })
+})
+
+describe('/api/h2h', () => {
+  it('returns recent meetings for requested player and opponent pairs only, and refuses bad input', async () => {
+    const log = await api(`/players/${curryId}/log`)
+    const first = log.body.data.find((g) => g.opp && g.gameType !== 'preseason' && g.minutes > 0)
+    assert.ok(first, 'seed data has a game with an opponent')
+    const { status, body } = await api(`/h2h?pairs=${curryId}:${first.opp}`)
+    assert.equal(status, 200)
+    const rows = body.data[`${curryId}:${first.opp}`]
+    assert.ok(rows.length >= 1 && rows.length <= 8)
+    assert.ok(rows.every((r) => r.opp === first.opp && r.id === curryId))
+    assert.deepEqual(rows.map((r) => r.date), [...rows.map((r) => r.date)].sort().reverse())
+    for (const bad of ['', 'x', `${curryId}:bos`, `${curryId}:`]) assert.equal((await api(`/h2h?pairs=${bad}`)).status, 400, bad)
+  })
+  it('handles the maximum request: 200 pairs would exceed 100 bound variables if not chunked', async () => {
+    const pairs = Array.from({ length: 200 }, (_, i) => `${i + 1}:BOS`).join(',')
+    const { status, body } = await api(`/h2h?pairs=${pairs}`)
+    assert.equal(status, 200)
+    assert.equal(typeof body.data, 'object')
+    assert.equal((await api(`/h2h?pairs=${pairs},201:BOS`)).status, 400)
+  })
+})

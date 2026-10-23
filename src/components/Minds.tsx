@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import { reasonLabel } from '../../shared/engine/reasons.ts'
 import { CHIEF } from '../../shared/minds'
 import { MIND_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, pct } from '../lib/format'
 import { teamByName } from '../lib/teams'
 import Headshot from './Headshot'
-import { PickBars, PickSpark } from './PickSpark'
+import { PickSpark } from './PickSpark'
+import PickBars from './PickBars'
 
 interface Bet {
   id: number; day: string; mind: string; kind: string; odds: number; prob: number; ev: number; status: string; profit: number | null
@@ -34,7 +36,7 @@ interface Sum {
   staked: number | null; avgOdds: number | null; avgEv: number | null; combos: number; singles: number; days: number
   bestWin: number | null; worstLoss: number | null
 }
-interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string | null }[]
+interface Res { data: { bets: Bet[]; legs: Leg[]; summary: Sum[]; curve: { mind: string; day: string; units: number }[]; minBets: number; minDays?: number; version: string; current: string; versions: { version: string; bets: number; settled: number; since: string | null }[]
   ranDays: string[]; audit: Audit[]; rejections: Rejection[]; calibration: Calib[] } }
 
 const NAMES: Record<string, string> = { chief: 'Strict bets (the Chief)', lean: 'Leans (SHADOW_ONLY)', volume: 'Volume board (paper)', sam: 'Safe Sam', val: 'Value Val', lou: 'Longshot Lou', cat: 'Contrarian Cat', research: 'Lou: research parlays', control: 'Control (random)' }
@@ -93,6 +95,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   if (error) return <p className="text-sm text-neutral-500">{error}</p>
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
   const { bets, legs, summary, minBets } = res.data
+  const minDays = res.data.minDays ?? 20
   const sum = (m: string) => summary.find((s) => s.mind === m)
   const inGroupAll = (b: Bet, m: string) => (m === 'chief' ? b.tier === 'strict' : m === 'lean' ? b.tier === 'lean' : m === 'volume' ? b.tier === 'volume' : m === 'research' ? b.tier === 'research' : (b.proposedBy ?? b.mind).split(',').includes(m) && b.tier === 'strict')
   const legMap = new Map<number, Leg[]>()
@@ -111,17 +114,17 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
   for (const b of visible) (byDay.get(b.day) ?? byDay.set(b.day, []).get(b.day)!).push(b)
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 [overflow-wrap:anywhere]">
       <p className="rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
         {res.data.version === res.data.current
           ? 'Four specialists propose; one strict Chief decides. Strict bets are full stake and may be none at all; leans are a smaller stake on weaker edges. No quotas.'
-          : 'An archived rule set.'}{' '}Each decision is frozen when it is made and graded from box scores. No verdict before {minBets} settled bets:
+          : 'An archived rule set.'}{' '}Each decision is frozen when it is made and graded from box scores. No verdict before {minBets} settled bets across at least {minDays} different days (one day of bets is one correlated sample):
         until then, treat every number below as noise. Click a card to see only its bets.
       </p>
       {res.data.versions.length > 1 && (
-        <div className="flex items-center gap-2 text-xs text-neutral-500">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
           Rule set:
-          <div className="flex overflow-hidden rounded-md bg-neutral-900">
+          <div className="flex max-w-full overflow-x-auto rounded-md bg-neutral-900">
             {res.data.versions.map((v) => (
               <button key={v.version} onClick={() => { setVersion(v.version); setPick(null) }}
                 className={`px-3 py-1 ${v.version === res.data.version ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400 hover:text-neutral-200'}`}
@@ -171,9 +174,9 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
                 {s?.bestWin != null && <><dt className="text-neutral-500">Best / worst</dt><dd className="text-right tabular-nums text-neutral-200">{signed(s.bestWin)} / {signed(s.worstLoss ?? 0)}</dd></>}
               </dl>
               <div className="mt-2 h-1 overflow-hidden rounded bg-neutral-800">
-                <div className="h-full transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, (settled / minBets) * 100)}%`, background: MIND_COLOR[m] }} />
+                <div className="h-full transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, Math.min(settled / minBets, (s?.days ?? 0) / minDays) * 100)}%`, background: MIND_COLOR[m] }} />
               </div>
-              <p className="mt-0.5 text-[11px] text-neutral-500">{settled} of {minBets} settled bets</p>
+              <p className="mt-0.5 text-[11px] text-neutral-500">{settled} of {minBets} settled bets · {s?.days ?? 0} of {minDays} days</p>
             </button>
           )
         })}
@@ -199,25 +202,25 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="mr-2 text-sm text-neutral-300">Bets{pick ? `: ${NAMES[pick]}` : ''} <span className="text-xs text-neutral-600">{visible.length}</span></h2>
         {bets.some((b) => b.tier === 'volume') && (
-          <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
+          <div className="flex max-w-full overflow-x-auto rounded-md bg-neutral-900 text-xs">
             {([['bets', 'Bets'], ['volume', 'Volume board (paper)']] as const).map(([v, label]) => (
               <button key={v} onClick={() => setBoard(v)} className={`px-3 py-1 ${board === v ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{label}</button>
             ))}
           </div>
         )}
-        <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
+        <div className="flex max-w-full overflow-x-auto rounded-md bg-neutral-900 text-xs">
           {([['game', 'By game'], ['mind', 'By mind']] as const).map(([v, label]) => (
             <button key={v} onClick={() => setView(v)} className={`px-3 py-1 ${view === v ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{label}</button>
           ))}
         </div>
         {view === 'game' && days.length > 1 && (
-          <div className="flex overflow-hidden rounded-md bg-neutral-900 text-xs">
+          <div className="flex max-w-full overflow-x-auto rounded-md bg-neutral-900 text-xs">
             {days.slice(0, 7).map((d) => (
               <button key={d} onClick={() => setDayPick(d)} className={`px-3 py-1 ${d === selDay ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{dayLabel(d)}</button>
             ))}
           </div>
         )}
-        <div className="ml-auto flex overflow-hidden rounded-md bg-neutral-900 text-xs">
+        <div className="ml-auto flex max-w-full overflow-x-auto rounded-md bg-neutral-900 text-xs">
           {(['all', 'open', 'settled'] as const).map((v) => (
             <button key={v} onClick={() => setShow(v)} className={`px-3 py-1 capitalize ${show === v ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>{v}</button>
           ))}
@@ -235,7 +238,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
       )}
       {view === 'game' && visible.some((b) => b.day === selDay && b.tier !== 'strict' && b.tier !== 'research') && !visible.some((b) => b.day === selDay && b.tier === 'strict') && (
         <p className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm text-neutral-300">
-          <b className="font-medium text-neutral-100">No strict bets for {dayLabel(selDay)}.</b> The cards below are <b className="font-medium text-neutral-100">leans</b>: the model sees a real edge, but it does not survive the uncertainty haircut. Half stake, lower confidence, and tracked apart from the strict record.
+          <b className="font-medium text-neutral-100">No strict bets for {dayLabel(selDay)}.</b> The cards below are <b className="font-medium text-neutral-100">SHADOW_ONLY leans</b>: the raw numbers show an edge, but it fails the conservative test that strict bets must pass. They are graded at a hypothetical half stake and tracked apart from the strict record. They are not recommendations.
         </p>
       )}
       {view === 'game'
@@ -244,6 +247,7 @@ export default function Minds({ refreshKey }: { refreshKey: number }) {
 
       {res.data.rejections.length > 0 && <Rejections audit={res.data.audit} rejections={res.data.rejections} day={view === 'game' ? selDay : null} />}
       {res.data.calibration.length > 0 && <CalibrationTable rows={res.data.calibration} />}
+      <ReportPanel version={res.data.version} />
     </div>
   )
 }
@@ -396,8 +400,8 @@ function GameCard({ g, legsOf }: { g: GameGroup; legsOf: (id: number) => Leg[] }
   const awayAbbr = abbr(g.away)
   const teams = [...byTeam].sort((a, b) => (a[0] === awayAbbr ? -1 : b[0] === awayAbbr ? 1 : 0))
   return (
-    <div className="rounded-lg bg-neutral-900">
-      <div className="flex items-baseline gap-2 border-b border-neutral-800 px-3 py-1.5">
+    <div className="min-w-0 rounded-lg bg-neutral-900">
+      <div className="flex flex-wrap items-baseline gap-x-2 border-b border-neutral-800 px-3 py-1.5">
         <span className="text-sm text-neutral-100">{g.away ? `${abbr(g.away)} @ ${abbr(g.home)}` : 'Game unknown'}</span>
         <span className="text-xs text-neutral-500">{tipLabel(g.tip)}</span>
         <span className="ml-auto text-[11px] tabular-nums text-neutral-500">{g.bets.length} bets{done.length > 0 && ` · ${done.length} settled · ${signed(net)}`}</span>
@@ -405,7 +409,7 @@ function GameCard({ g, legsOf }: { g: GameGroup; legsOf: (id: number) => Leg[] }
       <div className="px-1 py-1">
         {teams.map(([team, bs]) => (
           <div key={team}>
-            <div className="px-2 pt-1 text-[10px] uppercase tracking-widest text-neutral-600">{team}</div>
+            <div className="px-2 pt-1 text-[11px] uppercase tracking-widest text-neutral-600">{team}</div>
             {mergeSame(bs, legsOf).map((m) => <MiniBet key={m.bets[0].id} bets={m.bets} l={m.leg} />)}
           </div>
         ))}
@@ -438,11 +442,11 @@ function MiniBet({ bets, l }: { bets: Bet[]; l: Leg }) {
   const who = [...new Set(bets.flatMap((x) => (x.proposedBy ?? x.mind).split(',')))]
   return (
     <div>
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 rounded px-2 py-0.5 text-left text-xs hover:bg-neutral-800/60">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-neutral-800/60">
         <span className="flex w-8 shrink-0 gap-0.5" title={who.map((m) => NAMES[m] ?? m).join(', ')}>
           {who.map((m) => <span key={m} className="h-2 w-2 rounded-full" style={{ background: MIND_COLOR[m] }} />)}
         </span>
-        <span className="min-w-0 flex-1 truncate text-neutral-100">{l.player}{b.tier === 'lean' && <span className="ml-1.5 rounded border border-[#86b6ef] px-1 text-[9px] tracking-wide text-[#86b6ef]" title="A lean: half stake, lower confidence">LEAN {b.stake}u</span>}</span>
+        <span className="min-w-0 flex-1 truncate text-neutral-100">{l.player}{b.tier === 'lean' && <span className="ml-1.5 rounded border border-[#86b6ef] px-1 text-[11px] tracking-wide text-[#86b6ef]" title="A lean: half stake, lower confidence">LEAN {b.stake}u</span>}</span>
         <span className="shrink-0 text-neutral-400">{l.side === 'over' ? 'O' : 'U'} {l.line} {STAT_LABEL[l.stat] ?? l.stat}</span>
         <span className="w-10 shrink-0 text-right tabular-nums text-neutral-300">{l.price.toFixed(2)}</span>
         <span className="w-12 shrink-0 text-right tabular-nums text-neutral-500">{signed(b.ev * 100, 1)}%</span>
@@ -503,26 +507,6 @@ function Why({ b, l }: { b: Bet; l?: Leg }) {
   )
 }
 
-const REASON: Record<string, string> = {
-  watchlist: 'closest to qualifying (not a bet)',
-  uncertainty_haircut: 'a raw edge that did not survive the uncertainty haircut',
-  injury_listed: 'listed on the injury report',
-  thin_history: 'too few games behind the estimate',
-  minutes_dropping: 'minutes falling',
-  extreme_gap: 'model and market too far apart',
-  form_contradiction: 'recent games contradict the bet',
-  unresolved_review: 'a big disagreement the matchup did not explain',
-  cat_uncorroborated: 'the market disagrees and nothing explains why',
-  matchup_contradicted: 'the opponent works against it',
-  single_price: 'only one book offers this price',
-  stale_line: 'the best price looks stale',
-  rich_price: 'the price is rich against the market',
-  duplicate_exposure: 'a better line on the same player and stat was chosen',
-  player_cap: 'too many bets on one player',
-  game_cap: 'too many bets in one game',
-  daily_cap: "the day's limit was reached",
-  under_share_cap: 'too many Unders on one card',
-}
 
 function NoBets({ day, rejections }: { day: string; rejections: Rejection[] }) {
   const rejected = rejections.filter((r) => r.reason !== 'watchlist')
@@ -532,7 +516,7 @@ function NoBets({ day, rejections }: { day: string; rejections: Rejection[] }) {
     <div className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-neutral-300">
       <div>
         <b className="font-medium text-neutral-100">No bets for {dayLabel(day)}.</b> The Chief reviewed the slate and nothing cleared the thresholds. That is the intended default, not a failure.
-        {top.length > 0 && <span className="text-neutral-500"> Candidates it turned down: {top.map(([r, n]) => `${n} ${REASON[r] ?? r}`).join('; ')}.</span>}
+        {top.length > 0 && <span className="text-neutral-500"> Candidates it turned down: {top.map(([r, n]) => `${n} ${reasonLabel(r)}`).join('; ')}.</span>}
       </div>
       {watch.length > 0 && (
         <div className="text-xs">
@@ -569,7 +553,7 @@ function Rejections({ audit, rejections, day }: { audit: Audit[]; rejections: Re
             <tbody>
               {audit.map((a) => (
                 <tr key={a.reason} className={`cursor-pointer border-t border-neutral-800 hover:bg-neutral-800/60 ${reason === a.reason ? 'bg-neutral-800/60' : ''}`} onClick={() => setReason(reason === a.reason ? null : a.reason)}>
-                  <td className="py-1 text-neutral-300">{REASON[a.reason] ?? a.reason}</td>
+                  <td className="py-1 text-neutral-300">{reasonLabel(a.reason)}</td>
                   <td className="tabular-nums text-neutral-400">{a.n}</td>
                   <td className="tabular-nums text-neutral-400">{a.graded}</td>
                   <td className="tabular-nums text-neutral-400">{a.graded ? `${a.won}/${a.won + a.lost}` : '–'}</td>
@@ -585,7 +569,7 @@ function Rejections({ audit, rejections, day }: { audit: Audit[]; rejections: Re
                 <span className="w-40 truncate text-neutral-200">{r.player}</span>
                 <span className="w-24">{r.side === 'over' ? 'O' : 'U'} {r.line} {STAT_LABEL[r.stat] ?? r.stat}</span>
                 <span className="w-10 tabular-nums">{r.price.toFixed(2)}</span>
-                <span className="min-w-0 flex-1 truncate text-neutral-500">{REASON[r.reason] ?? r.reason}{r.detail ? `: ${r.detail}` : ''}</span>
+                <span className="min-w-0 flex-1 truncate text-neutral-500">{reasonLabel(r.reason)}{r.detail ? `: ${r.detail}` : ''}</span>
                 {r.result && <span className="w-12 text-right" style={{ color: STATE_COLOR[r.result] ?? '#737373' }}>{r.result}</span>}
               </div>
             ))}
@@ -627,9 +611,66 @@ function VolumeNote({ bets, legsOf }: { bets: Bet[]; legsOf: (id: number) => Leg
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm text-neutral-300">
       <b className="font-medium text-neutral-100">Paper only: {bets.length} lines.</b> Every rotation player's best main line of each statistic, per game, graded afterwards so calibration
-      can be read at scale. It is not a list to bet. The values here are the model's alone (average <b className="font-medium text-neutral-100">{avgEv == null ? '–' : `${avgEv >= 0 ? '+' : ''}${(avgEv * 100).toFixed(1)}%`}</b>, {positive} of {bets.length} above zero) with
-      no market to check them against, and they overstate: the model is mildly overconfident, and choosing the better side of every line picks up its errors. A random line loses to the book's margin.
+      can be read at scale. It is not a list to bet. The values here blend the model with the books' fair price where two sides are quoted (average <b className="font-medium text-neutral-100">{avgEv == null ? '–' : `${avgEv >= 0 ? '+' : ''}${(avgEv * 100).toFixed(1)}%`}</b>, {positive} of {bets.length} above zero) with
+      and they still overstate: choosing the better side of every line picks up the model's errors, and a book's margin makes the average line lose.
       {perGame.size > 0 && <> {reach} of {perGame.size} games reach 30 lines; the rest have fewer because books post props for only some players and the model covers only some of those.</>}
     </div>
+  )
+}
+
+interface Summ { n: number; settled: number; wins: number; losses: number; pushes: number; units: number; staked: number; yield: number | null; hitRate: number | null; hitRateCI: [number, number] | null; yieldCI: [number, number] | null; brier: number | null; logLoss: number | null }
+interface Report { version: string; settled: number; days: number; byTier: Record<string, Summ>; byStat: Record<string, Summ>; byOdds: Record<string, Summ>; byProbability: Record<string, Summ>; notes: string[] }
+
+/** Evaluation tables with sample sizes and intervals. Collapsed by default: it is exploratory and says so. */
+function ReportPanel({ version }: { version: string }) {
+  const [open, setOpen] = useState(false)
+  const [rep, setRep] = useState<Report | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    api<{ data: Report }>(`/minds/report?version=${version}`).then((r) => live && setRep(r.data)).catch((e) => live && setErr(e.message))
+    return () => { live = false }
+  }, [open, version])
+  const rng = (x: [number, number] | null, d = 0) => (x ? `${(x[0] * 100).toFixed(d)}% to ${(x[1] * 100).toFixed(d)}%` : '–')
+  const table = (title: string, data: Record<string, Summ>) => (
+    <div className="overflow-x-auto">
+      <div className="mb-1 text-xs uppercase tracking-widest text-neutral-500">{title}</div>
+      <table className="w-full whitespace-nowrap text-xs tabular-nums">
+        <thead className="text-left text-neutral-500"><tr><th className="py-1 font-normal" /><th className="text-right font-normal">Settled</th><th className="text-right font-normal">Units</th><th className="text-right font-normal">Yield (95% range)</th><th className="text-right font-normal">Hit rate (95% range)</th><th className="text-right font-normal">Brier</th><th className="text-right font-normal">Log loss</th></tr></thead>
+        <tbody>
+          {Object.entries(data).map(([k, v]) => (
+            <tr key={k} className="border-t border-neutral-800 text-neutral-300">
+              <td className="py-1 pr-3 text-neutral-200">{k}</td><td className="text-right">{v.settled}</td><td className="text-right">{signed(v.units)}</td>
+              <td className="pl-3 text-right">{v.yield == null ? '–' : `${(v.yield * 100).toFixed(1)}%`} <span className="text-neutral-600">({rng(v.yieldCI)})</span></td>
+              <td className="pl-3 text-right">{v.hitRate == null ? '–' : `${(v.hitRate * 100).toFixed(0)}%`} <span className="text-neutral-600">({rng(v.hitRateCI)})</span></td>
+              <td className="pl-3 text-right">{v.brier == null ? '–' : v.brier.toFixed(3)}</td><td className="pl-3 text-right">{v.logLoss == null ? '–' : v.logLoss.toFixed(3)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+  return (
+    <section className="rounded-lg bg-neutral-900">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-neutral-300">
+        Evaluation report <span className="text-xs text-neutral-600">units, yield, Brier, log loss, with ranges</span><span className="ml-auto text-xs text-neutral-600">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <div className="space-y-4 border-t border-neutral-800 px-4 py-3">
+          {err && <p className="text-xs text-neutral-500">{err}</p>}
+          {!rep && !err && <p className="text-xs text-neutral-500">Loading…</p>}
+          {rep && (rep.settled === 0 ? <p className="text-sm text-neutral-500">Nothing has settled yet for this rule set.</p> : (
+            <>
+              {table('By tier', rep.byTier)}
+              {table('By statistic (singles)', rep.byStat)}
+              {table('By odds (singles)', rep.byOdds)}
+              {table('By stated win chance (singles)', rep.byProbability)}
+              <ul className="list-disc space-y-1 pl-4 text-xs text-neutral-500">{rep.notes.map((n) => <li key={n}>{n}</li>)}</ul>
+            </>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }

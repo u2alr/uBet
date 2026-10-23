@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
-import GameDetail from './components/GameDetail'
-import PlayerView from './components/PlayerView'
-import Minds from './components/Minds'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
+
+// Heavy tabs (charts, the Minds screen) load on first visit instead of with the first page.
+const GameDetail = lazy(() => import('./components/GameDetail'))
+const PlayerView = lazy(() => import('./components/PlayerView'))
+const Minds = lazy(() => import('./components/Minds'))
+const Results = lazy(() => import('./components/Results'))
+const Slip = lazy(() => import('./components/Slip'))
 import PropsBoard from './components/PropsBoard'
-import Results from './components/Results'
-import Slip from './components/Slip'
 import SyncBar from './components/SyncBar'
 import Today from './components/Today'
 import { SlipProvider } from './lib/slip'
@@ -37,12 +39,12 @@ function Shell() {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-3 pb-8 sm:px-5 lg:px-8">
-      <header className="sticky top-0 z-20 -mx-3 mb-3 flex h-12 items-center gap-4 border-b border-neutral-800/80 bg-neutral-950/90 px-3 backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-8 lg:px-8">
+      <header className="sticky top-0 z-20 -mx-3 mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-neutral-800/80 bg-neutral-950/90 px-3 py-1.5 backdrop-blur sm:-mx-5 sm:h-12 sm:flex-nowrap sm:px-5 sm:py-0 lg:-mx-8 lg:px-8">
         <button onClick={() => go({ tab: 'Props' })} className="flex items-center gap-2 text-neutral-100" aria-label="uBet home">
           <span className="grid h-6 w-6 place-items-center rounded-md bg-emerald-500 text-sm font-bold text-neutral-950">u</span>
           <span className="text-base font-semibold tracking-tight">uBet</span>
         </button>
-        <nav className="flex gap-1 overflow-x-auto text-sm">
+        <nav aria-label="Main" className="order-last flex w-full gap-1 overflow-x-auto text-sm [scrollbar-width:none] sm:order-none sm:w-auto [&::-webkit-scrollbar]:hidden">
           {TABS.map((t) => (
             <button
               key={t}
@@ -57,7 +59,9 @@ function Shell() {
 
       <SyncBar onRefresh={bump} />
 
-      <div key={`${tab}${gameId ?? ''}`} className="anim-fade">
+      <main key={`${tab}${gameId ?? ''}`} className="anim-fade">
+      <h1 className="sr-only">{tab === 'Today' ? 'Games' : tab}</h1>
+      <Suspense fallback={<p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">Loading…</p>}>
       {tab === 'Props' && <PropsBoard refreshKey={refreshKey} onOpenPlayer={openPlayer} />}
       {tab === 'Today' && (gameId
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => go({ tab: 'Today' })} onOpenPlayer={openPlayer} />
@@ -66,7 +70,8 @@ function Shell() {
       {tab === 'Minds' && <Minds refreshKey={refreshKey} />}
       {tab === 'Results' && <Results refreshKey={refreshKey} />}
       {tab === 'Players' && <PlayerView key={playerId ?? 'search'} initialId={playerId} refreshKey={refreshKey} onSelect={openPlayer} />}
-      </div>
+      </Suspense>
+      </main>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { PicksMeta } from '../../shared/picks.ts'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
 import type { Pick } from '../lib/picks'
@@ -7,7 +7,9 @@ import { InjuryTag, RoleTag } from './Availability'
 import Headshot from './Headshot'
 import Notices from './Notices'
 import { SlipButton } from './PickTable'
-import { PickBars, PickSpark } from './PickSpark'
+import { PickSpark } from './PickSpark'
+
+const PickBars = lazy(() => import('./PickBars'))
 
 // One card per player, stat and line, with both sides priced next to each other, grouped by game in tip-off order.
 const STATS = [['all', 'All props'], ['pts', 'Points'], ['reb', 'Rebounds'], ['ast', 'Assists'], ['fg3m', 'Threes'], ['pra', 'PRA']] as const
@@ -19,6 +21,8 @@ interface Card { key: string; over: Pick | null; under: Pick | null; lead: Pick 
 interface GameInfo { id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; score: string }; away: { abbr: string; score: string } }
 interface H2HGame { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }
 type H2H = Record<string, H2HGame[]>
+/** Head-to-head is 'loading' until it arrives, and 'error' if the request failed: a failure must never read as "no earlier games". */
+type H2HState = { status: 'loading' | 'error' } | { status: 'ok'; data: H2H }
 /** A meeting's value for a stat; PRA is points + rebounds + assists. */
 const h2hValue = (r: H2HGame, stat: string): number => (stat === 'pra' ? r.pts + r.reb + r.ast : r[stat as 'pts' | 'reb' | 'ast' | 'fg3m'])
 
@@ -60,7 +64,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<SortKey>('edge')
   const [positive, setPositive] = useState(false)
-  const [h2h, setH2h] = useState<H2H>({})
+  const [h2h, setH2h] = useState<H2HState>({ status: 'loading' })
   const [sched, setSched] = useState<GameInfo[]>([])
 
   useEffect(() => {
@@ -85,7 +89,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
     const pairs = [...new Set(picks.map((p) => { const o = opponentOf(p); return o ? `${p.playerId}:${o}` : '' }).filter(Boolean))].slice(0, 200)
     if (!pairs.length) return
     let live = true
-    api<{ data: H2H }>(`/h2h?pairs=${pairs.join(',')}`).then((r) => live && setH2h(r.data)).catch(() => live && setH2h({}))
+    api<{ data: H2H }>(`/h2h?pairs=${pairs.join(',')}`).then((r) => live && setH2h({ status: 'ok', data: r.data })).catch(() => live && setH2h({ status: 'error' }))
     return () => { live = false }
   }, [picks])
 
@@ -119,15 +123,15 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
 
   // The page size resets whenever a filter changes, derived from the filters themselves rather than reset in an effect.
   const sig = `${stat}|${game}|${q}|${sort}|${positive}`
-  const [paged, setPaged] = useState({ sig, n: 30 })
-  const limit = paged.sig === sig ? paged.n : 30
+  const [paged, setPaged] = useState({ sig, n: 12 })
+  const limit = paged.sig === sig ? paged.n : 12
   const setLimit = (n: number) => setPaged({ sig, n })
 
   return (
     <div className="space-y-5">
-      <div className="sticky top-12 z-10 -mx-3 space-y-3 border-b border-neutral-800/80 bg-neutral-950/90 px-3 py-3 backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-8 lg:px-8">
+      <div className="sticky top-[5.25rem] z-10 sm:top-12 -mx-3 space-y-3 border-b border-neutral-800/80 bg-neutral-950/90 px-3 py-3 backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-8 lg:px-8">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-1.5 overflow-x-auto">
+          <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {STATS.map(([k, label]) => (
               <button key={k} onClick={() => setStat(k)}
                 className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm ${stat === k ? 'bg-emerald-500 font-medium text-neutral-950' : 'bg-neutral-900 text-neutral-400 hover:text-neutral-100'}`}>
@@ -161,21 +165,22 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
         <Empty>No props match these filters. Lines appear once books post them, for players you have synced.</Empty>
       ) : (
         <div className="space-y-10">
-          {sections.map((g) => <GameSection key={g.game} g={g} h2h={h2h} limit={limit} more={() => setLimit(limit + 30)} onOpenPlayer={onOpenPlayer} />)}
+          {sections.map((g, i) => <GameSection key={g.game} g={g} index={i} h2h={h2h} limit={limit} more={() => setLimit(limit + 12)} onOpenPlayer={onOpenPlayer} />)}
         </div>
       )}
     </div>
   )
 }
 
-function GameSection({ g, h2h, limit, more, onOpenPlayer }: { g: Section; h2h: H2H; limit: number; more: () => void; onOpenPlayer: (id: number) => void }) {
-  const [open, setOpen] = useState(true)
+function GameSection({ g, index, h2h, limit, more, onOpenPlayer }: { g: Section; index: number; h2h: H2HState; limit: number; more: () => void; onOpenPlayer: (id: number) => void }) {
+  // Only the first three games start open: a slate of 12 games would otherwise put thousands of nodes on the page.
+  const [open, setOpen] = useState(index < 3)
   const [away, home] = g.game.split(' @ ')
   const players = new Set(g.cards.map((c) => c.lead.playerId)).size
   return (
     <section>
       <button onClick={() => setOpen(!open)} aria-expanded={open} className="mb-4 flex w-full flex-wrap items-center gap-3 text-left">
-        {[away, home].map((n) => { const t = teamByName(n); return t && <img key={n} src={logoUrl(t[1])} alt="" className="h-10 w-10" loading="lazy" /> })}
+        {[away, home].map((n) => { const t = teamByName(n); return t && <TeamLogo key={n} id={t[1]} abbr={t[0]} size={40} /> })}
         <h2 className="text-xl font-semibold text-neutral-100">{away} <span className="text-neutral-600">@</span> {home}</h2>
         <GameStatus info={g.info} />
         <span className="text-sm text-neutral-500">{g.cards.length} props · {players} players</span>
@@ -193,6 +198,13 @@ function GameSection({ g, h2h, limit, more, onOpenPlayer }: { g: Section; h2h: H
   )
 }
 
+/** A team logo that falls back to the team's abbreviation instead of a broken-image box. */
+function TeamLogo({ id, abbr, size }: { id: number; abbr: string; size: number }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-neutral-800 text-[11px] font-medium text-neutral-400" style={{ width: size, height: size }} aria-hidden>{size >= 32 ? abbr : ''}</span>
+  return <img src={logoUrl(id)} alt="" width={size} height={size} loading="lazy" onError={() => setFailed(true)} className="shrink-0" />
+}
+
 function GameStatus({ info }: { info: GameInfo | null }) {
   if (!info) return null
   if (info.state === 'pre') return <span className="rounded-full bg-neutral-800 px-3 py-1 text-sm text-neutral-300">{new Date(info.date).toLocaleTimeString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>
@@ -202,10 +214,12 @@ function GameStatus({ info }: { info: GameInfo | null }) {
     : <span className="rounded-full bg-neutral-800 px-3 py-1 text-sm tabular-nums text-neutral-400">Final · {score}</span>
 }
 
-function H2HLine({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
+function H2HLine({ p, rows, failed }: { p: Pick; rows: H2HGame[] | undefined; failed: boolean }) {
   const opp = opponentOf(p)
   if (!opp) return null
-  if (!rows?.length) return <div className="px-4 pb-4 text-xs text-neutral-600">vs {opp}: no earlier games</div>
+  if (failed) return <div className="px-4 pb-4 text-xs text-amber-500/80">vs {opp}: head-to-head unavailable right now</div>
+  if (!rows) return <div className="px-4 pb-4 text-xs text-neutral-700">vs {opp}: loading…</div>
+  if (!rows.length) return <div className="px-4 pb-4 text-xs text-neutral-600">vs {opp}: no earlier games</div>
   const vals = rows.map((r) => h2hValue(r, p.stat))
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length
   const landed = vals.filter((v) => (p.side === 'over' ? v > p.line : v < p.line)).length
@@ -255,21 +269,21 @@ function H2HAll({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
   )
 }
 
-function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2H; onOpenPlayer: (id: number) => void }) {
+function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2HState; onOpenPlayer: (id: number) => void }) {
   const p = c.lead
   const [open, setOpen] = useState(false)
   const tid = teamId(p.team)
   const h = hit(c)
-  const rows = h2h[`${p.playerId}:${opponentOf(p)}`]
+  const rows = h2h.status === 'ok' ? h2h.data[`${p.playerId}:${opponentOf(p)}`] ?? [] : undefined
   return (
-    <div className="lift overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900">
+    <div className="lift overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900" style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 430px' }}>
       <div className="flex items-center gap-3 px-4 pt-4">
         <button onClick={() => onOpenPlayer(p.playerId)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Open player">
           <Headshot id={p.playerId} name={p.player} size={56} />
           <span className="min-w-0 leading-tight">
             <span className="flex items-center gap-1.5 truncate text-base font-medium text-neutral-100">{p.player}<InjuryTag injury={p.injury} /></span>
             <span className="mt-0.5 flex items-center gap-1 text-xs text-neutral-500">
-              {tid && <img src={logoUrl(tid)} alt="" className="h-4 w-4" loading="lazy" />}{p.team}
+              {tid && <TeamLogo id={tid} abbr={p.team ?? ''} size={16} />}{p.team}
             </span>
             <RoleTag role={p.role} />
           </span>
@@ -314,18 +328,18 @@ function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2H; onOpenPlayer: (
           <Stat label="Edge" value={`${p.ev > 0 ? '+' : ''}${(p.ev * 100).toFixed(1)}%`} tone={p.ev > 0 ? 'text-emerald-400' : 'text-neutral-400'} />
         </span>
       </button>
-      <H2HLine p={p} rows={rows} />
-      {open && <><div className="border-t border-neutral-800 px-1 pb-2"><PickBars p={p} /></div><H2HAll p={p} rows={rows} /></>}
+      <H2HLine p={p} rows={rows} failed={h2h.status === 'error'} />
+      {open && <><div className="border-t border-neutral-800 px-1 pb-2"><Suspense fallback={<div className="h-32" />}><PickBars p={p} /></Suspense></div><H2HAll p={p} rows={rows} /></>}
     </div>
   )
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
-  return <span><span className="block text-[10px] uppercase tracking-wider text-neutral-500">{label}</span><span className="text-base font-medium tabular-nums text-neutral-100">{value}</span></span>
+  return <span><span className="block text-[11px] uppercase tracking-wider text-neutral-500">{label}</span><span className="text-base font-medium tabular-nums text-neutral-100">{value}</span></span>
 }
 
 function Stat({ label, value, tone = 'text-neutral-200' }: { label: string; value: string; tone?: string }) {
-  return <span><span className="block text-[10px] uppercase tracking-wider text-neutral-500">{label}</span><span className={tone}>{value}</span></span>
+  return <span><span className="block text-[11px] uppercase tracking-wider text-neutral-500">{label}</span><span className={tone}>{value}</span></span>
 }
 
 function Empty({ children }: { children: React.ReactNode }) {

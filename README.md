@@ -1,7 +1,7 @@
 # uBet
 
-NBA stats and prop-bet research tool: per-player game logs and charts, upcoming games with team odds,
-suggested bets (value / safest / riskiest), parlays and a bet slip. Personal project, informational only.
+NBA stats and prop-bet research tool: a props board grouped by game (points, rebounds, assists, threes, PRA) with head-to-head history, per-player game logs and charts,
+upcoming games with live scores, suggested bets (value / safest / riskiest), parlays, a bet slip, and the "minds": a deterministic, pre-registered, fail-closed bet-approval pipeline (`minds/README.md`). Personal project, informational only.
 Sportsbooks are efficient, so treat every suggestion as a lead to check, not a guarantee.
 
 ## Stack
@@ -10,7 +10,8 @@ Sportsbooks are efficient, so treat every suggestion as a lead to check, not a g
 - **API:** Hono on Cloudflare Pages Functions (`functions/api`), D1 (SQLite) for data
 - **Data:** box scores via `nba_api` (`ingest/sync.py`, run locally), schedule from ESPN's public
   endpoints, odds from [The Odds API](https://the-odds-api.com)
-- **Model:** `shared/baseline.ts`: recency- and game-type-weighted projection, blended with the market price
+- **Model:** boosted projections (`research/project.py`) with a negative-binomial tail, blended with the market's fair price; `shared/baseline.ts` is the fallback
+- **Audits:** `AUDIT_ENGINE.md` (engine), `AUDIT_SCORECARD.md` (scores and UI), `node research/ui_audit.mjs` (headless-Edge UI checks)
 
 ## Run locally
 

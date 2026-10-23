@@ -9,7 +9,7 @@ const SHORT: Record<Injury['status'], string> = { out: 'OUT', doubtful: 'DOUBTFU
 export function InjuryTag({ injury }: { injury?: Injury | null }) {
   if (!injury) return null
   return (
-    <span className={`rounded border border-current px-1 text-[9px] leading-4 tracking-wide ${TONE[injury.status]}`} title={`${injury.label}${injury.note ? `: ${injury.note}` : ''} (ESPN, can lag)`}>
+    <span className={`rounded border border-current px-1 text-[11px] leading-4 tracking-wide ${TONE[injury.status]}`} title={`${injury.label}${injury.note ? `: ${injury.note}` : ''} (ESPN, can lag)`}>
       ⚠ {SHORT[injury.status]}
     </span>
   )
@@ -20,7 +20,7 @@ export function RoleTag({ role }: { role?: Role | null }) {
   const t = role.trend
   const arrow = t == null || Math.abs(t) < 2 ? '' : t > 0 ? ` ↑${t.toFixed(0)}` : ` ↓${Math.abs(t).toFixed(0)}`
   return (
-    <span className="text-[10px] text-neutral-500" title={`Averaging ${role.min10.toFixed(1)} minutes over the last ${Math.min(10, role.games)} games${t == null ? '' : `; ${t >= 0 ? '+' : ''}${t.toFixed(1)} min vs the 10 before`}. A minutes role: starts are not tracked.`}>
+    <span className="text-[11px] text-neutral-500" title={`Averaging ${role.min10.toFixed(1)} minutes over the last ${Math.min(10, role.games)} games${t == null ? '' : `; ${t >= 0 ? '+' : ''}${t.toFixed(1)} min vs the 10 before`}. A minutes role: starts are not tracked.`}>
       {role.label} · {role.min10.toFixed(0)}m{arrow}
     </span>
   )

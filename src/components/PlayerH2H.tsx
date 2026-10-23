@@ -78,7 +78,7 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
           <div className="flex h-28 items-end gap-1.5 rounded-xl bg-neutral-950/60 px-3 pb-2 pt-2" role="img" aria-label={`${STAT_LABEL[mine]} in each meeting`}>
             {rows.slice().reverse().map((g) => (
               <div key={g.date} className="flex h-full flex-1 flex-col items-center justify-end" title={`${g.date}: ${val(g, mine)}`}>
-                <span className="mb-0.5 text-[10px] tabular-nums text-neutral-400">{val(g, mine)}</span>
+                <span className="mb-0.5 text-[11px] tabular-nums text-neutral-400">{val(g, mine)}</span>
                 <div className={`w-full max-w-8 rounded-t ${line != null && val(g, mine) > line ? 'bg-emerald-500' : 'bg-neutral-600'}`} style={{ height: `${Math.max(3, (val(g, mine) / top) * 70)}%` }} />
               </div>
             ))}
@@ -112,7 +112,7 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
 function Tile({ label, value, hot = false }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className={`rounded-xl px-3 py-2 ${hot ? 'bg-emerald-500/10 ring-1 ring-emerald-500/30' : 'bg-neutral-800/60'}`}>
-      <div className="text-[10px] uppercase tracking-wider text-neutral-500">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-neutral-500">{label}</div>
       <div className="text-xl font-semibold tabular-nums text-neutral-100">{value}</div>
     </div>
   )

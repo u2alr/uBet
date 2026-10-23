@@ -3,6 +3,8 @@ import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
 import { enrichPicks, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { MINDS_VERSION } from '../../shared/minds.ts'
+import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
+import { MAX_PLAYERS_PER_QUERY, chunk, groupMeetings, parsePairs, type H2HRow } from '../../shared/h2h.ts'
 import { assessOddsAge, buildPicks, etDate, normName, sameMatchup, scoreboardDates, teamKey, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
 
 type Bindings = {
@@ -241,31 +243,26 @@ app.get('/players/:id/log', async (c) => {
 })
 
 // Head-to-head: each requested player's most recent games against the requested opponent. ?pairs=<playerId>:<OPP>,... (at most 200).
+// Queries are chunked because D1 allows only 100 bound variables per statement.
 app.get('/h2h', async (c) => {
   const raw = (c.req.query('pairs') ?? '').split(',').filter(Boolean)
   if (raw.length === 0 || raw.length > 200) return c.json({ error: 'pairs must hold 1 to 200 entries' }, 400)
-  const pairs: { id: number; opp: string }[] = []
-  for (const x of raw) {
-    const m = /^(\d{1,12}):([A-Z]{2,4})$/.exec(x)
-    if (!m) return c.json({ error: 'bad pair' }, 400)
-    pairs.push({ id: Number(m[1]), opp: m[2] })
+  const pairs = parsePairs(raw)
+  if (!pairs) return c.json({ error: 'bad pair' }, 400)
+  const opps = [...new Set(pairs.map((p) => p.opp))]
+  if (opps.length > 30) return c.json({ error: 'too many opponents' }, 400)
+  const rows: H2HRow[] = []
+  for (const ids of chunk([...new Set(pairs.map((p) => p.id))], MAX_PLAYERS_PER_QUERY)) {
+    const { results } = await c.env.DB.prepare(
+      `SELECT pg.player_id AS id, pg.opp, g.date, pg.minutes, pg.pts, pg.reb, pg.ast, pg.fg3m
+       FROM player_games pg JOIN games g ON g.id = pg.game_id
+       WHERE pg.player_id IN (${ids.map(() => '?').join(',')}) AND pg.opp IN (${opps.map(() => '?').join(',')}) AND g.game_type != 'preseason' AND pg.minutes > 0
+       ORDER BY g.date DESC`,
+    ).bind(...ids, ...opps).all<H2HRow>()
+    rows.push(...results)
   }
-  const ids = [...new Set(pairs.map((p) => p.id))], opps = [...new Set(pairs.map((p) => p.opp))]
-  const { results } = await c.env.DB.prepare(
-    `SELECT pg.player_id AS id, pg.opp, g.date, pg.minutes, pg.pts, pg.reb, pg.ast, pg.fg3m
-     FROM player_games pg JOIN games g ON g.id = pg.game_id
-     WHERE pg.player_id IN (${ids.map(() => '?').join(',')}) AND pg.opp IN (${opps.map(() => '?').join(',')}) AND g.game_type != 'preseason' AND pg.minutes > 0
-     ORDER BY g.date DESC`,
-  ).bind(...ids, ...opps).all<{ id: number; opp: string; date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }>()
-  const want = new Set(pairs.map((p) => `${p.id}:${p.opp}`))
-  const out: Record<string, typeof results> = {}
-  for (const r of results) {
-    const k = `${r.id}:${r.opp}`
-    if (!want.has(k)) continue
-    const list = (out[k] ??= [])
-    if (list.length < 8) list.push(r)
-  }
-  return c.json({ data: out })
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+  return c.json({ data: groupMeetings(rows, pairs) })
 })
 
 // Current teammates this player has played games without, most-missed first: the choices for the "without" filter.
@@ -644,6 +641,32 @@ const AGG = `COUNT(*) AS bets,
   AVG(b.odds) AS avgOdds, AVG(b.ev) AS avgEv, AVG(b.ev_cons) AS avgEvCons, SUM(b.kind = 'combo') AS combos, SUM(b.kind = 'single') AS singles,
   COUNT(DISTINCT b.day) AS days, MAX(b.profit) AS bestWin, MIN(b.profit) AS worstLoss`
 
+// Evaluation report for one rule set: ROI, units, yield, Brier, log loss, calibration bins, with sample sizes and intervals, by tier,
+// statistic, odds band and stated-probability range. Pure read. CLV is null because no closing odds are stored.
+app.get('/minds/report', async (c) => {
+  const asked = c.req.query('version')
+  if (asked !== undefined && !/^minds-v\d{1,3}$/.test(asked)) return c.json({ error: 'bad version' }, 400)
+  const version = asked ?? MINDS_VERSION
+  const { results } = await c.env.DB.prepare(
+    `SELECT b.id, b.day, b.tier, b.mind, b.kind, b.odds, b.prob, b.status, b.stake,
+            (SELECT l.stat FROM mind_legs l WHERE l.bet_id = b.id ORDER BY l.idx LIMIT 1) AS stat
+     FROM mind_bets b WHERE b.version = ? AND b.status IN ('won','lost','push','void')`,
+  ).bind(version).all<{ id: number; day: string; tier: string; mind: string; kind: string; odds: number; prob: number; status: Graded['result']; stake: number; stat: string | null }>()
+  const rows = results.map((r) => ({ ...r, result: r.status, stake: r.stake ?? 1 }))
+  const odds = (g: { odds: number }) => (g.odds < 1.7 ? '<1.70' : g.odds < 2.1 ? '1.70-2.09' : '2.10+')
+  const prob = (g: { prob: number }) => (g.prob < 0.5 ? '<50%' : g.prob < 0.6 ? '50-59%' : '60%+')
+  const days = new Set(rows.map((r) => r.day)).size
+  const singles = rows.filter((r) => r.kind === 'single')
+  return c.json({ data: {
+    version, settled: rows.length, days,
+    byTier: breakdown(rows, (r) => r.tier), byMind: breakdown(rows, (r) => r.mind),
+    byStat: breakdown(singles, (r) => r.stat ?? '?'), byOdds: breakdown(singles, odds), byProbability: breakdown(singles, prob),
+    calibration: Object.fromEntries(['strict', 'lean', 'volume'].map((t) => [t, calibrationBins(singles.filter((r) => r.tier === t))])),
+    clv: null as number | null,
+    notes: [MULTIPLE_TESTING_NOTE, 'Closing line value is not computed: closing odds are not stored.', `The sample covers ${days} day${days === 1 ? '' : 's'}; bets on the same day are correlated, so the intervals understate the real uncertainty.`],
+  } })
+})
+
 // The minds' frozen decisions and their record. Pure read; written by minds/run.mjs, graded by ingest/sync.py.
 // ?version=minds-v1 shows an archived rule set; the default is the current one. Versions never mix in one record.
 app.get('/minds', async (c) => {
@@ -706,7 +729,7 @@ app.get('/minds', async (c) => {
      FROM mind_legs l JOIN mind_bets b ON b.id = l.bet_id
      WHERE b.version = ? AND b.kind = 'single' AND b.tier IN ('strict','lean','volume') AND b.status IN ('won','lost') GROUP BY b.tier, l.stat, band ORDER BY b.tier, l.stat, band`,
   ).bind(version).all()).results
-  return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200, ranDays: days.map((d) => d.day), audit, rejections, calibration } })
+  return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200, minDays: 20, ranDays: days.map((d) => d.day), audit, rejections, calibration } })
 })
 
 // Manual prediction logging from the player page. Writes to the database, so it is not public.
