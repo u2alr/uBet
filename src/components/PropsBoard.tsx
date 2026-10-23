@@ -10,7 +10,7 @@ import { SlipButton } from './PickTable'
 import { PickBars, PickSpark } from './PickSpark'
 
 // One card per player, stat and line, with both sides priced next to each other, grouped by game in tip-off order.
-const STATS = [['all', 'All props'], ['pts', 'Points'], ['reb', 'Rebounds'], ['ast', 'Assists'], ['fg3m', 'Threes']] as const
+const STATS = [['all', 'All props'], ['pts', 'Points'], ['reb', 'Rebounds'], ['ast', 'Assists'], ['fg3m', 'Threes'], ['pra', 'PRA']] as const
 const SORTS = [['edge', 'Best edge'], ['hit', 'Hit rate'], ['line', 'Line'], ['name', 'Player']] as const
 type StatKey = (typeof STATS)[number][0]
 type SortKey = (typeof SORTS)[number][0]
@@ -19,6 +19,9 @@ interface Card { key: string; over: Pick | null; under: Pick | null; lead: Pick 
 interface GameInfo { id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; score: string }; away: { abbr: string; score: string } }
 interface H2HGame { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }
 type H2H = Record<string, H2HGame[]>
+/** A meeting's value for a stat; PRA is points + rebounds + assists. */
+const h2hValue = (r: H2HGame, stat: string): number => (stat === 'pra' ? r.pts + r.reb + r.ast : r[stat as 'pts' | 'reb' | 'ast' | 'fg3m'])
+
 interface Section { game: string; date: string; cards: Card[]; info: GameInfo | null }
 
 function toCards(picks: Pick[]): Card[] {
@@ -203,11 +206,11 @@ function H2HLine({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
   const opp = opponentOf(p)
   if (!opp) return null
   if (!rows?.length) return <div className="px-4 pb-4 text-xs text-neutral-600">vs {opp}: no earlier games</div>
-  const vals = rows.map((r) => r[p.stat as 'pts' | 'reb' | 'ast' | 'fg3m'])
+  const vals = rows.map((r) => h2hValue(r, p.stat))
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length
   const landed = vals.filter((v) => (p.side === 'over' ? v > p.line : v < p.line)).length
   return (
-    <div className="flex items-center gap-2 px-4 pb-4 text-xs tabular-nums text-neutral-500" title={rows.map((r) => `${r.date}: ${r[p.stat as 'pts']}`).join(' · ')}>
+    <div className="flex items-center gap-2 px-4 pb-4 text-xs tabular-nums text-neutral-500" title={rows.map((r) => `${r.date}: ${h2hValue(r, p.stat)}`).join(' · ')}>
       <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300">vs {opp}</span>
       <span>{rows.length} gm{rows.length === 1 ? '' : 's'} · avg {avg.toFixed(1)}</span>
       <span className={landed * 2 >= rows.length ? 'text-emerald-400' : 'text-neutral-500'}>{landed}/{rows.length} {p.side}</span>
@@ -218,7 +221,7 @@ function H2HLine({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
   )
 }
 
-const H2H_STATS = [['pts', 'PTS'], ['reb', 'REB'], ['ast', 'AST'], ['fg3m', '3PM']] as const
+const H2H_STATS = [['pts', 'PTS'], ['reb', 'REB'], ['ast', 'AST'], ['fg3m', '3PM'], ['pra', 'PRA']] as const
 
 /** Every stat in the earlier meetings with tonight's opponent, newest first; the stat this card is about is highlighted. */
 function H2HAll({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
@@ -239,10 +242,10 @@ function H2HAll({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
               <tr key={k} className={mine ? 'text-neutral-100' : 'text-neutral-400'}>
                 <td className={mine ? 'text-emerald-400' : ''}>{label}</td>
                 {rows.map((r) => {
-                  const ok = mine && (p.side === 'over' ? r[k] > p.line : r[k] < p.line)
-                  return <td key={r.date} className={`px-1 text-right ${ok ? 'text-emerald-400' : ''}`}>{r[k]}</td>
+                  const ok = mine && (p.side === 'over' ? h2hValue(r, k) > p.line : h2hValue(r, k) < p.line)
+                  return <td key={r.date} className={`px-1 text-right ${ok ? 'text-emerald-400' : ''}`}>{h2hValue(r, k)}</td>
                 })}
-                <td className="pl-2 text-right font-medium">{(rows.reduce((a, r) => a + r[k], 0) / rows.length).toFixed(1)}</td>
+                <td className="pl-2 text-right font-medium">{(rows.reduce((a, r) => a + h2hValue(r, k), 0) / rows.length).toFixed(1)}</td>
               </tr>
             )
           })}

@@ -11,6 +11,7 @@ export const STAT_COLOR: Record<Stat, string> = {
   fg3m: '#c98500', // yellow  (slot 4)
   stl: '#d55181', // magenta (slot 5)
   blk: '#008300', // green   (slot 6)
+  pra: '#9085e9', // violet  (slot 7)
 }
 
 export const MINUTES_COLOR = '#9085e9' // violet (slot 7)

@@ -39,6 +39,7 @@ export const MARKET_STAT: Record<string, Stat> = {
   player_rebounds: 'reb',
   player_assists: 'ast',
   player_threes: 'fg3m',
+  player_points_rebounds_assists: 'pra',
 }
 
 export const TEAM_NAMES: Record<string, string> = {
@@ -277,7 +278,7 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
 
     for (const L of lines.values()) {
       const rows = rowsByPlayer.get(L.pl.id)!
-      const samples = rows.map((r) => ({ value: r[L.stat as 'pts' | 'reb' | 'ast' | 'fg3m'] as number, type: r.type }))
+      const samples = rows.map((r) => ({ value: L.stat === 'pra' ? r.pts + r.reb + r.ast : (r[L.stat as 'pts' | 'reb' | 'ast' | 'fg3m'] as number), type: r.type }))
       const base = input.fallback === 'v3' ? predictV3(L.stat, samples, L.point, upcomingType) : predict(samples, L.point, upcomingType)
       if (!base) { noHistory.add(L.pl.name); continue }
 

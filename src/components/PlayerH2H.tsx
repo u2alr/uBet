@@ -6,7 +6,9 @@ import type { GameRow } from '../lib/stats'
 import { logoUrl, teamByName, teamId } from '../lib/teams'
 
 // A player against one opponent: every meeting in the box scores we hold, with all four props side by side.
-const STATS = [['pts', 'PTS'], ['reb', 'REB'], ['ast', 'AST'], ['fg3m', '3PM']] as const
+const STATS = [['pts', 'PTS'], ['reb', 'REB'], ['ast', 'AST'], ['fg3m', '3PM'], ['pra', 'PRA']] as const
+type Key = (typeof STATS)[number][0]
+const val = (g: GameRow, k: Key | 'minutes'): number => (k === 'pra' ? g.pts + g.reb + g.ast : g[k])
 
 /** Tonight's opponent, read from the player's posted props ("Away @ Home"). */
 function tonightsOpponent(picks: Pick[]): string | null {
@@ -35,13 +37,13 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
   const rows = activeSeason === 'all' ? vsOpp : vsOpp.filter((g) => g.season === activeSeason)
   if (opps.length === 0) return null
 
-  const mine = STATS.some(([k]) => k === stat) ? (stat as 'pts' | 'reb' | 'ast' | 'fg3m') : 'pts'
-  const avg = (k: 'minutes' | 'pts' | 'reb' | 'ast' | 'fg3m') => (rows.length ? rows.reduce((a, g) => a + g[k], 0) / rows.length : null)
+  const mine: Key = STATS.some(([k]) => k === stat) ? (stat as Key) : 'pts'
+  const avg = (k: Key | 'minutes') => (rows.length ? rows.reduce((a, g) => a + val(g, k), 0) / rows.length : null)
   const landed = (v: number, over: boolean) => (over ? v > (line ?? Infinity) : v < (line ?? -Infinity))
-  const overs = line == null ? null : rows.filter((g) => landed(g[mine], true)).length
-  const unders = line == null ? null : rows.filter((g) => landed(g[mine], false)).length
+  const overs = line == null ? null : rows.filter((g) => landed(val(g, mine), true)).length
+  const unders = line == null ? null : rows.filter((g) => landed(val(g, mine), false)).length
   const tid = opp ? teamId(opp) : null
-  const top = Math.max(1, ...rows.map((g) => g[mine]), line ?? 0)
+  const top = Math.max(1, ...rows.map((g) => val(g, mine)), line ?? 0)
 
   return (
     <section className="space-y-3 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
@@ -60,7 +62,7 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
 
       {rows.length === 0 ? <p className="text-sm text-neutral-500">No games against {opp} in the box scores{activeSeason === 'all' ? ' yet' : ' for that season'}.</p> : (
         <>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
             <Tile label="Meetings" value={String(rows.length)} />
             <Tile label="Minutes" value={fmt(avg('minutes'))} />
             {STATS.map(([k, label]) => <Tile key={k} label={`${label} avg`} value={fmt(avg(k))} hot={k === mine} />)}
@@ -75,9 +77,9 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
           {/* One bar per meeting for the chosen stat, oldest on the left; green bars cleared the line. */}
           <div className="flex h-28 items-end gap-1.5 rounded-xl bg-neutral-950/60 px-3 pb-2 pt-2" role="img" aria-label={`${STAT_LABEL[mine]} in each meeting`}>
             {rows.slice().reverse().map((g) => (
-              <div key={g.date} className="flex h-full flex-1 flex-col items-center justify-end" title={`${g.date}: ${g[mine]}`}>
-                <span className="mb-0.5 text-[10px] tabular-nums text-neutral-400">{g[mine]}</span>
-                <div className={`w-full max-w-8 rounded-t ${line != null && g[mine] > line ? 'bg-emerald-500' : 'bg-neutral-600'}`} style={{ height: `${Math.max(3, (g[mine] / top) * 70)}%` }} />
+              <div key={g.date} className="flex h-full flex-1 flex-col items-center justify-end" title={`${g.date}: ${val(g, mine)}`}>
+                <span className="mb-0.5 text-[10px] tabular-nums text-neutral-400">{val(g, mine)}</span>
+                <div className={`w-full max-w-8 rounded-t ${line != null && val(g, mine) > line ? 'bg-emerald-500' : 'bg-neutral-600'}`} style={{ height: `${Math.max(3, (val(g, mine) / top) * 70)}%` }} />
               </div>
             ))}
           </div>
@@ -95,7 +97,7 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
                     <td className="text-neutral-500">{g.home ? 'Home' : 'Away'}</td>
                     <td className={g.won ? 'text-emerald-400' : 'text-neutral-500'}>{g.won ? 'W' : 'L'}</td>
                     <td className="text-right text-neutral-500">{Math.round(g.minutes)}</td>
-                    {STATS.map(([k]) => <td key={k} className={`text-right ${k === mine ? (line != null && g[k] > line ? 'font-medium text-emerald-400' : 'font-medium text-neutral-100') : ''}`}>{g[k]}</td>)}
+                    {STATS.map(([k]) => <td key={k} className={`text-right ${k === mine ? (line != null && val(g, k) > line ? 'font-medium text-emerald-400' : 'font-medium text-neutral-100') : ''}`}>{val(g, k)}</td>)}
                   </tr>
                 ))}
               </tbody>

@@ -2,7 +2,7 @@
 -- Leg result: won | lost | push | void. A pushed or void leg is dropped from a combo (odds recomputed), as books do.
 UPDATE mind_legs SET actual = (
   SELECT CASE mind_legs.stat WHEN 'pts' THEN pg.pts WHEN 'reb' THEN pg.reb WHEN 'ast' THEN pg.ast
-                             WHEN 'fg3m' THEN pg.fg3m WHEN 'stl' THEN pg.stl WHEN 'blk' THEN pg.blk END
+                             WHEN 'fg3m' THEN pg.fg3m WHEN 'stl' THEN pg.stl WHEN 'blk' THEN pg.blk WHEN 'pra' THEN pg.pts + pg.reb + pg.ast END
   FROM player_games pg JOIN games g ON g.id = pg.game_id
   WHERE pg.player_id = mind_legs.player_id AND g.date = mind_legs.game_date)
 WHERE actual IS NULL;
@@ -30,7 +30,7 @@ WHERE profit IS NULL AND status IN ('won', 'push', 'void');
 -- Rejected candidates: what would have happened had they been bet at the price shown. Used to audit the filters, never to stake.
 UPDATE mind_rejections SET actual = (
   SELECT CASE mind_rejections.stat WHEN 'pts' THEN pg.pts WHEN 'reb' THEN pg.reb WHEN 'ast' THEN pg.ast
-                                   WHEN 'fg3m' THEN pg.fg3m WHEN 'stl' THEN pg.stl WHEN 'blk' THEN pg.blk END
+                                   WHEN 'fg3m' THEN pg.fg3m WHEN 'stl' THEN pg.stl WHEN 'blk' THEN pg.blk WHEN 'pra' THEN pg.pts + pg.reb + pg.ast END
   FROM player_games pg JOIN games g ON g.id = pg.game_id
   WHERE pg.player_id = mind_rejections.player_id AND g.date = mind_rejections.game_date)
 WHERE actual IS NULL AND game_date IS NOT NULL;

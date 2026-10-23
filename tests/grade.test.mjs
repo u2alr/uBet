@@ -36,9 +36,9 @@ describe('grading', () => {
 
   it('reads the right statistic for each market', () => {
     const db = fresh()
-    for (const stat of ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk']) add(db, [7, stat, 100, 'under', '2026-10-20', 2])
+    for (const stat of ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk', 'pra']) add(db, [7, stat, 100, 'under', '2026-10-20', 2])
     grade(db)
-    assert.deepEqual(all(db).map((r) => r.actual), [24, 8, 5, 3, 1, 0])
+    assert.deepEqual(all(db).map((r) => r.actual), [24, 8, 5, 3, 1, 0, 37])
   })
 
   it('uses the game on the pick date, not another game by the same player', () => {

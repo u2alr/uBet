@@ -130,7 +130,7 @@ app.get('/capture', async (c) => {
   const events = await oddsFetch<any[]>(c.env, '/events')
   const soon = events.filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + hours * 3600_000)
   const regions = c.env.ODDS_REGIONS ?? 'us'
-  const markets = c.env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists'
+  const markets = c.env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists,player_points_rebounds_assists'
   for (const e of soon)
     await oddsFetch(c.env, `/events/${e.id}/odds`, { regions, markets, oddsFormat: 'decimal' })
   if (soon.length) await loadTeamOdds(c.env, true)
@@ -184,7 +184,7 @@ app.get('/players/:id/stats', async (c) => {
 
   // `stat` is validated against the whitelist above, so interpolation is safe.
   const { results } = await c.env.DB.prepare(
-    `SELECT g.date, g.id AS gameId, g.game_type AS type, pg.minutes, pg.${stat} AS value
+    `SELECT g.date, g.id AS gameId, g.game_type AS type, pg.minutes, ${stat === 'pra' ? '(pg.pts + pg.reb + pg.ast)' : `pg.${stat}`} AS value
      FROM player_games pg JOIN games g ON g.id = pg.game_id
      WHERE pg.player_id = ?${typeSql} ORDER BY g.date DESC`,
   ).bind(...(type ? [id, type] : [id])).all<{ date: string; gameId: number; type: GameType; minutes: number; value: number }>()
@@ -432,7 +432,7 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
     .slice(0, MAX_EVENTS)
 
   const regions = env.ODDS_REGIONS ?? 'us'
-  const markets = env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists'
+  const markets = env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists,player_points_rebounds_assists'
   const fetched = await Promise.all(
     upcoming.map((e) =>
       cachedMeta<OddsEvent>(`odds-${e.id}-${regions}-${markets}`, ODDS_TTL, () =>
@@ -612,7 +612,7 @@ app.get('/results', async (c) => {
   return c.json({ data: results, summary })
 })
 
-const LEG_STATS = ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk']
+const LEG_STATS = ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk', 'pra']
 async function recentBefore(db: D1Database, legs: { playerId: number; stat: string; gameDate: string }[]): Promise<number[][]> {
   const ids = [...new Set(legs.map((l) => l.playerId).filter((n) => Number.isInteger(n)))]
   if (!ids.length) return legs.map(() => [])

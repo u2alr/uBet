@@ -1,6 +1,6 @@
 import dispersionTable from './dispersion.json' with { type: 'json' }
 
-export const STATS = ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk'] as const
+export const STATS = ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk', 'pra'] as const
 export type Stat = (typeof STATS)[number]
 
 export type GameType = 'regular' | 'playoffs' | 'preseason'

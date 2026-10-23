@@ -7,6 +7,9 @@ export interface GameRow {
   oreb: number; dreb: number; tov: number; pf: number; plusMinus: number
 }
 
+/** A game's value for a stat; PRA is points + rebounds + assists. */
+export const statValue = (g: GameRow, s: Stat): number => (s === 'pra' ? g.pts + g.reb + g.ast : g[s])
+
 export const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 
 const ratio = (a: number, b: number) => (b ? (a / b) * 100 : null)
@@ -23,9 +26,9 @@ export function trend(games: GameRow[], stat: Stat, window = 5, limit = 30) {
   return asc.map((g, i) => ({
     date: g.date.slice(5),
     opp: g.opp,
-    value: g[stat],
+    value: statValue(g, stat),
     minutes: g.minutes,
-    rolling: Number(mean(asc.slice(Math.max(0, i - window + 1), i + 1).map((x) => x[stat])).toFixed(1)),
+    rolling: Number(mean(asc.slice(Math.max(0, i - window + 1), i + 1).map((x) => statValue(x, stat))).toFixed(1)),
   })).slice(-limit)
 }
 
@@ -41,13 +44,13 @@ export function shootingTrend(games: GameRow[], limit = 30) {
 export function split(games: GameRow[], stat: Stat, groups: [string, (g: GameRow) => boolean][]) {
   return groups.map(([label, fn]) => {
     const sub = games.filter(fn)
-    return { label, avg: Number(mean(sub.map((g) => g[stat])).toFixed(1)), games: sub.length }
+    return { label, avg: Number(mean(sub.map((g) => statValue(g, stat))).toFixed(1)), games: sub.length }
   })
 }
 
 export function byOpponent(games: GameRow[], stat: Stat) {
   const m = new Map<string, number[]>()
-  for (const g of games) if (g.opp) m.set(g.opp, [...(m.get(g.opp) ?? []), g[stat]])
+  for (const g of games) if (g.opp) m.set(g.opp, [...(m.get(g.opp) ?? []), statValue(g, stat)])
   return [...m]
     .map(([opp, v]) => ({ opp, avg: Number(mean(v).toFixed(1)), games: v.length }))
     .sort((a, b) => b.avg - a.avg)
@@ -56,7 +59,7 @@ export function byOpponent(games: GameRow[], stat: Stat) {
 /** Histogram of a stat: how often each value occurred. */
 export function distribution(games: GameRow[], stat: Stat) {
   const counts = new Map<number, number>()
-  for (const g of games) counts.set(g[stat], (counts.get(g[stat]) ?? 0) + 1)
+  for (const g of games) counts.set(statValue(g, stat), (counts.get(statValue(g, stat)) ?? 0) + 1)
   if (!counts.size) return []
   const lo = Math.min(...counts.keys()), hi = Math.max(...counts.keys())
   return Array.from({ length: hi - lo + 1 }, (_, i) => ({ value: lo + i, count: counts.get(lo + i) ?? 0 }))

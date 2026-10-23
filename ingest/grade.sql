@@ -30,3 +30,7 @@ UPDATE predictions SET hit = CASE
     WHEN (side = 'over' AND actual > line) OR (side = 'under' AND actual < line) THEN 1
     ELSE 0 END
 WHERE actual IS NOT NULL AND hit IS NULL AND side IS NOT NULL;
+UPDATE predictions SET actual = (
+  SELECT pg.pts + pg.reb + pg.ast FROM player_games pg JOIN games g ON g.id = pg.game_id
+  WHERE pg.player_id = predictions.player_id AND g.date = predictions.game_date)
+WHERE actual IS NULL AND stat = 'pra' AND game_date IS NOT NULL;

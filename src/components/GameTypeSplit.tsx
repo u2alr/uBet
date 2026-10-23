@@ -1,6 +1,6 @@
 import type { Stat } from '../../shared/baseline'
 import { STAT_LABEL, fmt, pct } from '../lib/format'
-import { mean, type GameRow } from '../lib/stats'
+import { mean, statValue, type GameRow } from '../lib/stats'
 
 const TYPES = [
   ['regular', 'Regular season', 'Full weight in the projection'],
@@ -12,7 +12,7 @@ const TYPES = [
 export default function GameTypeSplit({ games, stat, line }: { games: GameRow[]; stat: Stat; line: number | null }) {
   const rows = TYPES.map(([type, label, note]) => {
     const g = games.filter((x) => x.gameType === type)
-    const v = g.map((x) => x[stat])
+    const v = g.map((x) => statValue(x, stat))
     return {
       label, note, n: g.length,
       avg: v.length ? mean(v) : null,

@@ -2,7 +2,7 @@ export const fmt = (n: number | null | undefined, d = 1) => (n == null ? '–' :
 export const pct = (n: number | null | undefined) => (n == null ? '–' : `${Math.round(n * 100)}%`)
 
 export const STAT_LABEL: Record<string, string> = {
-  pts: 'PTS', reb: 'REB', ast: 'AST', fg3m: '3PM', stl: 'STL', blk: 'BLK',
+  pts: 'PTS', reb: 'REB', ast: 'AST', fg3m: '3PM', stl: 'STL', blk: 'BLK', pra: 'PRA',
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {

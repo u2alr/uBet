@@ -4,7 +4,7 @@ import type { OddsBook, OddsEvent, OddsOutcome } from './picks.ts'
 
 export const ODDS_API_BOOKS = ['fanduel', 'draftkings', 'bet365']
 export const ODDS_API_REGIONS = 'us,uk,eu'
-export const ODDS_API_MARKETS = 'player_points,player_rebounds,player_assists,player_threes'
+export const ODDS_API_MARKETS = 'player_points,player_rebounds,player_assists,player_threes,player_points_rebounds_assists'
 
 export interface ApiOutcome { name: string; description?: string; price: number; point?: number }
 export interface ApiMarket { key: string; last_update?: string; outcomes: ApiOutcome[] }

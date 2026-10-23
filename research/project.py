@@ -107,7 +107,9 @@ def fit_and_project(df: pd.DataFrame) -> pd.DataFrame:
     cut = int(len(train) * 0.8)
     fit_part, alpha_part = train.iloc[:cut], train.iloc[cut:]
     out = []
-    for stat in STATS:
+    df = df.assign(pra=df.pts + df.reb + df.ast)   # PRA is projected directly (its own mean and dispersion), not as a sum of three
+    train, fit_part, alpha_part, target = (x.assign(pra=x.pts + x.reb + x.ast) for x in (train, fit_part, alpha_part, target))
+    for stat in [*STATS, "pra"]:
         # Dispersion from a model that never saw the slice it is scored on (same recipe as evaluate.py).
         probe = HistGradientBoostingRegressor(loss="poisson", **HGB).fit(fit_part[FEATURES], fit_part[stat])
         disp = Dispersion().fit(probe.predict(alpha_part[FEATURES]), alpha_part[stat].to_numpy(float))
