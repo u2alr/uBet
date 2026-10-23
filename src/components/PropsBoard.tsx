@@ -188,6 +188,40 @@ function H2HLine({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
   )
 }
 
+const H2H_STATS = [['pts', 'PTS'], ['reb', 'REB'], ['ast', 'AST'], ['fg3m', '3PM']] as const
+
+/** Every stat in the earlier meetings with tonight's opponent, newest first; the stat this card is about is highlighted. */
+function H2HAll({ p, rows }: { p: Pick; rows: H2HGame[] | undefined }) {
+  const opp = opponentOf(p)
+  if (!opp || !rows?.length) return null
+  return (
+    <div className="border-t border-neutral-800 px-3 py-2">
+      <div className="mb-1 text-[10px] uppercase tracking-widest text-neutral-500">{p.player.split(' ').pop()} vs {opp}, last {rows.length}</div>
+      <table className="w-full text-[11px] tabular-nums">
+        <thead className="text-neutral-600">
+          <tr><th className="text-left font-normal" />{rows.map((r) => <th key={r.date} className="px-1 text-right font-normal" title={r.date}>{r.date.slice(5)}</th>)}<th className="pl-2 text-right font-normal">Avg</th></tr>
+        </thead>
+        <tbody>
+          <tr className="text-neutral-600"><td>MIN</td>{rows.map((r) => <td key={r.date} className="px-1 text-right">{Math.round(r.minutes)}</td>)}<td className="pl-2 text-right">{Math.round(rows.reduce((a, r) => a + r.minutes, 0) / rows.length)}</td></tr>
+          {H2H_STATS.map(([k, label]) => {
+            const mine = k === p.stat
+            return (
+              <tr key={k} className={mine ? 'text-neutral-100' : 'text-neutral-400'}>
+                <td className={mine ? 'text-emerald-400' : ''}>{label}</td>
+                {rows.map((r) => {
+                  const ok = mine && (p.side === 'over' ? r[k] > p.line : r[k] < p.line)
+                  return <td key={r.date} className={`px-1 text-right ${ok ? 'text-emerald-400' : ''}`}>{r[k]}</td>
+                })}
+                <td className="pl-2 text-right font-medium">{(rows.reduce((a, r) => a + r[k], 0) / rows.length).toFixed(1)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2H; onOpenPlayer: (id: number) => void }) {
   const p = c.lead
   const [open, setOpen] = useState(false)
@@ -236,7 +270,7 @@ function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2H; onOpenPlayer: (
         </span>
       </button>
       <H2HLine p={p} rows={h2h[`${p.playerId}:${opponentOf(p)}`]} />
-      {open && <div className="border-t border-neutral-800 px-1 pb-2"><PickBars p={p} /></div>}
+      {open && <><div className="border-t border-neutral-800 px-1 pb-2"><PickBars p={p} /></div><H2HAll p={p} rows={h2h[`${p.playerId}:${opponentOf(p)}`]} /></>}
     </div>
   )
 }
