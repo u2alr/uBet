@@ -27,7 +27,12 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
   const tonight = tonightsOpponent(picks)
   const [pick, setPick] = useState<string | null>(null)
   const opp = pick ?? (tonight && opps.some(([o]) => o === tonight) ? tonight : tonight ?? real[0]?.opp ?? null)
-  const rows = real.filter((g) => g.opp === opp)           // newest first, as the log arrives
+  // Season filter: every season this player has faced this opponent, newest first. "All" is the default.
+  const [season, setSeason] = useState<'all' | number>('all')
+  const vsOpp = real.filter((g) => g.opp === opp)           // newest first, as the log arrives
+  const seasons = [...new Set(vsOpp.map((g) => g.season))].sort((a, b) => b - a)
+  const activeSeason = season !== 'all' && seasons.includes(season) ? season : 'all'
+  const rows = activeSeason === 'all' ? vsOpp : vsOpp.filter((g) => g.season === activeSeason)
   if (opps.length === 0) return null
 
   const mine = STATS.some(([k]) => k === stat) ? (stat as 'pts' | 'reb' | 'ast' | 'fg3m') : 'pts'
@@ -44,12 +49,16 @@ export default function PlayerH2H({ games, picks, stat, line }: { games: GameRow
         {tid && <img src={logoUrl(tid)} alt="" className="h-9 w-9" />}
         <h3 className="text-lg font-semibold text-neutral-100">Head-to-head{opp ? ` vs ${opp}` : ''}</h3>
         {tonight && opp === tonight && <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs text-emerald-300">tonight's opponent</span>}
-        <select value={opp ?? ''} onChange={(e) => setPick(e.target.value)} aria-label="Opponent" className="ml-auto rounded-lg bg-neutral-800 px-3 py-1.5 text-sm text-neutral-300">
+        <select value={opp ?? ''} onChange={(e) => { setPick(e.target.value); setSeason('all') }} aria-label="Opponent" className="ml-auto rounded-lg bg-neutral-800 px-3 py-1.5 text-sm text-neutral-300">
           {opps.map(([o, n]) => <option key={o} value={o}>{o} ({n})</option>)}
+        </select>
+        <select value={activeSeason} onChange={(e) => setSeason(e.target.value === 'all' ? 'all' : Number(e.target.value))} aria-label="Season" className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm text-neutral-300">
+          <option value="all">All seasons</option>
+          {seasons.map((y) => <option key={y} value={y}>{y}-{String(y + 1).slice(2)} ({vsOpp.filter((g) => g.season === y).length})</option>)}
         </select>
       </div>
 
-      {rows.length === 0 ? <p className="text-sm text-neutral-500">No games against {opp} in the box scores yet.</p> : (
+      {rows.length === 0 ? <p className="text-sm text-neutral-500">No games against {opp} in the box scores{activeSeason === 'all' ? ' yet' : ' for that season'}.</p> : (
         <>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             <Tile label="Meetings" value={String(rows.length)} />
