@@ -7,6 +7,7 @@ const Minds = lazy(() => import('./components/Minds'))
 const Results = lazy(() => import('./components/Results'))
 const Slip = lazy(() => import('./components/Slip'))
 const Standings = lazy(() => import('./components/Standings'))
+const CheatSheet = lazy(() => import('./components/CheatSheet'))
 import PropsBoard from './components/PropsBoard'
 import SyncBar from './components/SyncBar'
 import Today from './components/Today'
@@ -52,7 +53,7 @@ function Shell() {
               onClick={() => go({ tab: t })}
               className={`whitespace-nowrap rounded-full px-3 py-1 ${tab === t ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-200'}`}
             >
-              {t === 'Today' ? 'Games' : t}{t === 'Slip' && slip.legs.length > 0 && <span className="ml-1.5 rounded-full bg-emerald-500 px-1.5 text-xs font-medium text-neutral-950">{slip.legs.length}</span>}
+              {t === 'Today' ? 'Games' : t === 'Cheatsheet' ? 'Cheat sheet' : t}{t === 'Slip' && slip.legs.length > 0 && <span className="ml-1.5 rounded-full bg-emerald-500 px-1.5 text-xs font-medium text-neutral-950">{slip.legs.length}</span>}
             </button>
           ))}
         </nav>
@@ -61,12 +62,13 @@ function Shell() {
       <SyncBar onRefresh={bump} />
 
       <main key={`${tab}${gameId ?? ''}`} className="anim-fade">
-      <h1 className="sr-only">{tab === 'Today' ? 'Games' : tab}</h1>
+      <h1 className="sr-only">{tab === 'Today' ? 'Games' : tab === 'Cheatsheet' ? 'Cheat sheet' : tab}</h1>
       <Suspense fallback={<p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">Loading…</p>}>
       {tab === 'Props' && <PropsBoard refreshKey={refreshKey} onOpenPlayer={openPlayer} />}
       {tab === 'Today' && (gameId
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => go({ tab: 'Today' })} onOpenPlayer={openPlayer} />
         : <Today refreshKey={refreshKey} onOpenPlayer={openPlayer} onOpenGame={(id) => go({ tab: 'Today', gameId: id })} onOpenSlip={() => go({ tab: 'Slip' })} />)}
+      {tab === 'Cheatsheet' && <CheatSheet refreshKey={refreshKey} onOpenPlayer={openPlayer} />}
       {tab === 'Standings' && <Standings refreshKey={refreshKey} />}
       {tab === 'Slip' && <Slip />}
       {tab === 'Minds' && <Minds refreshKey={refreshKey} />}

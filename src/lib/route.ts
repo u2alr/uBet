@@ -1,6 +1,6 @@
 // The address bar is the source of truth for where you are, so the browser's back and forward buttons just work.
 // Hash routes keep this a static site: #/Props (home), #/Today, #/Today/game/<id>, #/Players, #/Players/<playerId>, #/Minds ...
-export const TABS = ['Props', 'Today', 'Standings', 'Slip', 'Minds', 'Results', 'Players'] as const
+export const TABS = ['Props', 'Cheatsheet', 'Today', 'Standings', 'Slip', 'Minds', 'Results', 'Players'] as const
 export type Tab = (typeof TABS)[number]
 export interface Route { tab: Tab; gameId: string | null; playerId: number | null }
 

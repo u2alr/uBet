@@ -643,6 +643,32 @@ const AGG = `COUNT(*) AS bets,
   AVG(b.odds) AS avgOdds, AVG(b.ev) AS avgEv, AVG(b.ev_cons) AS avgEvCons, SUM(b.kind = 'combo') AS combos, SUM(b.kind = 'single') AS singles,
   COUNT(DISTINCT b.day) AS days, MAX(b.profit) AS bestWin, MIN(b.profit) AS worstLoss`
 
+// Cheat sheet data: every player with a projection for a game today or later, with their last 10 played games. The streak logic itself runs in
+// the browser (src/lib/cheatSheet.ts). Players listed Out are left out. Games are real games only: preseason and zero-minute rows are skipped.
+app.get('/cheatsheet', async (c) => {
+  const today = etDate(new Date().toISOString())
+  const upcoming = (await c.env.DB.prepare(
+    `SELECT pr.player_id AS id, MIN(pr.game_date) AS gameDate, p.name, p.team FROM projections pr JOIN players p ON p.id = pr.player_id
+     WHERE pr.game_date >= ? GROUP BY pr.player_id ORDER BY p.name`,
+  ).bind(today).all<{ id: number; gameDate: string; name: string; team: string | null }>()).results
+  const injuries = (await loadInjuries(c.env)) ?? new Map<string, Injury>()
+  const people = upcoming.filter((p) => injuries.get(normName(p.name))?.status !== 'out')
+  const byId = new Map<number, { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }[]>()
+  for (const ids of chunk(people.map((p) => p.id), MAX_PLAYERS_PER_QUERY)) {
+    const { results } = await c.env.DB.prepare(
+      `SELECT pg.player_id AS id, g.date, pg.minutes, pg.pts, pg.reb, pg.ast, pg.fg3m
+       FROM player_games pg JOIN games g ON g.id = pg.game_id
+       WHERE pg.player_id IN (${ids.map(() => '?').join(',')}) AND g.game_type != 'preseason' AND pg.minutes > 0 AND g.date >= date('now', '-400 days')
+       ORDER BY g.date DESC`,
+    ).bind(...ids).all<{ id: number; date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }>()
+    for (const r of results) {
+      const list = byId.get(r.id) ?? []
+      if (list.length < 10) { list.push({ date: r.date, minutes: r.minutes, pts: r.pts, reb: r.reb, ast: r.ast, fg3m: r.fg3m }); byId.set(r.id, list) }
+    }
+  }
+  return c.json({ data: people.filter((p) => byId.has(p.id)).map((p) => ({ ...p, injury: injuries.get(normName(p.name)) ?? null, games: byId.get(p.id)! })) })
+})
+
 // Who is on the injury report (Out, Doubtful, Questionable), matched to our roster. Cached with the injury feed (15 minutes).
 app.get('/absences', async (c) => {
   const injuries = await loadInjuries(c.env)
