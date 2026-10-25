@@ -3,6 +3,7 @@ import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
 import { enrichPicks, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { MINDS_VERSION } from '../../shared/minds.ts'
+import { parseStandings } from '../../shared/standings.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
 import { MAX_PLAYERS_PER_QUERY, chunk, groupMeetings, parsePairs, type H2HRow } from '../../shared/h2h.ts'
 import { assessOddsAge, buildPicks, etDate, normName, sameMatchup, scoreboardDates, teamKey, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
@@ -640,6 +641,21 @@ const AGG = `COUNT(*) AS bets,
   SUM(CASE WHEN b.status IN ('won','lost','push') THEN b.stake END) AS staked,
   AVG(b.odds) AS avgOdds, AVG(b.ev) AS avgEv, AVG(b.ev_cons) AS avgEvCons, SUM(b.kind = 'combo') AS combos, SUM(b.kind = 'single') AS singles,
   COUNT(DISTINCT b.day) AS days, MAX(b.profit) AS bestWin, MIN(b.profit) AS worstLoss`
+
+// League standings from ESPN's public feed, parsed by shared/standings.ts. Cached for 30 minutes.
+app.get('/standings', async (c) => {
+  try {
+    const feed = await cachedJson<unknown>('espn-standings', 30 * 60, async () => {
+      const res = await fetch(`${c.env.ESPN_BASE_URL ?? 'https://site.api.espn.com'}/apis/v2/sports/basketball/nba/standings`)
+      if (!res.ok) throw new UpstreamError(`ESPN standings ${res.status}`)
+      return res.json()
+    })
+    return c.json({ data: parseStandings(feed) })
+  } catch (e) {
+    console.error('standings unavailable', e instanceof Error ? e.message : String(e))
+    return c.json({ error: 'Standings are unavailable right now.' }, 502)
+  }
+})
 
 // Evaluation report for one rule set: ROI, units, yield, Brier, log loss, calibration bins, with sample sizes and intervals, by tier,
 // statistic, odds band and stated-probability range. Pure read. CLV is null because no closing odds are stored.

@@ -50,7 +50,7 @@ const CHECKS = `(() => {
   return { culprits, smallExamples, buttons: buttons.length, unlabeled, inputs: inputs.length, unlabeledInputs, imgsNoAlt, smallTargets: small, tinyTextNodes: tiny, overflowX, nodes: document.querySelectorAll('*').length, headings: heading.slice(0, 80), h1: document.querySelectorAll('h1').length, lang: document.documentElement.lang, title: document.title, landmarks: ['header','nav','main','footer'].filter((t) => document.querySelector(t)).join(',') }
 })()`
 
-const TABS = ['Props', 'Today', 'Slip', 'Minds', 'Results', 'Players']
+const TABS = ['Props', 'Today', 'Standings', 'Slip', 'Minds', 'Results', 'Players']
 const VIEWPORTS = [['desktop', 1440, 900, false], ['mobile', 390, 844, true]]
 const report = { when: new Date().toISOString(), pages: [] }
 for (const [vp, w, h, mobile] of VIEWPORTS) {

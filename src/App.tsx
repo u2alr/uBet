@@ -6,6 +6,7 @@ const PlayerView = lazy(() => import('./components/PlayerView'))
 const Minds = lazy(() => import('./components/Minds'))
 const Results = lazy(() => import('./components/Results'))
 const Slip = lazy(() => import('./components/Slip'))
+const Standings = lazy(() => import('./components/Standings'))
 import PropsBoard from './components/PropsBoard'
 import SyncBar from './components/SyncBar'
 import Today from './components/Today'
@@ -66,6 +67,7 @@ function Shell() {
       {tab === 'Today' && (gameId
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => go({ tab: 'Today' })} onOpenPlayer={openPlayer} />
         : <Today refreshKey={refreshKey} onOpenPlayer={openPlayer} onOpenGame={(id) => go({ tab: 'Today', gameId: id })} onOpenSlip={() => go({ tab: 'Slip' })} />)}
+      {tab === 'Standings' && <Standings refreshKey={refreshKey} />}
       {tab === 'Slip' && <Slip />}
       {tab === 'Minds' && <Minds refreshKey={refreshKey} />}
       {tab === 'Results' && <Results refreshKey={refreshKey} />}
