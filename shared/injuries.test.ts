@@ -46,3 +46,18 @@ test('impossible minutes are ignored rather than averaged in', () => {
   assert.equal(r.games, 3)
   assert.equal(r.min10, 30)
 })
+
+test('absences list Out, Doubtful and Questionable players matched to the roster by name, most serious first', async () => {
+  const { listAbsences } = await import('./injuries.ts')
+  const inj = new Map([
+    ['paolo banchero', { status: 'out' as const, label: 'Out', note: 'knee' }],
+    ['franz wagner', { status: 'questionable' as const, label: 'Questionable', note: '' }],
+    ['jalen suggs', { status: 'day-to-day' as const, label: 'Day-To-Day', note: '' }],
+    ['someone else', { status: 'out' as const, label: 'Out', note: '' }],
+  ])
+  const roster = [{ id: 1, name: 'Franz Wagner', team: 'ORL' }, { id: 2, name: 'Paolo Banchero', team: 'ORL' }, { id: 3, name: 'Jalen Suggs', team: 'ORL' }, { id: 4, name: 'Healthy Guy', team: 'ORL' }]
+  const out = listAbsences(roster, inj)
+  assert.deepEqual(out.map((a) => [a.name, a.status]), [['Paolo Banchero', 'out'], ['Franz Wagner', 'questionable']])
+  assert.equal(out[0].note, 'knee')
+  assert.deepEqual(listAbsences([], inj), [])
+})

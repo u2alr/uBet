@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
-import { enrichPicks, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
+import { enrichPicks, listAbsences, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { MINDS_VERSION } from '../../shared/minds.ts'
 import { parseStandings } from '../../shared/standings.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
@@ -641,6 +641,14 @@ const AGG = `COUNT(*) AS bets,
   SUM(CASE WHEN b.status IN ('won','lost','push') THEN b.stake END) AS staked,
   AVG(b.odds) AS avgOdds, AVG(b.ev) AS avgEv, AVG(b.ev_cons) AS avgEvCons, SUM(b.kind = 'combo') AS combos, SUM(b.kind = 'single') AS singles,
   COUNT(DISTINCT b.day) AS days, MAX(b.profit) AS bestWin, MIN(b.profit) AS worstLoss`
+
+// Who is on the injury report (Out, Doubtful, Questionable), matched to our roster. Cached with the injury feed (15 minutes).
+app.get('/absences', async (c) => {
+  const injuries = await loadInjuries(c.env)
+  if (!injuries) return c.json({ error: 'The injury report is unavailable right now.' }, 502)
+  const { results } = await c.env.DB.prepare('SELECT id, name, team FROM players').all<{ id: number; name: string; team: string | null }>()
+  return c.json({ data: listAbsences(results, injuries) })
+})
 
 // League standings from ESPN's public feed, parsed by shared/standings.ts. Cached for 30 minutes.
 app.get('/standings', async (c) => {

@@ -29,3 +29,21 @@ and fold F shows no stat entirely below 0. Anything else: not adopted, and the a
 - No historical injury reports exist, so the real use (injury report as input) cannot be backtested; only the post-game absence version can.
 - Nothing here involves a sportsbook line. Better accuracy against naive baselines is not an edge.
 - Adopting it changes production projections and needs the owner's approval (given in general terms: "factor in players that are out"); a re-run of `calibrate.py` would follow.
+
+## Result (development folds A and B; fold F not run because the rule failed)
+Source: `research/out/teammate_out_dev.json`. Paired difference in negative-binomial log score on the player-games the lift changes (positive = better):
+| fold | pts | reb | ast | 3pm | PRA |
+|---|---|---|---|---|---|
+| A | -0.0222 [-0.0273, -0.0168] | -0.0272 [-0.0313, -0.0228] | -0.0141 [-0.0179, -0.0103] | -0.0133 [-0.0171, -0.0095] | -0.0358 [-0.0442, -0.0280] |
+| B | -0.0258 [-0.0333, -0.0189] | -0.0212 [-0.0249, -0.0170] | -0.0181 [-0.0226, -0.0136] | -0.0158 [-0.0188, -0.0130] | -0.0297 [-0.0373, -0.0224] |
+
+**Not adopted, and clearly so**: every CI is entirely below 0 on every stat in both folds, even though the backtest gives the method the absentees that the box score reveals
+after the game (an upper bound on what an injury report could provide). MAE got worse on all of them. Likely reasons, none tested here: with the 15-minute rotation rule 77% of
+player-games have at least one "absent rotation teammate", so the lift is applied almost everywhere and double counts what the model's season and recent averages already contain
+(those averages include the games without the teammate). Changing the rule to fix this would be a new experiment with a new pre-registration, not a tweak of this one.
+
+## What this means for the app
+- Production projections do NOT apply the lift.
+- `research/project.py` does read the injury report, but only to set the existing `miss_prev` features and to drop players listed Out. Measured effect on a teammate of an
+  absent star is about +/-0.1 points, i.e. the model learned almost nothing from those features. The app therefore shows who is out so the reader can judge for themselves,
+  and does not claim the projections account for it.

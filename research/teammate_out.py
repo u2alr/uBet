@@ -125,7 +125,7 @@ def run_fold(df, name, rng):
 def main():
     final = "--final" in sys.argv
     df = pd.read_pickle(OUT / "features.pkl")
-    df = df.join(compute_lifts(df))
+    df = df.assign(pra=df.pts + df.reb + df.ast).join(compute_lifts(df))
     print(f"lifts computed; rows with an absent rotation teammate: {int((df.n_absent_rot > 0).sum())} of {len(df)}", flush=True)
     rng = np.random.default_rng(0)
     res = {f: run_fold(df, f, rng) for f in (["F"] if final else ["A", "B"])}

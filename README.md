@@ -1,7 +1,7 @@
 # uBet
 
 NBA stats and prop-bet research tool: a props board grouped by game (points, rebounds, assists, threes, PRA) with head-to-head history, per-player game logs and charts,
-upcoming games with live scores, suggested bets (value / safest / riskiest), parlays, a bet slip, and the "minds": a deterministic, pre-registered, fail-closed bet-approval pipeline (`minds/README.md`). Personal project, informational only.
+upcoming games with live scores, league standings, the injury report per game, suggested bets (value / safest / riskiest), parlays, a bet slip, and the "minds": a deterministic, pre-registered, fail-closed bet-approval pipeline (`minds/README.md`). Personal project, informational only.
 Sportsbooks are efficient, so treat every suggestion as a lead to check, not a guarantee.
 
 ## Stack

@@ -91,3 +91,16 @@ export function enrichPicks<P extends { playerId: number; player: string; role?:
   // `injuryChecked` is how downstream code tells "healthy" from "we could not look".
   return { ...out, picks: out.picks.map((p) => ({ ...p, injuryChecked: injuries !== null })) }
 }
+
+export interface Absence { id: number; name: string; team: string | null; status: InjuryStatus; label: string; note: string }
+
+/** Players on the injury report who matter for tonight (Out, Doubtful, Questionable), matched to our roster by name. Out first, then by team and name. */
+export function listAbsences(players: { id: number; name: string; team: string | null }[], injuries: Map<string, Injury>): Absence[] {
+  const rank: Record<InjuryStatus, number> = { out: 0, doubtful: 1, questionable: 2, 'day-to-day': 3, other: 4 }
+  const out: Absence[] = []
+  for (const p of players) {
+    const inj = injuries.get(normName(p.name))
+    if (inj && (inj.status === 'out' || inj.status === 'doubtful' || inj.status === 'questionable')) out.push({ id: p.id, name: p.name, team: p.team, status: inj.status, label: inj.label, note: inj.note })
+  }
+  return out.sort((a, b) => rank[a.status] - rank[b.status] || (a.team ?? '').localeCompare(b.team ?? '') || a.name.localeCompare(b.name))
+}
