@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { PicksMeta } from '../../shared/picks.ts'
+import type { Conference, StandingRow } from '../../shared/standings.ts'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
 import type { Pick } from '../lib/picks'
 import { logoUrl, teamByName, teamId } from '../lib/teams'
@@ -20,6 +21,7 @@ type SortKey = (typeof SORTS)[number][0]
 interface Card { key: string; over: Pick | null; under: Pick | null; lead: Pick }
 interface GameInfo { id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; score: string }; away: { abbr: string; score: string } }
 interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable'; label: string; note: string }
+type TeamStanding = StandingRow & { conference: string }
 interface H2HGame { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }
 type H2H = Record<string, H2HGame[]>
 /** Head-to-head is 'loading' until it arrives, and 'error' if the request failed: a failure must never read as "no earlier games". */
@@ -68,6 +70,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   const [h2h, setH2h] = useState<H2HState>({ status: 'loading' })
   const [sched, setSched] = useState<GameInfo[]>([])
   const [absent, setAbsent] = useState<Absence[]>([])
+  const [table, setTable] = useState<Map<string, TeamStanding>>(new Map())
 
   useEffect(() => {
     api<{ configured: boolean; data: Pick[]; meta: PicksMeta }>('/picks')
@@ -89,6 +92,15 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   useEffect(() => {
     let live = true
     api<{ data: Absence[] }>('/absences').then((r) => live && setAbsent(r.data)).catch(() => live && setAbsent([]))
+    return () => { live = false }
+  }, [refreshKey])
+
+  // Standings for the game headers. Optional: a failure just hides them.
+  useEffect(() => {
+    let live = true
+    api<{ data: Conference[] }>('/standings')
+      .then((r) => live && setTable(new Map(r.data.flatMap((c) => c.rows.map((row) => [row.abbr, { ...row, conference: c.name }] as const)))))
+      .catch(() => live && setTable(new Map()))
     return () => { live = false }
   }, [refreshKey])
 
@@ -174,14 +186,14 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
         <Empty>No props match these filters. Lines appear once books post them, for players you have synced.</Empty>
       ) : (
         <div className="space-y-10">
-          {sections.map((g, i) => <GameSection key={g.game} g={g} index={i} absent={absent} h2h={h2h} limit={limit} more={() => setLimit(limit + 12)} onOpenPlayer={onOpenPlayer} />)}
+          {sections.map((g, i) => <GameSection key={g.game} g={g} index={i} absent={absent} table={table} h2h={h2h} limit={limit} more={() => setLimit(limit + 12)} onOpenPlayer={onOpenPlayer} />)}
         </div>
       )}
     </div>
   )
 }
 
-function GameSection({ g, index, absent, h2h, limit, more, onOpenPlayer }: { g: Section; index: number; absent: Absence[]; h2h: H2HState; limit: number; more: () => void; onOpenPlayer: (id: number) => void }) {
+function GameSection({ g, index, absent, table, h2h, limit, more, onOpenPlayer }: { g: Section; index: number; absent: Absence[]; table: Map<string, TeamStanding>; h2h: H2HState; limit: number; more: () => void; onOpenPlayer: (id: number) => void }) {
   // Only the first three games start open: a slate of 12 games would otherwise put thousands of nodes on the page.
   const [open, setOpen] = useState(index < 3)
   const [away, home] = g.game.split(' @ ')
@@ -195,6 +207,7 @@ function GameSection({ g, index, absent, h2h, limit, more, onOpenPlayer }: { g: 
         <span className="text-sm text-neutral-500">{g.cards.length} props · {players} players</span>
         <span className="ml-auto text-sm text-neutral-600">{open ? 'Hide' : 'Show'}</span>
       </button>
+      <Records game={g.game} table={table} />
       <Absent game={g.game} absent={absent} />
       {open && (
         <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
@@ -213,6 +226,26 @@ function TeamLogo({ id, abbr, size }: { id: number; abbr: string; size: number }
   const [failed, setFailed] = useState(false)
   if (failed) return <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-neutral-800 text-[11px] font-medium text-neutral-400" style={{ width: size, height: size }} aria-hidden>{size >= 32 ? abbr : ''}</span>
   return <img src={logoUrl(id)} alt="" width={size} height={size} loading="lazy" onError={() => setFailed(true)} className="shrink-0" />
+}
+
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
+
+/** Each team's record, conference seed, last ten and streak, from the standings. Hidden until the standings load. */
+function Records({ game, table }: { game: string; table: Map<string, TeamStanding> }) {
+  const teams = game.split(' @ ').map((n) => teamByName(n)).filter((t) => !!t)
+  const rows = teams.map((t) => ({ abbr: t![0], s: table.get(t![0]) })).filter((x) => x.s)
+  if (!rows.length) return null
+  return (
+    <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-neutral-400">
+      {rows.map(({ abbr, s }) => (
+        <span key={abbr} className="tabular-nums">
+          <b className="font-medium text-neutral-200">{abbr}</b> {s!.wins}-{s!.losses}
+          <span className="text-neutral-500"> · {s!.seed === 99 ? 'unseeded' : `${ordinal(s!.seed)} ${s!.conference}`} · L10 {s!.last10}</span>
+          {s!.streak && <span className={s!.streak.startsWith('W') ? ' text-emerald-400' : ' text-red-400'}> {s!.streak}</span>}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 /** The injury report for the two teams in a game. Projections do not adjust for it (see research/PREREG_TEAMMATE_OUT.md), so it is shown for the reader. */
