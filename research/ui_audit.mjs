@@ -71,5 +71,14 @@ for (const [vp, w, h, mobile] of VIEWPORTS) {
     console.log(tab.padEnd(8), vp.padEnd(8), `overflowX ${checks.overflowX}  nodes ${checks.nodes}  unlabeled ${checks.unlabeled}+${checks.unlabeledInputs}  small ${checks.smallTargets}  tiny ${checks.tinyTextNodes}  errs ${consoleErrors.length}  failed ${failed.length}`)
   }
 }
+// Interaction states on the props board: first card's details open, then the list layout.
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
+await send('Page.navigate', { url: 'http://localhost:5173/#/Props' }); await sleep(500); await js('location.reload()'); await sleep(4000)
+await js("[...document.querySelectorAll('button[aria-expanded]')].find((b) => b.textContent.includes('Details'))?.click()"); await sleep(1500)
+await js("window.scrollTo(0, 250)"); await sleep(400)
+writeFileSync(path.join(OUT, 'ui_Props_details.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'))
+await js("window.scrollTo(0, 0); [...document.querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim() === 'list')?.click()"); await sleep(1200)
+writeFileSync(path.join(OUT, 'ui_Props_list.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'))
+await js("localStorage.removeItem('ubet.props.view')")
 writeFileSync(path.join(OUT, 'ui_audit.json'), JSON.stringify(report, null, 1))
 ws.close(); child.kill()

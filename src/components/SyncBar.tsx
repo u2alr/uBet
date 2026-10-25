@@ -52,11 +52,11 @@ export default function SyncBar({ onRefresh }: { onRefresh: () => void }) {
     else setHelper((h) => (h ? { ...h, running: true, label: 'Starting', done: 0, total: 0 } : h))
   }
 
-  const btn = 'rounded-md bg-neutral-900 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50'
+  const btn = 'rounded-md bg-neutral-900 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500 disabled:cursor-not-allowed disabled:opacity-50'
   const running = helper?.running
 
   return (
-    <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-neutral-500">
+    <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
       <span>
         Box scores synced <span className="text-neutral-300">{timeAgo(status?.lastSync ?? null)}</span>
         {status && <> · {status.players} players{status.newestGame && <> · latest game {status.newestGame}</>}</>}
