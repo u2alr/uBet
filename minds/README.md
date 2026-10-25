@@ -14,13 +14,16 @@ the latest scorecard is `AUDIT_SCORECARD.md`.
 
 ## Odds sources
 `ODDS_API_KEY` set in `.dev.vars` selects The Odds API (FanDuel, DraftKings and bet365 only, one request per game; props for the
-points, rebounds, assists, threes and PRA markets). Otherwise OddsBlaze is used. `--provider oddsapi|oddsblaze` forces one.
+points, rebounds, assists, threes and PRA markets). It is the primary source. OddsBlaze is used only if no Odds API key is set, or as an automatic fallback when The Odds API returns nothing (credits used up, key rejected). `--provider oddsapi|oddsblaze` forces one.
 Free-tier credits are small: a run of about 12 games spends roughly 12 requests per market set.
 
 ## Developer aids
 - `node minds/run.mjs --dry --cache`: reuse the last download for up to 3 hours and write nothing.
 - `DUMP_PICKS=minds/out/picks_fixture.json node minds/run.mjs --dry --cache`: save the built props payload. `node research/ui_audit.mjs`
   then serves it for `/api/picks`, so the UI can be audited while the odds provider is unavailable (needs `npm run dev`).
+
+## Your own bets
+Press **I placed this bet** on the Slip (after entering the odds you actually got). The bet is stored in `my_bets` / `my_bet_legs` (migration `0016`) and graded by `ingest/grade_mybets.sql` whenever `ingest/sync.py` pulls box scores. Results > My bets shows profit, ROI and record at your odds. The app never places bets. Writing needs localhost or the `CAPTURE_TOKEN` header, like the other writes.
 
 ## What is stored
 Migration `0015_engine_v7.sql`: `mind_runs` (config and calibration hashes), `mind_candidates` (every candidate with its full record

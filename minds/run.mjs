@@ -30,7 +30,8 @@ function secret(name) {
 }
 // The Odds API (FanDuel, DraftKings, bet365 only) when its key is set; OddsBlaze otherwise. --provider oddsblaze|oddsapi forces one.
 const pi = args.indexOf('--provider')
-const provider = pi >= 0 ? args[pi + 1] : secret('ODDS_API_KEY') ? 'oddsapi' : 'oddsblaze'
+// The Odds API is the primary source. OddsBlaze is only a fallback when it returns nothing (credits used up, key rejected), unless --provider forces one.
+let provider = pi >= 0 ? args[pi + 1] : secret('ODDS_API_KEY') ? 'oddsapi' : 'oddsblaze'
 const key = () => { const k = secret(provider === 'oddsapi' ? 'ODDS_API_KEY' : 'ODDSBLAZE_KEY'); if (!k) throw new Error(`${provider} key missing`); return k }
 
 async function fetchOddsApi(k, horizonMs) {
@@ -83,6 +84,12 @@ if (useCache && existsSync(cacheFile) && Date.now() - statSync(cacheFile).mtimeM
     try { responses.push(await fetchBook(k, b)) } catch (e) { console.error('skip', String(e.message).replace(k, '***')) }
   }
   if (dry && responses.length) { mkdirSync(path.dirname(cacheFile), { recursive: true }); writeFileSync(cacheFile, JSON.stringify(responses)) }
+}
+if (!responses.length && provider === 'oddsapi' && pi < 0 && secret('ODDSBLAZE_KEY') && !useCache) {
+  console.error('The Odds API returned nothing (credits used up or key rejected). Falling back to OddsBlaze.')
+  provider = 'oddsblaze'
+  const kb = secret('ODDSBLAZE_KEY')
+  for (const b of books) { try { responses.push(await fetchBook(kb, b)) } catch (e) { console.error('skip', String(e.message).replace(kb, '***')) } }
 }
 if (!responses.length) { console.error('no odds fetched'); process.exit(1) }
 

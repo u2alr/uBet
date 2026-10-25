@@ -4,6 +4,7 @@ import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } 
 import { enrichPicks, listAbsences, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { MINDS_VERSION } from '../../shared/minds.ts'
 import { parseStandings } from '../../shared/standings.ts'
+import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
 import { MAX_PLAYERS_PER_QUERY, chunk, groupMeetings, parsePairs, type H2HRow } from '../../shared/h2h.ts'
 import { assessOddsAge, buildPicks, etDate, normName, sameMatchup, scoreboardDates, teamKey, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
@@ -754,6 +755,49 @@ app.get('/minds', async (c) => {
      WHERE b.version = ? AND b.kind = 'single' AND b.tier IN ('strict','lean','volume') AND b.status IN ('won','lost') GROUP BY b.tier, l.stat, band ORDER BY b.tier, l.stat, band`,
   ).bind(version).all()).results
   return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200, minDays: 20, ranDays: days.map((d) => d.day), audit, rejections, calibration } })
+})
+
+// ---------- the user's own bets ----------
+// Bets placed for real, logged from the Slip and graded by ingest/grade_mybets.sql. Writing is privileged like the other writes.
+app.post('/my-bets', async (c) => {
+  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
+  let body: unknown
+  try { body = await c.req.json() } catch { return c.json({ error: 'body must be JSON' }, 400) }
+  const parsed = parseMyBet(body)
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { stake, note, legs } = parsed.bet
+  const res = await c.env.DB.prepare('INSERT INTO my_bets (stake, note) VALUES (?, ?)').bind(stake, note).run()
+  const id = res.meta.last_row_id
+  try {
+    await c.env.DB.batch(legs.map((l, i) => c.env.DB.prepare(
+      'INSERT INTO my_bet_legs (bet_id, idx, player_id, player, stat, side, line, price, book, game_date) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    ).bind(id, i, l.playerId, l.player, l.stat, l.side, l.line, l.price, l.book, l.gameDate)))
+  } catch (e) {
+    await c.env.DB.prepare('DELETE FROM my_bets WHERE id = ?').bind(id).run()     // never leave a bet with no legs
+    console.error('my-bets legs failed', e instanceof Error ? e.message : String(e))
+    return c.json({ error: 'could not save the bet' }, 500)
+  }
+  return c.json({ ok: true, id })
+})
+
+app.get('/my-bets', async (c) => {
+  const bets = (await c.env.DB.prepare(
+    'SELECT id, placed_at AS placedAt, stake, note, status, settled_odds AS settledOdds, profit FROM my_bets ORDER BY id DESC LIMIT 500',
+  ).all<MyBetRow & { id: number }>()).results
+  const legs = bets.length ? (await c.env.DB.prepare(
+    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, actual, result
+     FROM my_bet_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM my_bets ORDER BY id DESC LIMIT 500)) ORDER BY bet_id, idx`,
+  ).all()).results : []
+  return c.json({ data: { bets, legs, totals: myBetTotals(bets) } })
+})
+
+app.delete('/my-bets/:id', async (c) => {
+  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
+  const id = parseId(c.req.param('id'))
+  if (id === null) return c.json({ error: 'bad id' }, 400)
+  await c.env.DB.prepare('DELETE FROM my_bet_legs WHERE bet_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM my_bets WHERE id = ?').bind(id).run()
+  return c.json({ ok: true })
 })
 
 // Manual prediction logging from the player page. Writes to the database, so it is not public.
