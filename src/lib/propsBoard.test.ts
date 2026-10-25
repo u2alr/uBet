@@ -51,3 +51,20 @@ test('the projection gap is signed toward the side being bet', () => {
   assert.equal(projectionEdge(pick({ side: 'under', projection: 22, line: 20.5 })), -1.5)
   assert.equal(projectionEdge(pick({ projection: Number.NaN })), null)
 })
+
+import { favorite, normAbbr } from './propsBoard.ts'
+
+test('ESPN team codes are mapped to the codes the rest of the app uses', () => {
+  assert.deepEqual(['UTAH', 'GS', 'NY', 'NO', 'SA', 'WSH', 'BOS'].map(normAbbr), ['UTA', 'GSW', 'NYK', 'NOP', 'SAS', 'WAS', 'BOS'])
+})
+
+test('the favourite is the side the market gives over 50%, with the spread shown from its side; no odds means no favourite', () => {
+  const g = (p: number | null, spread = 6) => ({ home: { abbr: 'UTAH' }, away: { abbr: 'LAL' }, odds: p == null ? null : { spread, total: 236.5, homeWinProb: p } })
+  const away = favorite(g(0.326))!
+  assert.deepEqual([away.abbr, away.spread, away.tossUp], ['LAL', -6, false]); assert.ok(Math.abs(away.prob - 0.674) < 1e-9)
+  const home = favorite(g(0.72, -7.5))!
+  assert.deepEqual([home.abbr, home.spread], ['UTA', -7.5])
+  assert.equal(favorite(g(0.5004))!.tossUp, true)
+  assert.equal(favorite(g(null)), null)
+  assert.equal(favorite({ home: { abbr: 'A' }, away: { abbr: 'B' }, odds: { spread: null, total: null, homeWinProb: null } }), null)
+})

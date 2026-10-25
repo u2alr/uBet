@@ -3,7 +3,7 @@ import type { PicksMeta } from '../../shared/picks.ts'
 import type { Conference, StandingRow } from '../../shared/standings.ts'
 import { api } from '../lib/format'
 import type { Pick } from '../lib/picks'
-import { SORTS, opponentOf, sortCards, toCards, type Card, type SortKey } from '../lib/propsBoard'
+import { SORTS, favorite, normAbbr, opponentOf, sortCards, toCards, type Card, type SortKey } from '../lib/propsBoard'
 import { teamByName } from '../lib/teams'
 import type { H2H, H2HState } from '../lib/h2hView'
 import MetricGuide from './MetricGuide'
@@ -17,7 +17,10 @@ const STATS = [['all', 'All'], ['pts', 'Points'], ['reb', 'Rebounds'], ['ast', '
 type StatKey = (typeof STATS)[number][0]
 type View = 'cards' | 'list'
 
-interface GameInfo { id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; score: string }; away: { abbr: string; score: string } }
+interface GameInfo {
+  id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; score: string }; away: { abbr: string; score: string }
+  odds?: { spread: number | null; total: number | null; homeWinProb: number | null } | null
+}
 interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable'; label: string; note: string }
 type TeamStanding = StandingRow & { conference: string }
 interface Section { game: string; date: string; cards: Card[]; info: GameInfo | null }
@@ -94,7 +97,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
     }
     for (const g of m.values()) {
       const [a, h] = g.game.split(' @ ').map((n) => teamByName(n)?.[0])
-      g.info = sched.find((x) => x.away.abbr === a && x.home.abbr === h) ?? null
+      g.info = sched.find((x) => normAbbr(x.away.abbr) === a && normAbbr(x.home.abbr) === h) ?? null
     }
     // Tip-off order from the schedule; a game the schedule does not know goes last, by date.
     return [...m.values()].sort((a, b) => (a.info?.date ?? `${a.date}T99`).localeCompare(b.info?.date ?? `${b.date}T99`) || a.game.localeCompare(b.game))
@@ -183,7 +186,7 @@ function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPl
         <span className="text-sm text-neutral-500">{g.cards.length} props · {players} players</span>
         <span className="ml-auto text-sm text-neutral-600">{open ? 'Hide' : 'Show'}</span>
       </button>
-      <GameContext game={g.game} absent={absent} table={table} />
+      <GameContext game={g.game} info={g.info} absent={absent} table={table} />
       {open && (
         <div className="mt-3">
           {view === 'list'
@@ -201,11 +204,12 @@ function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPl
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 
 /** Each team's record and seed, plus the injury report for both teams, as one quiet block under the game title. */
-function GameContext({ game, absent, table }: { game: string; absent: Absence[]; table: Map<string, TeamStanding> }) {
+function GameContext({ game, info, absent, table }: { game: string; info: GameInfo | null; absent: Absence[]; table: Map<string, TeamStanding> }) {
   const teams = game.split(' @ ').map((n) => teamByName(n)).filter((t) => !!t)
   const rows = teams.map((t) => ({ abbr: t![0], s: table.get(t![0]) })).filter((x) => x.s)
   const mine = absent.filter((a) => a.team && teams.some((t) => t![0] === a.team))
-  if (!rows.length && !mine.length) return null
+  const fav = info && info.state === 'pre' ? favorite(info) : null
+  if (!rows.length && !mine.length && !fav) return null
   const tone = { out: 'bg-red-500/15 text-red-300', doubtful: 'bg-amber-500/15 text-amber-300', questionable: 'bg-neutral-800 text-neutral-300' }
   return (
     <div className="mt-1.5 space-y-1.5 text-sm text-neutral-400">
@@ -217,6 +221,16 @@ function GameContext({ game, absent, table }: { game: string; absent: Absence[];
               {s!.streak && <span className={s!.streak.startsWith('W') ? ' text-emerald-400' : ' text-red-400'}> {s!.streak}</span>}
             </span>
           ))}
+        </p>
+      )}
+      {fav && (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums" title="From the betting market (no-margin win chance averaged over books). The app has no game-winner model of its own.">
+          <span className="text-neutral-500">Market favours</span>
+          {fav.tossUp
+            ? <b className="font-medium text-neutral-200">a toss-up</b>
+            : <><b className="font-medium text-emerald-400">{fav.abbr}</b><span className="text-neutral-300">{Math.round(fav.prob * 100)}% to win</span></>}
+          {fav.spread != null && !fav.tossUp && <span className="text-neutral-500">{fav.abbr} {fav.spread === 0 ? 'pick' : fav.spread}</span>}
+          {fav.total != null && <span className="text-neutral-500">total {fav.total}</span>}
         </p>
       )}
       {mine.length > 0 && (

@@ -68,3 +68,27 @@ export function opponentOf(p: Pick): string | null {
   const other = p.teamName === away ? home : p.teamName === home ? away : null
   return other ? teamByName(other)?.[0] ?? null : null
 }
+
+/** ESPN's team codes that differ from NBA.com's (the codes used everywhere else in the app). */
+const ESPN_ABBR: Record<string, string> = { GS: 'GSW', SA: 'SAS', NY: 'NYK', NO: 'NOP', WSH: 'WAS', UTAH: 'UTA' }
+export const normAbbr = (abbr: string) => ESPN_ABBR[abbr] ?? abbr
+
+export interface FavoriteInput { home: { abbr: string }; away: { abbr: string }; odds?: { spread: number | null; total: number | null; homeWinProb: number | null } | null }
+export interface Favorite { abbr: string; prob: number; spread: number | null; total: number | null; tossUp: boolean }
+
+/**
+ * Who the betting market favours. This is the books' no-margin win chance averaged over books, NOT a model forecast of the game:
+ * the app has no game-winner model. Null when no team odds are available. Within half a point of 50% it is a toss-up.
+ */
+export function favorite(g: FavoriteInput): Favorite | null {
+  const p = g.odds?.homeWinProb
+  if (p == null || !Number.isFinite(p)) return null
+  const home = p >= 0.5
+  const prob = home ? p : 1 - p
+  const spread = g.odds?.spread
+  return {
+    abbr: normAbbr(home ? g.home.abbr : g.away.abbr), prob, tossUp: prob < 0.505,
+    // The feed gives the home team's spread; show it from the favourite's side (always negative or zero).
+    spread: spread == null ? null : -Math.abs(spread), total: g.odds?.total ?? null,
+  }
+}
