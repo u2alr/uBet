@@ -13,6 +13,8 @@ Weakness, stated in PREREG.md: who is injured is approximated from past appearan
 import argparse
 import datetime as dt
 import json
+import re
+import unicodedata
 import subprocess
 import sys
 import urllib.request
@@ -97,6 +99,58 @@ def add_placeholders(players: pd.DataFrame, teams: pd.DataFrame, games: list[dic
             pd.concat([teams, pd.DataFrame(team_rows)], ignore_index=True))
 
 
+def norm_name(s: str) -> str:
+    """Same normalisation as shared/picks.ts normName, so ESPN names and box-score names meet."""
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    s = re.sub(r"[^a-z ]", "", s)
+    s = re.sub(r"\b(jr|sr|ii|iii|iv)\b", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def espn_out_players() -> set[str]:
+    """Normalised names of players ESPN lists as Out (including out for the season). None if the feed cannot be read."""
+    try:
+        with urllib.request.urlopen("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries", timeout=30) as r:
+            feed = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        print(f"  injuries unavailable ({e}); projections use past appearances only")
+        return set()
+    out = set()
+    for team in feed.get("injuries", []):
+        for i in team.get("injuries", []):
+            if "out" in str(i.get("status", "")).lower():
+                out.add(norm_name(i.get("athlete", {}).get("displayName", "")))
+    return out
+
+
+def apply_injury_news(df: pd.DataFrame, out_names: set[str]) -> pd.DataFrame:
+    """Use the real injury report for who is missing tonight.
+
+    The model's `miss_prev` / `miss_prev2` features are the typical minutes of rotation teammates who skipped the previous games, measured from past
+    appearances. For a game being projected, the injury report is a better statement of who is out, so for each team's placeholder rows both features
+    become the summed last-10 minutes of its rotation players (>= 15 min) listed Out. Players listed Out are removed from the projection set.
+    NOT validated: no historical injury reports exist to backtest it, so it is stated here and shown in the app as an adjustment.
+    """
+    if not out_names:
+        return df
+    names = df.dropna(subset=["PLAYER_NAME"]).drop_duplicates("PLAYER_ID", keep="last").set_index("PLAYER_ID")["PLAYER_NAME"].map(norm_name)
+    dummy = df.GAME_ID >= DUMMY_BASE
+    is_out = df.PLAYER_ID.map(names).isin(out_names)
+    rotation_out = df[dummy & is_out & (df.min_l10 >= 15)]
+    mins = rotation_out.groupby(["GAME_ID", "TEAM_ID"]).min_l10.sum()
+    report = []
+    for (gid, tid), m in mins.items():
+        mask = dummy & (df.GAME_ID == gid) & (df.TEAM_ID == tid)
+        df.loc[mask, ["miss_prev", "miss_prev2"]] = float(m)
+        who = [f"{names.get(pid, pid)} ({mm:.0f} min)" for pid, mm in rotation_out[(rotation_out.GAME_ID == gid) & (rotation_out.TEAM_ID == tid)][["PLAYER_ID", "min_l10"]].itertuples(index=False)]
+        report.append({"team_id": int(tid), "added_missing_minutes": round(float(m), 1), "players": who})
+    OUT.mkdir(exist_ok=True)
+    (OUT / "injury_adjustments.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    print(f"  injury news applied to {len(report)} teams; {int((dummy & is_out).sum())} players listed Out removed from projections")
+    return df[~(dummy & is_out)].reset_index(drop=True)
+
+
 def fit_and_project(df: pd.DataFrame) -> pd.DataFrame:
     is_dummy = df.GAME_ID >= DUMMY_BASE
     ok = (df.n_prior >= 5) & df["pts_l10"].notna()
@@ -137,6 +191,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--remote", action="store_true")
     ap.add_argument("--days", type=int, default=3)
+    ap.add_argument("--no-injuries", action="store_true", help="do not use the ESPN injury report for who is out")
     ap.add_argument("--no-pull", action="store_true", help="skip refreshing the raw logs")
     args = ap.parse_args()
 
@@ -150,6 +205,8 @@ def main():
     players, teams = load_raw()
     players, teams = add_placeholders(players, teams, games, current_rosters())
     df = build(players, teams)
+    if not args.no_injuries:
+        df = apply_injury_news(df, espn_out_players())
     proj = fit_and_project(df)
     print(proj.groupby("stat")[["mean", "alpha"]].mean().round(3))
     write_sql(proj, args.remote)
