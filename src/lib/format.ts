@@ -5,8 +5,14 @@ export const STAT_LABEL: Record<string, string> = {
   pts: 'PTS', reb: 'REB', ast: 'AST', fg3m: '3PM', stl: 'STL', blk: 'BLK', pra: 'PRA',
 }
 
+// An optional access token for personal routes on a deployed copy. It lives in this browser only and is sent as a header; on localhost it is not needed.
+const TOKEN_KEY = 'ubet-access-token'
+export const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) ?? '' } catch { return '' } }
+export const setToken = (t: string) => { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY) } catch { /* private mode */ } }
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, init)
+  const token = getToken()
+  const res = await fetch(`/api${path}`, token ? { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), 'x-capture-token': token } } : init)
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`)
   return body

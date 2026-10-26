@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { MyBetTotals } from '../../shared/mybets.ts'
-import { STAT_LABEL, api } from '../lib/format'
+import { STAT_LABEL, api, getToken, setToken } from '../lib/format'
 
 interface Bet { id: number; placedAt: string; stake: number; note: string | null; status: 'open' | 'won' | 'lost' | 'push' | 'void'; settledOdds: number | null; profit: number | null }
 interface Leg { betId: number; idx: number; player: string; stat: string; side: 'over' | 'under'; line: number; price: number; book: string | null; gameDate: string; actual: number | null; result: string | null }
@@ -24,6 +24,7 @@ export default function MyBets({ refreshKey }: { refreshKey: number }) {
     try { await api(`/my-bets/${id}`, { method: 'DELETE' }); setTick((t) => t + 1) } catch (e) { setError((e as Error).message) }
   }
 
+  if (error === 'Forbidden') return <TokenForm onSaved={() => { setError(''); setRes(null); setTick((t) => t + 1) }} />
   if (error) return <p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">{error}</p>
   if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
   const { bets, legs, totals: t } = res.data
@@ -73,5 +74,21 @@ export default function MyBets({ refreshKey }: { refreshKey: number }) {
         </ul>
       )}
     </div>
+  )
+}
+
+/** Personal bets are private. On this computer they open by themselves; on a deployed copy the access token (the CAPTURE_TOKEN you set) unlocks them. It is kept in this browser only. */
+function TokenForm({ onSaved }: { onSaved: () => void }) {
+  const [value, setValue] = useState('')
+  return (
+    <form className="space-y-2 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4" onSubmit={(e) => { e.preventDefault(); setToken(value.trim()); onSaved() }}>
+      <p className="text-sm text-neutral-300">My bets are private. Enter your access token to see and log them from this browser.</p>
+      <p className="text-xs text-neutral-500">It is the <code>CAPTURE_TOKEN</code> you set on the server. It is stored in this browser only and sent as a header. {getToken() ? 'The saved token was refused.' : ''}</p>
+      <div className="flex gap-2">
+        <label className="sr-only" htmlFor="access-token">Access token</label>
+        <input id="access-token" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} className="min-w-0 flex-1 rounded-lg bg-neutral-800 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-emerald-500" />
+        <button className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-neutral-950 hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300">Save</button>
+      </div>
+    </form>
   )
 }

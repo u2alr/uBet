@@ -10,6 +10,8 @@ import { DEFAULT_ENGINE_CONFIG } from '../../shared/engine/config.ts'
 import { OPP_ALLOWED_SQL, buildOppTable, type AllowedRow } from '../../shared/opponent.ts'
 import { attachOpponent } from '../../shared/minds.ts'
 import { boardPayload, slim } from '../../shared/boardPayload.ts'
+import { normAbbr } from '../../shared/teamCodes.ts'
+import { evaluateHealth } from '../../shared/health.ts'
 import { PRIOR_SQL, closingProxy, firstObserved, flatten, planArchive, priorFromRows, runSql, type PriorRow } from '../../shared/oddsArchive.ts'
 import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
@@ -98,8 +100,7 @@ const ODDS_TTL = 8 * 60 * 60 // seconds
 const DEFAULT_MAX_EVENTS = 3
 
 // ESPN team abbreviations that differ from NBA.com's (what ingest/sync.py stores).
-const ESPN_TO_NBA: Record<string, string> = { GS: 'GSW', SA: 'SAS', NY: 'NYK', NO: 'NOP', WSH: 'WAS', UTAH: 'UTA' }
-const nbaAbbr = (a: string) => ESPN_TO_NBA[a] ?? a
+const nbaAbbr = normAbbr
 
 interface Cached<T> { fetchedAt: number | null; data: T }
 
@@ -446,6 +447,19 @@ async function archiveSnapshot(env: Bindings, ev: OddsEvent, fetchedAt: number |
   }
 }
 
+// Is this deployment configured and current? Booleans, counts and ages only: never a secret, never a value from the environment.
+app.get('/health', async (c) => {
+  const db = c.env.DB
+  const tables = (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>().catch(() => ({ results: [] as { name: string }[] }))).results.map((r) => r.name)
+  const one = async (sql: string) => (await db.prepare(sql).first<{ v: string | null }>().catch(() => null))?.v ?? null
+  const report = evaluateHealth({
+    oddsKeySet: !!c.env.ODDS_API_KEY, captureTokenSet: !!c.env.CAPTURE_TOKEN, tables,
+    lastSync: await one("SELECT value AS v FROM meta WHERE key = 'last_sync'"), newestGame: await one('SELECT MAX(date) AS v FROM games'),
+    newestProjection: tables.includes('projections') ? await one('SELECT MAX(created_at) AS v FROM projections') : null, now: Date.now(),
+  })
+  return c.json(report, report.status === 'down' ? 503 : 200)
+})
+
 // What the archive holds, and, for one event, each market's first observed price and closing proxy (with the reason when there is none).
 app.get('/odds-archive', async (c) => {
   const db = c.env.DB
@@ -710,17 +724,17 @@ const AGG = `COUNT(*) AS bets,
 
 // Cheat sheet data: every player with a projection for a game today or later, with their last 10 played games. The streak logic itself runs in
 // the browser (src/lib/cheatSheet.ts). Players listed Out are left out. Games are real games only: preseason and zero-minute rows are skipped.
-app.get('/cheatsheet', async (c) => {
+async function buildCheatsheet(env: Bindings) {
   const today = etDate(new Date().toISOString())
-  const upcoming = (await c.env.DB.prepare(
+  const upcoming = (await env.DB.prepare(
     `SELECT pr.player_id AS id, MIN(pr.game_date) AS gameDate, p.name, p.team FROM projections pr JOIN players p ON p.id = pr.player_id
      WHERE pr.game_date >= ? GROUP BY pr.player_id ORDER BY p.name`,
   ).bind(today).all<{ id: number; gameDate: string; name: string; team: string | null }>()).results
-  const injuries = (await loadInjuries(c.env)) ?? new Map<string, Injury>()
+  const injuries = (await loadInjuries(env)) ?? new Map<string, Injury>()
   const people = upcoming.filter((p) => injuries.get(normName(p.name))?.status !== 'out')
   const byId = new Map<number, { date: string; minutes: number; pts: number; reb: number; ast: number; fg3m: number }[]>()
   for (const ids of chunk(people.map((p) => p.id), MAX_PLAYERS_PER_QUERY)) {
-    const { results } = await c.env.DB.prepare(
+    const { results } = await env.DB.prepare(
       `SELECT pg.player_id AS id, g.date, pg.minutes, pg.pts, pg.reb, pg.ast, pg.fg3m
        FROM player_games pg JOIN games g ON g.id = pg.game_id
        WHERE pg.player_id IN (${ids.map(() => '?').join(',')}) AND g.game_type != 'preseason' AND pg.minutes > 0 AND g.date >= date('now', '-400 days')
@@ -731,7 +745,14 @@ app.get('/cheatsheet', async (c) => {
       if (list.length < 10) { list.push({ date: r.date, minutes: r.minutes, pts: r.pts, reb: r.reb, ast: r.ast, fg3m: r.fg3m }); byId.set(r.id, list) }
     }
   }
-  return c.json({ data: people.filter((p) => byId.has(p.id)).map((p) => ({ ...p, injury: injuries.get(normName(p.name)) ?? null, games: byId.get(p.id)! })) })
+  return people.filter((p) => byId.has(p.id)).map((p) => ({ ...p, injury: injuries.get(normName(p.name)) ?? null, games: byId.get(p.id)! }))
+}
+
+// The query reads up to 400 days of games for every player with a game coming up, so the result is cached for 10 minutes (and per ET date).
+app.get('/cheatsheet', async (c) => {
+  const day = etDate(new Date().toISOString())
+  const hit = await cachedMeta(`cheatsheet-${day}`, 10 * 60, () => buildCheatsheet(c.env), wantsFresh(c))
+  return c.json({ data: hit.data, cachedAt: hit.fetchedAt ? new Date(hit.fetchedAt).toISOString() : null })
 })
 
 // Who is on the injury report (Out, Doubtful, Questionable), matched to our roster. Cached with the injury feed (15 minutes).
@@ -871,7 +892,9 @@ app.post('/my-bets', async (c) => {
   return c.json({ ok: true, id })
 })
 
+// Personal data: reads need the same access as writes (localhost, or the CAPTURE_TOKEN header), so a deployed copy never shows anyone's bets to a stranger.
 app.get('/my-bets', async (c) => {
+  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
   const bets = (await c.env.DB.prepare(
     'SELECT id, placed_at AS placedAt, stake, note, status, settled_odds AS settledOdds, profit FROM my_bets ORDER BY id DESC LIMIT 500',
   ).all<MyBetRow & { id: number }>()).results

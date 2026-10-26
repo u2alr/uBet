@@ -1,0 +1,5 @@
+{
+  "note": "ESPN abbreviations that differ from NBA.com's. The one source of truth: shared/teamCodes.ts (TypeScript) and research/project.py (Python) both read this file.",
+  "espnToNba": { "GS": "GSW", "SA": "SAS", "NY": "NYK", "NO": "NOP", "WSH": "WAS", "UTAH": "UTA" },
+  "nba": ["ATL", "BKN", "BOS", "CHA", "CHI", "CLE", "DAL", "DEN", "DET", "GSW", "HOU", "IND", "LAC", "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK", "OKC", "ORL", "PHI", "PHX", "POR", "SAC", "SAS", "TOR", "UTA", "WAS"]
+}

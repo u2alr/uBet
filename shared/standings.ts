@@ -1,4 +1,6 @@
 // Parses ESPN's standings feed into plain rows. Pure: no network, no clock.
+import { normAbbr } from './teamCodes.ts'
+
 export interface StandingRow {
   abbr: string; team: string; seed: number; wins: number; losses: number; winPct: number; gamesBehind: number
   home: string; road: string; last10: string; streak: string; diff: number; ptsFor: number; ptsAgainst: number
@@ -8,7 +10,6 @@ export interface Conference { name: string; rows: StandingRow[] }
 type Stat = { name?: string; displayValue?: string; value?: number }
 interface Entry { team?: { abbreviation?: string; displayName?: string }; stats?: Stat[] }
 
-const ABBR_FIX: Record<string, string> = { GS: 'GSW', SA: 'SAS', NY: 'NYK', NO: 'NOP', WSH: 'WAS', UTAH: 'UTA' }
 const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0)
 
 export function parseStandings(feed: unknown): Conference[] {
@@ -24,7 +25,7 @@ export function parseStandings(feed: unknown): Conference[] {
       const v = (n: string) => num(by.get(n)?.value)
       const d = (n: string, fallback = '–') => by.get(n)?.displayValue ?? fallback
       rows.push({
-        abbr: ABBR_FIX[abbr] ?? abbr, team: e.team.displayName, seed: v('playoffSeed') || 99, wins: v('wins'), losses: v('losses'),
+        abbr: normAbbr(abbr), team: e.team.displayName, seed: v('playoffSeed') || 99, wins: v('wins'), losses: v('losses'),
         winPct: v('winPercent'), gamesBehind: v('gamesBehind'), home: d('Home'), road: d('Road'), last10: d('Last Ten Games'),
         streak: d('streak', ''), diff: v('pointDifferential'), ptsFor: v('pointsFor'), ptsAgainst: v('pointsAgainst'),
       })

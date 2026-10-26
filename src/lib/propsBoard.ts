@@ -75,9 +75,8 @@ export function opponentOf(p: Pick): string | null {
   return other ? teamByName(other)?.[0] ?? null : null
 }
 
-/** ESPN's team codes that differ from NBA.com's (the codes used everywhere else in the app). */
-const ESPN_ABBR: Record<string, string> = { GS: 'GSW', SA: 'SAS', NY: 'NYK', NO: 'NOP', WSH: 'WAS', UTAH: 'UTA' }
-export const normAbbr = (abbr: string) => ESPN_ABBR[abbr] ?? abbr
+export { normAbbr } from '../../shared/teamCodes.ts'
+import { normAbbr } from '../../shared/teamCodes.ts'
 
 export interface FavoriteInput { home: { abbr: string }; away: { abbr: string }; odds?: { spread: number | null; total: number | null; homeWinProb: number | null } | null }
 export interface Favorite { abbr: string; prob: number; spread: number | null; total: number | null; tossUp: boolean }

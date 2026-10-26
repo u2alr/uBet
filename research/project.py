@@ -37,7 +37,8 @@ OUT = Path(__file__).resolve().parent / "out"
 MODEL = "gbm-v1"
 DUMMY_BASE = 900_000_000  # placeholder GAME_IDs; real ones are 8 digits
 ET = ZoneInfo("America/New_York")
-ESPN_TO_NBA = {"GS": "GSW", "SA": "SAS", "NY": "NYK", "NO": "NOP", "WSH": "WAS", "UTAH": "UTA"}
+# One shared mapping for ESPN -> NBA.com team codes, also used by the TypeScript side (shared/teamCodes.ts).
+ESPN_TO_NBA = json.loads((ROOT / "shared" / "teamCodes.json").read_text(encoding="utf-8"))["espnToNba"]
 TEAM_ID = {t["abbreviation"]: t["id"] for t in nba_teams.get_teams()}
 
 

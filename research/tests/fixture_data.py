@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 SEASONS = ["2022-23", "2023-24", "2024-25"]
-TEAMS = [(1610612737 + i, f"T{i}") for i in range(8)]
+TEAMS = [(1610612737 + i, abbr) for i, abbr in enumerate(["ATL", "BOS", "BKN", "CHA", "CHI", "CLE", "DAL", "DEN"])]   # real abbreviations, so the travel table applies
 PLAYERS_PER_TEAM = 9
 
 
@@ -46,7 +46,13 @@ def make(out: Path, seed: int = 7) -> None:
                                            GAME_DATE=date.strftime("%Y-%m-%d"), MATCHUP=matchup, MIN=round(m), FGA=fga, FTA=fta, TOV=tov, OREB=oreb, PTS=pts, REB=reb, AST=ast,
                                            FG3M=fg3m, STL=int(rng.poisson(0.7)), BLK=int(rng.poisson(0.4))))
                         tot["PTS"] += pts; tot["FGA"] += fga; tot["FTA"] += fta; tot["TOV"] += tov; tot["OREB"] += oreb
-                    t_rows.append(dict(SEASON_ID=22022 + si, TEAM_ID=tid, TEAM_ABBREVIATION=abbr, GAME_ID=gid, GAME_DATE=date.strftime("%Y-%m-%d"), MATCHUP=matchup, **tot))
+                    t_rows.append(dict(SEASON_ID=22022 + si, TEAM_ID=tid, TEAM_ABBREVIATION=abbr, GAME_ID=gid, GAME_DATE=date.strftime("%Y-%m-%d"), MATCHUP=matchup, MIN=240 + (5 if rng.random() < 0.08 else 0), PLUS_MINUS=0, **tot))
+        by_game = {}
+        for r in t_rows:
+            by_game.setdefault(r["GAME_ID"], []).append(r)
+        for rs in by_game.values():                        # final margin from each team's own points
+            if len(rs) == 2:
+                rs[0]["PLUS_MINUS"], rs[1]["PLUS_MINUS"] = rs[0]["PTS"] - rs[1]["PTS"], rs[1]["PTS"] - rs[0]["PTS"]
         pd.DataFrame(p_rows).to_csv(out / f"player_{season}_regular.csv", index=False)
         pd.DataFrame(t_rows).to_csv(out / f"team_{season}_regular.csv", index=False)
 
