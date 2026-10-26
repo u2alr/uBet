@@ -124,6 +124,17 @@ def espn_out_players() -> set[str]:
     return out
 
 
+def drop_out_players(df: pd.DataFrame, out_names: set[str]) -> pd.DataFrame:
+    """Remove players ESPN lists as Out from the rows being projected. Pure filtering: no model feature of any other player changes
+    (features use only earlier games), so this is not a modelling adjustment."""
+    if not out_names:
+        return df
+    names = df.dropna(subset=["PLAYER_NAME"]).drop_duplicates("PLAYER_ID", keep="last").set_index("PLAYER_ID")["PLAYER_NAME"].map(norm_name)
+    drop = (df.GAME_ID >= DUMMY_BASE) & df.PLAYER_ID.map(names).isin(out_names)
+    print(f"  {int(drop.sum())} players listed Out get no projection (feature values unchanged)")
+    return df[~drop].reset_index(drop=True)
+
+
 def apply_injury_news(df: pd.DataFrame, out_names: set[str]) -> pd.DataFrame:
     """Use the real injury report for who is missing tonight.
 
@@ -191,7 +202,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--remote", action="store_true")
     ap.add_argument("--days", type=int, default=3)
-    ap.add_argument("--no-injuries", action="store_true", help="do not use the ESPN injury report for who is out")
+    ap.add_argument("--injury-features", action="store_true", help="EXPERIMENTAL: overwrite the missing-teammate features with the ESPN injury report (unvalidated, train/serve mismatch; off by default)")
     ap.add_argument("--no-pull", action="store_true", help="skip refreshing the raw logs")
     args = ap.parse_args()
 
@@ -205,8 +216,11 @@ def main():
     players, teams = load_raw()
     players, teams = add_placeholders(players, teams, games, current_rosters())
     df = build(players, teams)
-    if not args.no_injuries:
-        df = apply_injury_news(df, espn_out_players())
+    out_names = espn_out_players()
+    if args.injury_features:
+        df = apply_injury_news(df, out_names)        # OPT-IN, unvalidated: see research/INJURY_FEATURES.md
+    else:
+        df = drop_out_players(df, out_names)         # availability filter only: a player listed Out gets no projection; no feature is changed
     proj = fit_and_project(df)
     print(proj.groupby("stat")[["mean", "alpha"]].mean().round(3))
     write_sql(proj, args.remote)
