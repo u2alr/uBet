@@ -79,13 +79,28 @@ Environment variables (set in `.dev.vars` locally, as Pages secrets when deploye
 | `CAPTURE_TOKEN` | If set, routes that spend credits or write (`/api/capture`, `?fresh=1`, `POST /api/predictions`) need this in the `x-capture-token` header. If unset they only work from localhost. **Set it before deploying.** |
 | `FALLBACK_MODEL` | `v3` switches the fallback model to the negative-binomial baseline (default `v2`; see `AUDIT.md` finding 14) |
 | `ODDS_REGIONS`, `ODDS_MARKETS`, `ODDS_HOURS`, `ODDS_BOOKS` | what to fetch (each region/market costs credits) |
+| `ODDS_MAX_EVENTS` | games whose props are pulled per refresh (default 3; one credit per market per game) |
+
+`CAPTURE_TOKEN` also protects personal data (`GET/POST/DELETE /api/my-bets`). On a deployed copy, enter it once under Results > My bets; it is kept in that browser only.
 
 ```bash
 npm run check               # typecheck, lint, unit and db tests
 npm run test:integration    # real Worker against a fake provider and a scratch copy of your local database
 npm run test:mutation       # plants known bugs and checks the tests catch them
 npm run check:data          # database integrity checks
+npm run check:config        # deployment configuration without printing any secret (add -- --production for a deployed copy)
+npm run test:research       # Python research tests, incl. the leakage test on a generated fixture and a seeded leak that must be caught
 npm run grade               # grade logged picks against stored box scores (also runs after every sync)
 ```
+
+**CI** (`.github/workflows/ci.yml`) runs types, lint, unit tests, in-memory database tests and the build, plus the Python research suite and the ingest tests. It uses no secrets, no live API and no paid data.
+`test:integration` is not in CI because it needs a local database holding real synced box scores; run it before merging.
+
+**Odds archive.** Every odds snapshot the website or the Minds runner retrieves is stored point-in-time (`odds_runs`, `odds_quotes`, migration 0018): price, line, book, when we saw it, whether it was fresh. `node minds/capture_odds.mjs` adds
+pre-event snapshots (credit-capped). The last observation before a documented cutoff is a *closing proxy*, never a true closing line. `GET /api/odds-archive` shows coverage; `research/archive_to_snapshots.py` feeds it to the pre-registered market evaluation.
+No market-beating result exists: see `research/MARKET_EVAL_STATUS.md`.
+
+**One calculation.** The probability and expected value on every screen come from `shared/engine/authority.ts`, the same records Minds decides on. A pick the engine cannot price shows the older simple blend marked as unvalidated (a tilde and "unvalidated").
+`GET /api/health` reports configuration and data freshness without secrets.
 
 `AUDIT.md` lists what was found, what was fixed, what is unproven and what is blocked on data.
