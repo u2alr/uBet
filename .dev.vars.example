@@ -1,3 +1,5 @@
 ODDS_API_KEY=your_key_from_the-odds-api.com
 # Comma-separated regions, each one multiplies credit use: us, us2, uk, eu, au
 ODDS_REGIONS=us
+# Games to pull player props for per refresh. Each game costs one credit per market (4 markets = 4 credits), so keep this small on the free tier.
+ODDS_MAX_EVENTS=3

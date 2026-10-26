@@ -15,7 +15,7 @@ the latest scorecard is `AUDIT_SCORECARD.md`.
 ## Odds sources
 `ODDS_API_KEY` set in `.dev.vars` selects The Odds API (FanDuel, DraftKings and bet365 only, one request per game; props for the
 points, rebounds, assists, threes and PRA markets). It is the primary source. OddsBlaze is used only if no Odds API key is set, or as an automatic fallback when The Odds API returns nothing (credits used up, key rejected). `--provider oddsapi|oddsblaze` forces one.
-Free-tier credits are small: a run of about 12 games spends roughly 12 requests per market set.
+Credits are conservative by default: only the next 3 games are pulled (about 15 credits for 5 markets), and the run stops early if fewer than 25 credits remain. `--max-games N` or `ODDS_MAX_GAMES` raises it. The website's props pull is capped the same way with `ODDS_MAX_EVENTS` (default 3) and cached for 8 hours.
 
 ## Developer aids
 - `node minds/run.mjs --dry --cache`: reuse the last download for up to 3 hours and write nothing.

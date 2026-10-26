@@ -21,6 +21,8 @@ type Bindings = {
   FALLBACK_MODEL?: string
   ODDS_REGIONS?: string
   ODDS_MARKETS?: string
+  /** Games to pull props for per refresh (default 3). */
+  ODDS_MAX_EVENTS?: string
   ODDS_HOURS?: string
   ODDS_BOOKS?: string
 }
@@ -85,7 +87,8 @@ const GAME_TYPES = ['regular', 'playoffs', 'preseason']
 const ODDS_DEFAULT = 'https://api.the-odds-api.com/v4/sports/basketball_nba'
 // The free plan is ~500 credits/month; one event costs (markets x regions) credits, so cache hard.
 const ODDS_TTL = 8 * 60 * 60 // seconds
-const MAX_EVENTS = 8
+/** Games whose props are pulled per refresh. Every game costs one credit per market, so the default is small; raise ODDS_MAX_EVENTS to see more. */
+const DEFAULT_MAX_EVENTS = 3
 
 // ESPN team abbreviations that differ from NBA.com's (what ingest/sync.py stores).
 const ESPN_TO_NBA: Record<string, string> = { GS: 'GSW', SA: 'SAS', NY: 'NYK', NO: 'NOP', WSH: 'WAS', UTAH: 'UTA' }
@@ -428,7 +431,7 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
   const events = await cachedJson<any[]>('odds-events', 30 * 60, () => oddsFetch(env, '/events'), fresh)
   const upcoming = events
     .filter((e) => Date.parse(e.commence_time) < now + Number(env.ODDS_HOURS ?? 40) * 3600_000 && Date.parse(e.commence_time) > now)
-    .slice(0, MAX_EVENTS)
+    .slice(0, Math.max(1, Math.min(15, Number(env.ODDS_MAX_EVENTS) || DEFAULT_MAX_EVENTS)))
 
   const regions = env.ODDS_REGIONS ?? 'us'
   const markets = env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists,player_points_rebounds_assists'

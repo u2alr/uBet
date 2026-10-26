@@ -34,11 +34,19 @@ const pi = args.indexOf('--provider')
 let provider = pi >= 0 ? args[pi + 1] : secret('ODDS_API_KEY') ? 'oddsapi' : 'oddsblaze'
 const key = () => { const k = secret(provider === 'oddsapi' ? 'ODDS_API_KEY' : 'ODDSBLAZE_KEY'); if (!k) throw new Error(`${provider} key missing`); return k }
 
+// Credit budget. Each game costs one credit per market (5 markets = 5 credits), and the free tier is about 500 a month, so by default only the
+// next 3 games are pulled. --max-games N or ODDS_MAX_GAMES raises it. The run also stops early if the provider reports few credits left.
+const maxGames = Math.max(1, Math.min(15, (args.includes('--max-games') ? Number(args[args.indexOf('--max-games') + 1]) : 0) || Number(secret('ODDS_MAX_GAMES')) || 3))
+const CREDIT_RESERVE = 25
+
 async function fetchOddsApi(k, horizonMs) {
   const base = 'https://api.the-odds-api.com/v4/sports/basketball_nba'
   const list = await fetch(`${base}/events?apiKey=${k}`)
   if (!list.ok) throw new Error(`events: HTTP ${list.status}`)
   const soon = (await list.json()).filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + horizonMs)
+    .sort((a, b) => Date.parse(a.commence_time) - Date.parse(b.commence_time)).slice(0, maxGames)
+  const marketCount = ODDS_API_MARKETS.split(',').length
+  console.log(`The Odds API: ${soon.length} game${soon.length === 1 ? '' : 's'} (cap ${maxGames}), about ${soon.length * marketCount} credits`)
   const out = []
   for (const e of soon) {   // one request per game; props are only served per event
     const u = new URL(`${base}/events/${e.id}/odds`)
@@ -46,6 +54,9 @@ async function fetchOddsApi(k, horizonMs) {
     const r = await fetch(u)
     if (!r.ok) { console.error('skip game', e.id, `HTTP ${r.status}`); continue }
     out.push(await r.json())
+    const left = Number(r.headers.get('x-requests-remaining'))
+    console.log(`  credits left: ${Number.isFinite(left) ? left : 'unknown'}`)
+    if (Number.isFinite(left) && left < CREDIT_RESERVE) { console.error(`Stopping: only ${left} credits left (reserve ${CREDIT_RESERVE}).`); break }
   }
   return out
 }

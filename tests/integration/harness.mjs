@@ -54,7 +54,7 @@ export async function start({ extraBindings = [], seed } = {}) {
   }
   await new Promise((r) => fake.listen(FAKE_PORT, '127.0.0.1', r))
   const args = ['wrangler', 'pages', 'dev', '--port', String(APP_PORT), '--persist-to', TEST_STATE,
-    '--binding', `ODDS_BASE_URL=${FAKE}/v4/sports/basketball_nba`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'ODDS_API_KEY=test-key-not-real', ...extraBindings.flatMap((b) => ['--binding', b])]
+    '--binding', `ODDS_BASE_URL=${FAKE}/v4/sports/basketball_nba`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'ODDS_API_KEY=test-key-not-real', ...(extraBindings.some((b) => b.startsWith('ODDS_MAX_EVENTS=')) ? [] : ['--binding', 'ODDS_MAX_EVENTS=8']), ...extraBindings.flatMap((b) => ['--binding', b])]
   const child = spawn('npx', args, { cwd: ROOT, shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   child.stdout.on('data', (b) => { log += b })
