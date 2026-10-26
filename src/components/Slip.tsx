@@ -92,6 +92,9 @@ export default function Slip() {
         </span>
       </div>
 
+      {legs.some((l) => l.basis !== 'authoritative') && (
+        <p className="text-xs text-amber-400/90">Some legs use the older simple blend, which is not validated: the figures above mix calculations.</p>
+      )}
       {(sameGame || samePlayer) && (
         <p className="text-xs text-neutral-500">
           {samePlayer && 'Two legs on the same player move together. '}

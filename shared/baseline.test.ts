@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import dispersionTable from './dispersion.json' with { type: 'json' }
 import { describe, it } from 'node:test'
 import {
-  alphaAt, blendProb, distributionFor, expectedValue, hitRate, nbPOver, outcomeProbs, predict, predictV3, riskTier,
+  alphaAt, blendProb, distributionFor, expectedValue, hitRate, nbPOver, outcomeProbs, predict, predictV3,
   type Dist, type Sample,
 } from './baseline.ts'
 
@@ -206,7 +206,7 @@ describe('hitRate', () => {
   })
 })
 
-describe('blendProb, expectedValue, riskTier', () => {
+describe('blendProb, expectedValue', () => {
   it('stays within [0, 1] even for out-of-range inputs', () => {
     for (const [m, k, w] of [[0, 1, 0], [1, 0, 1], [-5, 7, 5], [0.5, null, 0.3], [2, null, -9], [0.9, 0.1, 0.3]] as const) {
       const b = blendProb(m, k, w)
@@ -230,11 +230,6 @@ describe('blendProb, expectedValue, riskTier', () => {
     assert.ok(Math.abs(expectedValue(0.55, 0, 2) - 0.1) < 1e-12)
     assert.ok(Math.abs(expectedValue(0.55, 0.2, 2) - 0.08) < 1e-12)
     assert.equal(expectedValue(0.9, 1, 3), 0) // always refunded
-  })
-  it('risk tiers', () => {
-    assert.equal(riskTier(0.7), 'safe')
-    assert.equal(riskTier(0.5), 'balanced')
-    assert.equal(riskTier(0.3), 'risky')
   })
 })
 

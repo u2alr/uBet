@@ -53,7 +53,8 @@ export interface RecordContext {
   injuryChecked: boolean
 }
 
-export const legKey = (p: Pick) => `${p.playerId}|${p.stat}|${p.line}|${p.side}`
+/** One market: event, player, stat, line and side. The event is part of the key so the same line in two different games is never merged. */
+export const legKey = (p: Pick) => `${p.eventId}|${p.playerId}|${p.stat}|${p.line}|${p.side}`
 const rankKey = (p: Pick) => `${p.eventId}|${p.team}|${p.playerId}`
 const pct = (x: number, d = 0) => `${(x * 100).toFixed(d)}%`
 

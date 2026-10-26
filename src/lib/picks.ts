@@ -3,20 +3,20 @@ import type { Pick } from '../../shared/picks.ts'
 // One definition of a pick, shared with the Worker that builds it, so the two cannot drift apart.
 export type { Pick }
 
-export const pickKey = (p: Pick) => `${p.playerId}|${p.stat}|${p.side}|${p.line}`
+export const pickKey = (p: Pick) => `${p.eventId}|${p.playerId}|${p.stat}|${p.side}|${p.line}`
 
 // ---- tabs ----
 
-/** Best expected profit first. */
+/** Best expected profit first. Only numbers from the authoritative engine count: the legacy simple blend is never ranked as value. */
 export const valuePicks = (all: Pick[]) =>
-  all.filter((p) => p.ev > 0).sort((a, b) => b.ev - a.ev).slice(0, 15)
+  all.filter((p) => p.basis === 'authoritative' && p.ev > 0).sort((a, b) => b.ev - a.ev).slice(0, 15)
 
-/** Most likely to land, with enough games behind the estimate to trust it. */
-export const safestPicks = (all: Pick[]) =>
+/** Most likely to land, with enough games behind the estimate to trust it. A likely pick is not a good-value or low-risk one: its expected value can be negative. */
+export const likelyPicks = (all: Pick[]) =>
   all.filter((p) => p.prob >= 0.58 && p.sample >= 10).sort((a, b) => b.prob - a.prob).slice(0, 12)
 
 /** Biggest payouts that the numbers don't rule out. Expect to lose most of these. */
-export const riskiestPicks = (all: Pick[]) =>
+export const longshotPicks = (all: Pick[]) =>
   all.filter((p) => p.ev > -0.05 && p.price >= 2.2).sort((a, b) => b.price - a.price).slice(0, 12)
 
 // ---- parlays ----
@@ -62,15 +62,15 @@ function take(list: Pick[], n: number): Pick[] {
 
 export function suggestParlays(all: Pick[]): Parlay[] {
   const result: Parlay[] = []
-  const safe = take(safestPicks(all), 3)
+  const safe = take(likelyPicks(all), 3)
   if (safe.length === 3)
-    result.push({ name: 'Safe', blurb: 'Three of the likeliest legs, from different games.', legs: safe })
+    result.push({ name: 'Likely legs', blurb: 'Three of the likeliest legs, from different games. Likely is not the same as good value: check the expected value of each.', legs: safe })
 
   const balanced = take(valuePicks(all).filter((p) => p.prob >= 0.5), 4)
   if (balanced.length >= 3)
     result.push({ name: 'Value', blurb: 'The best expected-profit legs that are still better than a coin flip.', legs: balanced })
 
-  const long = take(riskiestPicks(all), 3)
+  const long = take(longshotPicks(all), 3)
   if (long.length === 3)
     result.push({ name: 'Longshot', blurb: 'Big payout, low chance. Small stake only.', legs: long })
   return result

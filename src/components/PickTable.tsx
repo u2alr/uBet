@@ -1,23 +1,13 @@
 import { Fragment, Suspense, lazy, useState } from 'react'
 import { STAT_LABEL, fmt, pct } from '../lib/format'
-import type { Risk } from '../../shared/baseline'
 import { groupByGame, type Pick } from '../lib/picks'
 import { useSlip } from '../lib/slipContext'
 import { InjuryTag, RoleTag } from './Availability'
+import EvidenceBadge from './EvidenceBadge'
 import Headshot from './Headshot'
 import { PickSpark } from './PickSpark'
 
 const PickBars = lazy(() => import('./PickBars'))
-
-const RISK: Record<Risk, { label: string; cls: string }> = {
-  safe: { label: 'Safe', cls: 'bg-neutral-200 text-neutral-900' },
-  balanced: { label: 'Even', cls: 'bg-neutral-800 text-neutral-300' },
-  risky: { label: 'Risky', cls: 'border border-neutral-600 text-neutral-400' },
-}
-
-export function RiskBadge({ risk }: { risk: Risk }) {
-  return <span className={`rounded px-1.5 py-0.5 text-[11px] uppercase tracking-wider ${RISK[risk].cls}`}>{RISK[risk].label}</span>
-}
 
 export function SlipButton({ pick }: { pick: Pick }) {
   const slip = useSlip()
@@ -53,7 +43,7 @@ export default function PickTable({ picks, onOpenPlayer, empty }: {
             <th className="px-2 py-1.5 text-right font-normal" title="How often this side hit in the last 10 games">L10</th>
             <th className="px-2 py-1.5 text-right font-normal" title="Games behind the estimate">Games</th>
             <th className="px-2 py-1.5 text-right font-normal">EV</th>
-            <th className="px-2 py-1.5 font-normal">Risk</th>
+            <th className="px-2 py-1.5 font-normal" title="How much evidence stands behind the numbers. Not a measure of safety.">Evidence</th>
             <th className="px-3 py-1.5" />
           </tr>
         </thead>
@@ -116,8 +106,8 @@ function PickRow({ p, onOpenPlayer }: { p: Pick; onOpenPlayer: (id: number) => v
       </td>
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-400">{pct(p.hitRate10)}</td>
       <td className="px-2 py-0.5 text-right tabular-nums text-neutral-500">{p.sample}</td>
-      <td className="px-2 py-0.5 text-right tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}%</td>
-      <td className="px-2 py-0.5"><RiskBadge risk={p.risk} /></td>
+      <td className={`px-2 py-0.5 text-right tabular-nums ${p.basis === 'authoritative' ? 'text-neutral-100' : 'text-neutral-500'}`} title={p.basis === 'authoritative' ? 'Expected profit per unit staked' : 'Simple blend, not validated'}>{p.basis === 'authoritative' ? '' : '≈ '}{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}%</td>
+      <td className="px-2 py-0.5"><EvidenceBadge p={p} /></td>
       <td className="px-3 py-0.5 text-right"><SlipButton pick={p} /></td>
     </tr>
     {open && <tr className="bg-neutral-950/40"><td colSpan={13}><Suspense fallback={<div className="h-32" />}><PickBars p={p} /></Suspense></td></tr>}

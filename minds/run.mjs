@@ -12,6 +12,7 @@ import { enrichPicks, parseInjuries } from '../shared/injuries.ts'
 import { gzipSync } from 'node:zlib'
 import { attachOpponent, decide, legKey, MINDS_VERSION } from '../shared/minds.ts'
 import { parseCalibration } from '../shared/engine/calibration.ts'
+import { OPP_ALLOWED_SQL, buildOppTable } from '../shared/opponent.ts'
 import { makeConfig } from '../shared/engine/config.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -136,13 +137,8 @@ const ranKey = `minds_ran:${MINDS_VERSION}:${day}`
 if (!dry && d1(`SELECT value FROM meta WHERE key = '${ranKey}'`).length) { console.log(`The Chief already decided for ${day}. Nothing changed.`); process.exit(0) }
 
 // Matchup evidence from raw box scores: how much of each stat a team has allowed over its last 20 games, relative to the league.
-const allowed = d1(`WITH tg AS (
-    SELECT pg.opp AS team, g.id AS gid, g.date, SUM(pg.pts) AS pts, SUM(pg.reb) AS reb, SUM(pg.ast) AS ast, SUM(pg.fg3m) AS fg3m, SUM(pg.pts + pg.reb + pg.ast) AS pra
-    FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE pg.opp IS NOT NULL AND g.game_type = 'regular' GROUP BY pg.opp, g.id),
-  r AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY team ORDER BY date DESC) AS rn FROM tg)
-  SELECT team, AVG(pts) AS pts, AVG(reb) AS reb, AVG(ast) AS ast, AVG(fg3m) AS fg3m, AVG(pra) AS pra, COUNT(*) AS n FROM r WHERE rn <= 20 GROUP BY team HAVING n >= 10`)
-const league = Object.fromEntries(['pts', 'reb', 'ast', 'fg3m', 'pra'].map((s) => [s, allowed.reduce((a, r) => a + r[s], 0) / (allowed.length || 1)]))
-const oppTable = Object.fromEntries(allowed.map((r) => [r.team, Object.fromEntries(['pts', 'reb', 'ast', 'fg3m', 'pra'].map((s) => [s, r[s] / league[s]]))]))
+const allowed = d1(OPP_ALLOWED_SQL)
+const oppTable = buildOppTable(allowed)
 console.log(`opponent tendencies for ${allowed.length} teams`)
 
 // Calibration artifact (written by research/calibrate.py). Missing or unreadable => the engine approves nothing (fail closed).

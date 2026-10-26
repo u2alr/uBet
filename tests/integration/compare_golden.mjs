@@ -3,7 +3,7 @@
 // purpose, and those fields must equal an independent recomputation from the unchanged inputs.
 //   node tests/integration/compare_golden.mjs research/out/golden_before.json research/out/golden_after.json
 import { readFileSync } from 'node:fs'
-import { blendProb, expectedValue, riskTier } from '../../shared/baseline.ts'
+import { blendProb, expectedValue } from '../../shared/baseline.ts'
 
 const [bf, af] = process.argv.slice(2)
 const before = JSON.parse(readFileSync(bf, 'utf8')).body.data
@@ -26,13 +26,13 @@ for (const [k, b] of B) {
     if (JSON.stringify(a[f]) === JSON.stringify(b[f])) out.sameField++
     else out.sameFieldDiff.push(`${k}.${f}: ${JSON.stringify(b[f])} -> ${JSON.stringify(a[f])}`)
   }
-  // Half-point line: the model probability itself must be unchanged, and the blend / EV / risk must follow the documented formulas.
+  // Half-point line: the model probability itself must be unchanged, and the blend / EV must follow the documented formulas.
   if (!whole) {
     if (Math.abs(a.modelProb - b.modelProb) < 1e-9) out.sameField++
     else out.sameFieldDiff.push(`${k}.modelProb: ${b.modelProb} -> ${a.modelProb}`)
     const prob = blendProb(b.modelProb, b.marketProb)
     const ev = expectedValue(prob, 0, b.price)
-    const ok = Math.abs(a.prob - prob) < 1e-9 && Math.abs(a.ev - ev) < 1e-9 && a.risk === riskTier(prob)
+    const ok = Math.abs(a.prob - prob) < 1e-9 && Math.abs(a.ev - ev) < 1e-9
     if (ok) out.recomputedOk++
     else out.recomputedBad.push(`${k}: prob ${a.prob} vs ${prob}, ev ${a.ev} vs ${ev}`)
   } else {
@@ -44,7 +44,7 @@ for (const k of A.keys()) if (!B.has(k)) out.onlyAfter.push(k)
 console.log(`picks before ${before.length}, after ${after.length}`)
 console.log(`unchanged fields: ${out.sameField}; unexpected field differences: ${out.sameFieldDiff.length}`)
 for (const d of out.sameFieldDiff.slice(0, 20)) console.log('   DIFF', d)
-console.log(`half-point picks whose blend / EV / risk match an independent recomputation: ${out.recomputedOk}; mismatches: ${out.recomputedBad.length}`)
+console.log(`half-point picks whose blend / EV match an independent recomputation: ${out.recomputedOk}; mismatches: ${out.recomputedBad.length}`)
 for (const d of out.recomputedBad) console.log('   BAD', d)
 console.log(`picks only before: ${out.onlyBefore.length} ${JSON.stringify(out.onlyBefore)}; only after: ${out.onlyAfter.length} ${JSON.stringify(out.onlyAfter)}`)
 console.log('whole-number-line picks (intentional change):'); for (const d of out.intentional) console.log('  ', d)

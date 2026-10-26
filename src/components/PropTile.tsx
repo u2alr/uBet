@@ -7,6 +7,7 @@ import { InjuryTag, RoleTag } from './Availability'
 import { H2HSummary, H2HTable } from './H2HPanels'
 import { h2hRows, type H2HState } from '../lib/h2hView'
 import Headshot from './Headshot'
+import EvidenceBadge from './EvidenceBadge'
 import { Term } from './MetricGuide'
 import { SlipButton } from './PickTable'
 import { PickSpark } from './PickSpark'
@@ -17,13 +18,13 @@ const PickBars = lazy(() => import('./PickBars'))
 const CAUTION: Record<string, string> = { stale: 'Projection is over 24 hours old', fallback: 'Fallback average model, not the boosted projection', missing: 'No projection available' }
 
 /** Over / under with the best price and book. The side with positive expected value is the only one that is highlighted. */
-function Side({ label, p, lead }: { label: string; p: Pick | null; lead: boolean }) {
-  const good = !!p && lead && p.ev > 0
+function Side({ label, p, lead, missing }: { label: string; p: Pick | null; lead: boolean; missing: string }) {
+  const good = !!p && lead && p.basis === 'authoritative' && p.ev > 0
   return (
     <div className={`flex items-center justify-between rounded-xl border px-3 py-2 ${good ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-neutral-800'}`}>
       <div className="leading-tight">
         <div className="text-sm text-neutral-300">{label}</div>
-        <div className="text-xs text-neutral-500">{p ? p.book : 'not posted'}</div>
+        <div className="text-xs text-neutral-500">{p ? p.book : missing}</div>
       </div>
       <div className="flex items-center gap-2">
         <span className="text-lg font-semibold tabular-nums text-neutral-50">{p ? p.price.toFixed(2) : '–'}</span>
@@ -43,6 +44,7 @@ export default function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2HSt
   const gap = projectionEdge(p)
   const rows = h2hRows(h2h, p)
   const side = p.side === 'over' ? 'Over' : 'Under'
+  const auth = p.basis === 'authoritative'
   const landed = p.recent.filter((v) => (p.side === 'over' ? v > p.line : v < p.line)).length
   const decided = p.recent.filter((v) => v !== p.line).length
   return (
@@ -63,15 +65,15 @@ export default function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2HSt
         </header>
 
         <div className="grid grid-cols-2 gap-2">
-          <Side label="Over" p={c.over} lead={p === c.over} />
-          <Side label="Under" p={c.under} lead={p === c.under} />
+          <Side label="Over" p={c.over} lead={p === c.over} missing={p.counterpart === 'not_posted' ? 'not posted' : 'unavailable'} />
+          <Side label="Under" p={c.under} lead={p === c.under} missing={p.counterpart === 'not_posted' ? 'not posted' : 'unavailable'} />
         </div>
 
         {/* Primary: what the model projects, and what the best side is worth. */}
         <div className="flex items-baseline gap-x-5 gap-y-1">
           <span className="text-sm text-neutral-400"><Term k="proj" /> <b className="text-base font-semibold tabular-nums text-neutral-50">{state === 'missing' ? '–' : fmt(p.projection)}</b>
             {gap != null && <span className={`ml-1 text-xs tabular-nums ${gap > 0 ? 'text-emerald-400' : 'text-neutral-500'}`}>({gap > 0 ? '+' : ''}{gap.toFixed(1)} {side.toLowerCase()})</span>}</span>
-          <span className="ml-auto text-sm text-neutral-400">{side} <Term k="ev" /> <b className={`text-base font-semibold tabular-nums ${p.ev > 0 ? 'text-emerald-400' : 'text-neutral-200'}`}>{evText(p.ev)}</b></span>
+          <span className="ml-auto text-sm text-neutral-400">{side} <Term k="ev" /> <b className={`text-base font-semibold tabular-nums ${auth ? (p.ev > 0 ? 'text-emerald-400' : 'text-neutral-200') : 'text-neutral-400'}`} title={auth ? undefined : 'Simple blend, not validated: the engine could not price this line'}>{auth ? '' : '≈ '}{evText(p.ev)}</b>{!auth && <span className="ml-1 text-xs text-neutral-500">unvalidated</span>}</span>
         </div>
         {state !== 'ok' && <p className="text-xs text-amber-500/90">{CAUTION[state]}</p>}
 
@@ -99,6 +101,14 @@ export default function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2HSt
                   <dt className="text-neutral-500">{name} <Term k="win" /></dt><dd className="text-right text-neutral-200">{(x.prob * 100).toFixed(1)}% <span className="text-neutral-500">· <Term k="ev" /> {evText(x.ev)}</span></dd>
                 </div>
               ))}
+              <dt className="text-neutral-500">Evidence</dt><dd className="text-right"><EvidenceBadge p={p} /></dd>
+              {p.auth && p.basis === 'authoritative' && (
+                <>
+                  <dt className="text-neutral-500">EV is computed at</dt><dd className="text-right text-neutral-200">{p.auth.price.executable?.toFixed(2) ?? '–'} <span className="text-neutral-500">· {p.auth.price.independentBooks} independent book{p.auth.price.independentBooks === 1 ? '' : 's'}{p.auth.price.best != null && p.auth.price.executable != null && p.auth.price.best > p.auth.price.executable + 1e-9 ? `, best ${p.auth.price.best.toFixed(2)} capped to the next book + 3%` : ''}</span></dd>
+                  <dt className="text-neutral-500">Conservative <Term k="ev" /></dt><dd className="text-right text-neutral-200">{p.auth.ev.conservative == null ? '–' : evText(p.auth.ev.conservative)} <span className="text-neutral-500">· lower bound</span></dd>
+                </>
+              )}
+              {p.legacy && <><dt className="text-neutral-500">Older simple blend <span className="text-neutral-600">(not validated)</span></dt><dd className="text-right text-neutral-500">{pct(p.legacy.prob)} · {evText(p.legacy.ev)}</dd></>}
               {p.push > 0.005 && <><dt className="text-neutral-500">Refund chance (lands on the line)</dt><dd className="text-right text-neutral-200">{pct(p.push)}</dd></>}
               <dt className="text-neutral-500">Projection source</dt><dd className="text-right text-neutral-200">{p.model === 'gbm-v1' ? 'Boosted model' : 'Fallback average'}{p.projectionAgeHours != null && <span className="text-neutral-500"> · {p.projectionAgeHours < 1 ? 'under 1h' : `${Math.round(p.projectionAgeHours)}h`} old</span>}</dd>
             </dl>

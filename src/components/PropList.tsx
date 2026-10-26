@@ -39,7 +39,7 @@ export default function PropList({ cards, onOpenPlayer }: { cards: Card[]; onOpe
                 <td className="px-2 text-neutral-300">{STAT_LABEL[p.stat]} <span className="font-medium text-neutral-50">{p.line}</span></td>
                 <td className="px-2"><span className="text-neutral-300">{p.side === 'over' ? 'Over' : 'Under'}</span> <span className="font-semibold text-neutral-50">{p.price.toFixed(2)}</span> <span className="text-xs text-neutral-500">{p.book}</span></td>
                 <td className="px-2 text-right text-neutral-300">{projectionState(p) === 'missing' ? '–' : fmt(p.projection)}{projectionState(p) !== 'ok' && <span className="ml-1 text-amber-500" title="Projection is stale, from the fallback model, or missing">!</span>}</td>
-                <td className={`px-2 text-right font-medium ${p.ev > 0 ? 'text-emerald-400' : 'text-neutral-300'}`}>{evText(p.ev)}</td>
+                <td className={`px-2 text-right font-medium ${p.basis === 'authoritative' ? (p.ev > 0 ? 'text-emerald-400' : 'text-neutral-300') : 'text-neutral-500'}`} title={p.basis === 'authoritative' ? undefined : 'Simple blend, not validated'}>{p.basis === 'authoritative' ? '' : '≈ '}{evText(p.ev)}</td>
                 <td className="px-2 text-right text-neutral-500">{pct(p.modelProb)}</td>
                 <td className="px-2 text-right text-neutral-500">{pct(p.marketProb)}</td>
                 <td className="px-2 text-right text-neutral-500">{hr < 0 ? '–' : `${landed}/${decided}`}</td>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { PicksMeta } from '../../shared/picks.ts'
 import { api } from '../lib/format'
-import { riskiestPicks, safestPicks, suggestParlays, valuePicks, type Pick } from '../lib/picks'
+import { likelyPicks, longshotPicks, suggestParlays, valuePicks, type Pick } from '../lib/picks'
 import Notices from './Notices'
 import Parlays from './Parlays'
 import PickTable from './PickTable'
@@ -16,7 +16,7 @@ const dayLabel = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 const timeLabel = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 
-const VIEWS = ['Value', 'Safest', 'Riskiest'] as const
+const VIEWS = ['Value', 'Most likely', 'Longshots'] as const
 type View = (typeof VIEWS)[number]
 
 export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip }: {
@@ -98,16 +98,16 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip
           </div>
         </div>
         <p className="mb-3 text-xs text-neutral-600">
-          {view === 'Value' && 'Best expected profit: the model and the market blended, compared with the price.'}
-          {view === 'Safest' && 'Most likely to land, from players with plenty of games behind the estimate. Prices are short.'}
-          {view === 'Riskiest' && 'Biggest payouts that the numbers do not rule out. Expect to lose most of these.'}
+          {view === 'Value' && 'Best expected profit per unit staked, from the calibrated model blended with the books no-margin price, at a price two books support. Lines the engine cannot price are not ranked here.'}
+          {view === 'Most likely' && 'Most likely to land, from players with plenty of games behind the estimate. A high chance is not good value: prices are short, so check the expected value and the evidence column.'}
+          {view === 'Longshots' && 'Biggest payouts that the numbers do not rule out. Expect to lose most of these.'}
         </p>
         <Notices meta={meta} />
         {picks === null ? <Muted>Loading…</Muted> : !configured ? (
           <Muted>Add an <code className="text-neutral-300">ODDS_API_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to pull live lines.</Muted>
         ) : (
           <PickTable
-            picks={view === 'Value' ? valuePicks(picks) : view === 'Safest' ? safestPicks(picks) : riskiestPicks(picks)}
+            picks={view === 'Value' ? valuePicks(picks) : view === 'Most likely' ? likelyPicks(picks) : longshotPicks(picks)}
             onOpenPlayer={onOpenPlayer}
             empty="No picks in this category yet. Lines appear once books post props, for players you have synced."
           />

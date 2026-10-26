@@ -45,7 +45,7 @@ const STYLE: Record<string, string> = {
   lean: 'SHADOW_ONLY: a raw edge that fails the conservative test; hypothetical half stake, never a recommendation',
   volume: 'paper only: many lines per game, graded for evidence, never bet',
   research: 'RESEARCH_ONLY: parlays and thin-history or unvalidated singles; graded, never staked',
-  sam: 'proposes the likeliest outcomes, if they still pay',
+  sam: 'proposes likely outcomes that still have non-negative conservative value. A name, not a safety rating: likely is not safe',
   val: 'proposes the biggest conservative expected value',
   lou: 'builds parlays from qualified legs',
   cat: 'proposes where the model beats a market that rates the side under 50%',

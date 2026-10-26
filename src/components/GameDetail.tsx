@@ -7,7 +7,8 @@ import { STAT_LABEL, api, fmt, pct } from '../lib/format'
 import type { PicksMeta } from '../../shared/picks.ts'
 import { pickKey, type Pick } from '../lib/picks'
 import Notices from './Notices'
-import { RiskBadge, SlipButton } from './PickTable'
+import EvidenceBadge from './EvidenceBadge'
+import { SlipButton } from './PickTable'
 
 interface TeamPlayer {
   id: number; name: string; games: number; min: number; pts: number; reb: number; ast: number; fg3m: number
@@ -96,8 +97,8 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                     </span>
                   </button>
                   <span className="flex items-center gap-2">
-                    <RiskBadge risk={p.risk} />
-                    <span className="text-sm tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
+                    <EvidenceBadge p={p} />
+                    <span className={`text-sm tabular-nums ${p.basis === 'authoritative' ? 'text-neutral-100' : 'text-neutral-500'}`} title={p.basis === 'authoritative' ? undefined : 'Simple blend, not validated'}>{p.basis === 'authoritative' ? '' : '≈ '}{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
                     <SlipButton pick={p} />
                   </span>
                 </div>
@@ -147,8 +148,8 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                     </span>
                   </button>
                   <span className="flex items-center gap-2">
-                    <RiskBadge risk={p.risk} />
-                    <span className="text-sm tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
+                    <EvidenceBadge p={p} />
+                    <span className={`text-sm tabular-nums ${p.basis === 'authoritative' ? 'text-neutral-100' : 'text-neutral-500'}`} title={p.basis === 'authoritative' ? undefined : 'Simple blend, not validated'}>{p.basis === 'authoritative' ? '' : '≈ '}{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
                     <SlipButton pick={p} />
                   </span>
                 </div>

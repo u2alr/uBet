@@ -2,10 +2,11 @@
 // No database, no network, no clock: everything arrives as an argument, so every number a user sees can be
 // reproduced in a test. The Worker (functions/api) does the I/O and calls buildPicks().
 import type { BookQuote, SideQuote } from './engine/consensus.ts'
+import type { AuthoritativeView } from './engine/authority.ts'
 import type { Injury, Role } from './injuries.ts'
 import {
-  BIG_GAP, blendProb, expectedValue, hitRate, outcomeProbs, predict, predictV3, riskTier,
-  type GameType, type Risk, type Stat,
+  BIG_GAP, blendProb, expectedValue, hitRate, outcomeProbs, predict, predictV3,
+  type GameType, type Stat,
 } from './baseline.ts'
 
 // ---------- raw inputs, shaped like The Odds API / the database ----------
@@ -24,7 +25,11 @@ export interface OddsOutcome {
 }
 export interface OddsMarket { key: string; outcomes: OddsOutcome[] }
 export interface OddsBook { key: string; title: string; markets: OddsMarket[] }
-export interface OddsEvent { id: string; commence_time: string; home_team: string; away_team: string; bookmakers?: OddsBook[] }
+export interface OddsEvent {
+  id: string; commence_time: string; home_team: string; away_team: string; bookmakers?: OddsBook[]
+  /** When this snapshot of the odds was retrieved (ms since the epoch). Quote freshness is judged against it, not against the wall clock. */
+  fetchedAt?: number | null
+}
 export interface PlayerRow { id: number; name: string; team: string | null }
 /** One past game for one player. Rows for a player must be newest first. */
 export interface HistoryRow { player_id: number; type: GameType; pts: number; reb: number; ast: number; fg3m: number; minutes?: number }
@@ -139,7 +144,20 @@ export interface Pick {
   impliedProb: number
   /** Expected profit per 1 staked. */
   ev: number
-  risk: Risk
+  /**
+   * Which numbers `prob`, `ev`, `modelProb` and `marketProb` are. 'authoritative': from the canonical engine (shared/engine/authority.ts), the same
+   * calculation Minds uses. 'legacy': the older simple blend (shared/baseline.ts blendProb), unvalidated; used only where the engine cannot compute
+   * (no fresh gbm projection, no calibration for the stat, no usable two-sided price). Undefined until applyAuthority has run.
+   */
+  basis?: 'authoritative' | 'legacy'
+  /** The simple-blend numbers this pick had before the engine replaced them. Kept for transparency, never interchangeable with the authoritative ones. */
+  legacy?: { prob: number; ev: number; modelProb: number; marketProb: number | null }
+  /** The engine's own record of this pick: probabilities, executable price, EV, conservative EV, reason codes. */
+  auth?: AuthoritativeView
+  /** When the odds behind this pick were retrieved (ms since the epoch), if known. */
+  snapshotAt?: number | null
+  /** The other side of this exact line: 'posted' (a pick exists for it), or 'not_posted' (no book quotes it). Lets a screen tell "no price" from "not loaded". */
+  counterpart?: 'posted' | 'not_posted'
   /** Which model produced the projection: the boosted model ('gbm-v1') or the fallback ('baseline-v2'). */
   model: string
   /** True when model and market disagree wildly, which usually means the model is missing news. */
@@ -354,12 +372,13 @@ export function buildPicks(input: BuildInput): { picks: Pick[]; diagnostics: Dia
           stat: L.stat, side, line: L.point, price: top.price, book: top.book, prices: sorted.slice(0, 5),
           oddsId: top.id ?? null, eventId: ev.id, marketBooks: both.length,
           modelProb, marketProb, prob, push: outcome.push, impliedProb: 1 / top.price,
-          ev: expectedValue(prob, outcome.push, top.price), risk: riskTier(prob), model: modelName,
+          ev: expectedValue(prob, outcome.push, top.price), model: modelName, snapshotAt: ev.fetchedAt ?? null,
           bigGap: marketProb != null && Math.abs(modelProb - marketProb) > BIG_GAP,
           projection: projected, hitRate10: rate, recent: played.slice(0, 10).reverse(), sample: base.sample,
           projectionAgeHours: ageHours, game, gameDate,
           bookQuotes, sideQuotes: sorted.map((x) => { const q0 = (side === 'over' ? bestOver : bestUnder).get(x.book); return { book: x.book, price: x.price, id: x.id, updated: q0?.updated ?? null, timestampSource: q0?.source } }),
           main: mainLine, mainKnown, identity,
+          counterpart: (side === 'over' ? L.under : L.over).length ? 'posted' as const : 'not_posted' as const,
         })
       }
     }

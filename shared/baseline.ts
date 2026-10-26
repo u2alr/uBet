@@ -31,8 +31,6 @@ export interface Prediction {
   effectiveGames: number
 }
 
-export type Risk = 'safe' | 'balanced' | 'risky'
-
 // How much each kind of game counts. Preseason minutes and rotations are unreliable, so it barely
 // counts; playoff games count fully only when the game being predicted is itself a playoff game.
 function typeWeight(type: GameType, upcoming: GameType) {
@@ -256,10 +254,4 @@ export function blendProb(modelProb: number, marketProb: number | null, modelWei
  */
 export function expectedValue(winProb: number, push: number, price: number) {
   return (1 - push) * (winProb * price - 1)
-}
-
-export function riskTier(prob: number): Risk {
-  if (prob >= 0.62) return 'safe'
-  if (prob < 0.42) return 'risky'
-  return 'balanced'
 }

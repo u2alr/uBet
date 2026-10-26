@@ -5,14 +5,14 @@ import { teamByName } from './teams.ts'
 
 export interface Card { key: string; over: Pick | null; under: Pick | null; lead: Pick }
 
-/** One card per player, stat and line, holding both sides. The lead side is the one with the higher expected value. */
+/** One card per event, player, stat and line, holding both sides. The lead side is the one with the higher expected value (authoritative numbers first). */
 export function toCards(picks: Pick[]): Card[] {
   const m = new Map<string, Card>()
   for (const p of picks) {
-    const key = `${p.playerId}|${p.stat}|${p.line}`
+    const key = `${p.eventId}|${p.playerId}|${p.stat}|${p.line}`     // the event is part of the key: one line in two games is two markets
     const c = m.get(key) ?? { key, over: null, under: null, lead: p }
     if (p.side === 'over') c.over = p; else c.under = p
-    if (p.ev > c.lead.ev) c.lead = p
+    if (evRank(p) > evRank(c.lead)) c.lead = p
     m.set(key, c)
   }
   return [...m.values()]
@@ -26,6 +26,12 @@ export function hitRate(c: Card): number {
   return decided ? landed / decided : -1
 }
 
+/**
+ * A sortable expected value. Authoritative numbers rank above legacy simple-blend numbers whatever their size: the two are different
+ * calculations and are never interleaved by value.
+ */
+export const evRank = (p: Pick): number => (p.basis === 'authoritative' ? 1000 + p.ev : p.ev)
+
 export const SORTS = [
   { key: 'ev', label: 'Expected value (EV)', hint: 'Expected profit per unit staked at the best price. The only order that ranks by value.' },
   { key: 'hit', label: 'Recent hit rate (history only)', hint: 'How often the lead side landed in recent games. Says nothing about price or value.' },
@@ -36,9 +42,9 @@ export type SortKey = (typeof SORTS)[number]['key']
 
 export function sortCards(cards: Card[], key: SortKey): Card[] {
   const by: Record<SortKey, (a: Card, b: Card) => number> = {
-    ev: (a, b) => b.lead.ev - a.lead.ev,
-    hit: (a, b) => hitRate(b) - hitRate(a) || b.lead.ev - a.lead.ev,
-    line: (a, b) => b.lead.line - a.lead.line || b.lead.ev - a.lead.ev,
+    ev: (a, b) => evRank(b.lead) - evRank(a.lead),
+    hit: (a, b) => hitRate(b) - hitRate(a) || evRank(b.lead) - evRank(a.lead),
+    line: (a, b) => b.lead.line - a.lead.line || evRank(b.lead) - evRank(a.lead),
     name: (a, b) => a.lead.player.localeCompare(b.lead.player) || a.lead.stat.localeCompare(b.lead.stat),
   }
   return [...cards].sort(by[key])

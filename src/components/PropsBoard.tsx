@@ -32,6 +32,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   const [picks, setPicks] = useState<Pick[] | null>(null)
   const [configured, setConfigured] = useState(true)
   const [meta, setMeta] = useState<PicksMeta | null>(null)
+  const coverage = (meta as (PicksMeta & { coverage?: { omitted: unknown[] } }) | null)?.coverage
   const [error, setError] = useState('')
   const [stat, setStat] = useState<StatKey>('all')
   const [game, setGame] = useState('all')
@@ -85,7 +86,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   const cards = useMemo(() => {
     const term = q.trim().toLowerCase()
     const list = toCards((picks ?? []).filter((p) => (stat === 'all' || p.stat === stat) && (game === 'all' || p.game === game) && (!term || p.player.toLowerCase().includes(term))))
-      .filter((c) => !positive || c.lead.ev > 0)
+      .filter((c) => !positive || (c.lead.basis === 'authoritative' && c.lead.ev > 0))
     return sortCards(list, sort)
   }, [picks, stat, game, q, sort, positive])
 
@@ -152,6 +153,9 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
         <div className="min-w-0 flex-1"><Notices meta={meta} /></div>
         <MetricGuide />
+        {coverage && coverage.omitted.length > 0 && (
+          <span className="text-xs text-amber-400">{coverage.omitted.length} later game{coverage.omitted.length === 1 ? ' is' : 's are'} not loaded (size limit).</span>
+        )}
         <span className="text-xs tabular-nums text-neutral-600" aria-live="polite">{picks ? `${cards.length} props` : ''}</span>
       </div>
 

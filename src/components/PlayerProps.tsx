@@ -2,7 +2,8 @@ import type { Stat } from '../../shared/baseline'
 import { STAT_LABEL, pct } from '../lib/format'
 import type { Pick } from '../lib/picks'
 import { PickSpark } from './PickSpark'
-import { RiskBadge, SlipButton } from './PickTable'
+import EvidenceBadge from './EvidenceBadge'
+import { SlipButton } from './PickTable'
 
 // Every prop line the books are offering for this one player, both sides, with our chance and the best price.
 export default function PlayerProps({ picks, note, loading, onPick }: {
@@ -27,7 +28,7 @@ export default function PlayerProps({ picks, note, loading, onPick }: {
             <th className="px-2 py-1 text-right font-normal">Market</th>
             <th className="px-2 py-1 text-right font-normal">Proj</th>
             <th className="px-2 py-1 text-right font-normal">EV</th>
-            <th className="px-2 py-1 font-normal">Risk</th>
+            <th className="px-2 py-1 font-normal">Evidence</th>
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -47,8 +48,8 @@ export default function PlayerProps({ picks, note, loading, onPick }: {
               <td className="px-2 py-1 text-right tabular-nums text-neutral-400">{pct(p.modelProb)}</td>
               <td className="px-2 py-1 text-right tabular-nums text-neutral-400">{pct(p.marketProb)}</td>
               <td className="px-2 py-1 text-right tabular-nums text-neutral-400">{p.projection.toFixed(1)}</td>
-              <td className="px-2 py-1 text-right tabular-nums text-neutral-100">{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}%</td>
-              <td className="px-2 py-1"><RiskBadge risk={p.risk} /></td>
+              <td className={`px-2 py-1 text-right tabular-nums ${p.basis === 'authoritative' ? 'text-neutral-100' : 'text-neutral-500'}`} title={p.basis === 'authoritative' ? 'Expected profit per unit staked' : 'Simple blend, not validated'}>{p.basis === 'authoritative' ? '' : '≈ '}{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}%</td>
+              <td className="px-2 py-1"><EvidenceBadge p={p} /></td>
               <td className="px-3 py-1 text-right"><SlipButton pick={p} /></td>
             </tr>
           ))}

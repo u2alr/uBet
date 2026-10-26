@@ -4,6 +4,12 @@ import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } 
 import { enrichPicks, listAbsences, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { MINDS_VERSION } from '../../shared/minds.ts'
 import { parseStandings } from '../../shared/standings.ts'
+import { applyAuthority } from '../../shared/engine/authority.ts'
+import { CALIBRATION } from '../../shared/engine/artifact.ts'
+import { DEFAULT_ENGINE_CONFIG } from '../../shared/engine/config.ts'
+import { OPP_ALLOWED_SQL, buildOppTable, type AllowedRow } from '../../shared/opponent.ts'
+import { attachOpponent } from '../../shared/minds.ts'
+import { boardPayload, slim } from '../../shared/boardPayload.ts'
 import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
 import { MAX_PLAYERS_PER_QUERY, chunk, groupMeetings, parsePairs, type H2HRow } from '../../shared/h2h.ts'
@@ -449,7 +455,8 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
   meta.warnings.push(...age.warnings)
   if (age.blocked) return { configured: true, picks: [], meta }
 
-  const odds = fetched.map((f) => f.data)
+  // Each event carries the time its odds were retrieved, so quote freshness is judged at that moment and every screen sees the same snapshot.
+  const odds = fetched.map((f) => ({ ...f.data, fetchedAt: f.fetchedAt }))
   const { results: players } = await env.DB.prepare('SELECT id, name, team FROM players').all<{ id: number; name: string; team: string | null }>()
   const byName = new Map(players.map((p) => [normName(p.name), p]))
 
@@ -477,13 +484,17 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
       ).all<HistoryRow>()).results
     : []
 
-  const built = buildPicks({ events: odds, players, history, projections, now, fallback: env.FALLBACK_MODEL === 'v3' ? 'v3' : 'v2' })
+  // selection 'all': every side of every line the books posted. Nothing is dropped here; the response is limited per game in shared/boardPayload.ts.
+  const built = buildPicks({ events: odds, players, history, projections, now, selection: 'all', fallback: env.FALLBACK_MODEL === 'v3' ? 'v3' : 'v2' })
   const d = built.diagnostics
 
   // Role (minutes over the last 10 games) and availability; history is newest first.
   const injuries = await loadInjuries(env, fresh)
   const annotated = enrichPicks(built.picks, history, injuries)
-  const picks = annotated.picks
+
+  // The one authoritative calculation (shared/engine/authority.ts): the same records Minds uses. The opponent table feeds the matchup review.
+  const oppRows = await cachedJson<AllowedRow[]>('opp-table', 30 * 60, async () => (await env.DB.prepare(OPP_ALLOWED_SQL).all<AllowedRow>()).results, fresh).catch(() => [] as AllowedRow[])
+  const picks = applyAuthority(attachOpponent(annotated.picks, buildOppTable(oppRows)), { now, config: DEFAULT_ENGINE_CONFIG, calibration: CALIBRATION, injuryChecked: injuries !== null })
 
   if (d.fallbackLines > 0)
     meta.warnings.push({
@@ -517,7 +528,10 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
 app.get('/picks', async (c) => {
   const { configured, picks, meta } = await loadPicks(c.env, wantsFresh(c))
   await logPicks(c.env, picks).catch((e) => console.error('pick logging failed', e instanceof Error ? e.message : String(e)))
-  return c.json({ configured, data: picks, meta })
+  const eventId = c.req.query('event')
+  if (eventId !== undefined && !/^[\w-]{1,64}$/.test(eventId)) return c.json({ error: 'bad event' }, 400)
+  const out = boardPayload(picks, { event: eventId ?? null })
+  return c.json({ configured, data: out.picks, meta: { ...meta, coverage: out.coverage } })
 })
 
 /**
@@ -525,18 +539,18 @@ app.get('/picks', async (c) => {
  * Throttled so repeated page loads cannot turn into a stream of database writes.
  */
 async function logPicks(env: Bindings, picks: Pick[]) {
-  const worth = picks.filter((p) => p.ev > 0 || p.risk === 'safe').slice(0, 40)
+  const worth = picks.filter((p) => p.ev > 0).sort((a, b) => b.ev - a.ev).slice(0, 40)
   if (!worth.length) return
   const last = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_pick_log'").first<{ value: string }>().catch(() => null)
   if (last && Date.now() - Number(last.value) < 10 * 60_000) return
   await env.DB.batch([
     ...worth.map((p) =>
       env.DB.prepare(
-        `INSERT OR IGNORE INTO predictions (player_id,stat,line,predicted,p_over,model,game_date,side,price,book,model_prob,market_prob,push)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT OR IGNORE INTO predictions (player_id,stat,line,predicted,p_over,model,game_date,side,price,book,model_prob,market_prob,push,basis,ev)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).bind(
         p.playerId, p.stat, p.line, p.projection, p.side === 'over' ? p.prob : 1 - p.prob,
-        p.model, p.gameDate, p.side, p.price, p.book, p.modelProb, p.marketProb, p.push,
+        p.model, p.gameDate, p.side, p.price, p.book, p.modelProb, p.marketProb, p.push, p.basis ?? 'legacy', p.ev,
       ),
     ),
     env.DB.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_pick_log', ?)").bind(String(Date.now())),
@@ -583,7 +597,7 @@ app.get('/games/:id', async (c) => {
   const teamOdds = (await loadTeamOdds(c.env, fresh).catch(() => new Map<string, GameOdds>())).get(
     `${teamKey(game.away.name)}@${teamKey(game.home.name)}`,
   )
-  const gamePicks = picks.filter((p) => sameMatchup(p.game, game.away.name, game.home.name))
+  const gamePicks = picks.filter((p) => sameMatchup(p.game, game.away.name, game.home.name)).map(slim)
   return c.json({
     game,
     configured,
