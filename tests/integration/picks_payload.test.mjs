@@ -47,3 +47,28 @@ describe('/api/picks payload', () => {
     assert.equal((await api('/picks?event=' + encodeURIComponent('<x>'))).status, 400)
   })
 })
+
+describe('the point-in-time odds archive', () => {
+  it('records each retrieved snapshot once, with times and freshness, and a second look writes nothing more', async () => {
+    await api('/picks')
+    const a = (await api('/odds-archive')).body.data
+    assert.ok(a.runs >= 1 && a.quotes >= 1, JSON.stringify(a))
+    assert.ok(a.first && a.last)
+    await api('/picks')
+    const b = (await api('/odds-archive')).body.data
+    assert.equal(b.runs, a.runs); assert.equal(b.quotes, a.quotes)
+    assert.ok(b.byKind.some((k) => k.kind === 'board' && k.status === 'ok'))
+  })
+  it('an event can be read back with first-observed prices, and no market is called a true closing line', async () => {
+    const eventId = (await api('/picks')).body.meta.coverage.events[0].eventId
+    const { status, body } = await api(`/odds-archive?event=${eventId}`)
+    assert.equal(status, 200)
+    assert.ok(body.data.markets.length > 0)
+    for (const m of body.data.markets.slice(0, 50)) {
+      assert.ok(m.firstObserved && Number.isFinite(m.firstObserved.price))
+      if (m.closing.ok) assert.equal(m.closing.proxy.isTrueClosingLine, false)
+      else assert.ok(typeof m.closing.reason === 'string')
+    }
+    assert.equal((await api('/odds-archive?event=' + encodeURIComponent('<x>'))).status, 400)
+  })
+})

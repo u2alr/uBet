@@ -10,6 +10,7 @@ import { normalizeOddsBlaze, TWO_WAY_BOOKS } from '../shared/oddsblaze.ts'
 import { normalizeOddsApi, ODDS_API_BOOKS, ODDS_API_MARKETS, ODDS_API_REGIONS } from '../shared/oddsapi.ts'
 import { enrichPicks, parseInjuries } from '../shared/injuries.ts'
 import { gzipSync } from 'node:zlib'
+import { PRIOR_SQL, flatten, planArchive, priorFromRows, runSql, sqlValue } from '../shared/oddsArchive.ts'
 import { attachOpponent, decide, legKey, MINDS_VERSION } from '../shared/minds.ts'
 import { parseCalibration } from '../shared/engine/calibration.ts'
 import { OPP_ALLOWED_SQL, buildOppTable } from '../shared/opponent.ts'
@@ -159,6 +160,17 @@ console.log('rejected because:', JSON.stringify(why))
 const gameOf = (id) => events.find((e) => e.id === id)
 const q = (v) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`)
 const lines = []
+// Point-in-time archive of the odds this decision was made from (same file, so it lands with the decision). Only real runs, never cached dry runs.
+if (!dry && !useCache) {
+  const capturedAt = new Date(now).toISOString()
+  const source = provider === 'oddsapi' ? 'theoddsapi' : 'oddsblaze'
+  for (const ev of events) {
+    const { quotes, skipped } = flatten(ev, source)
+    const prior = priorFromRows(ev.id, d1(PRIOR_SQL.replace('?', sqlValue(ev.id)).replace('?', sqlValue(ev.id))))
+    const plan = planArchive(prior, quotes, capturedAt, { complete: true, skipped })
+    lines.push(...runSql({ source, kind: 'daily', eventId: ev.id, eventStart: ev.commence_time, capturedAt, status: 'ok', plan }))
+  }
+}
 const gz = gzipSync(JSON.stringify(inputs)).toString('base64')
 lines.push(`INSERT OR IGNORE INTO mind_runs (run_id, day, version, config_hash, config_json, calibration_version, calibration_hash, stats_json, cap_log_json) VALUES (${q(runId)}, ${q(day)}, ${q(MINDS_VERSION)}, ${q(decision.run.configHash)}, ${q(JSON.stringify(config))}, ${q(decision.run.calibrationVersion)}, ${q(decision.run.calibrationHash)}, ${q(JSON.stringify(sd))}, ${q(JSON.stringify(decision.capLog))});`)
 for (let i = 0; i * 60000 < gz.length; i++) lines.push(`INSERT OR IGNORE INTO mind_run_inputs (run_id, idx, chunk) VALUES (${q(runId)}, ${i}, ${q(gz.slice(i * 60000, (i + 1) * 60000))});`)

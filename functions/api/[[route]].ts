@@ -10,6 +10,7 @@ import { DEFAULT_ENGINE_CONFIG } from '../../shared/engine/config.ts'
 import { OPP_ALLOWED_SQL, buildOppTable, type AllowedRow } from '../../shared/opponent.ts'
 import { attachOpponent } from '../../shared/minds.ts'
 import { boardPayload, slim } from '../../shared/boardPayload.ts'
+import { PRIOR_SQL, closingProxy, firstObserved, flatten, planArchive, priorFromRows, runSql, type PriorRow } from '../../shared/oddsArchive.ts'
 import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
 import { MAX_PLAYERS_PER_QUERY, chunk, groupMeetings, parsePairs, type H2HRow } from '../../shared/h2h.ts'
@@ -427,6 +428,50 @@ async function loadInjuries(env: Bindings, fresh = false): Promise<Map<string, I
   }
 }
 
+// ---------- odds archive ----------
+
+async function archiveSnapshot(env: Bindings, ev: OddsEvent, fetchedAt: number | null): Promise<void> {
+  if (!fetchedAt || !ev?.id) return                       // an entry cached by an older version has no known retrieval time: nothing honest to record
+  try {
+    const capturedAt = new Date(fetchedAt).toISOString()
+    const seen = await env.DB.prepare("SELECT 1 AS x FROM odds_runs WHERE source = 'theoddsapi' AND event_id = ? AND captured_at = ?").bind(ev.id, capturedAt).first()
+    if (seen) return
+    const { quotes, skipped } = flatten(ev, 'theoddsapi')
+    const prior = priorFromRows(ev.id, (await env.DB.prepare(PRIOR_SQL).bind(ev.id, ev.id).all<PriorRow>()).results)
+    const plan = planArchive(prior, quotes, capturedAt, { complete: true, skipped })
+    const sql = runSql({ source: 'theoddsapi', kind: 'board', eventId: ev.id, eventStart: ev.commence_time, capturedAt, status: 'ok', plan })
+    for (let i = 0; i < sql.length; i += 50) await env.DB.batch(sql.slice(i, i + 50).map((s) => env.DB.prepare(s)))
+  } catch (e) {
+    console.error('odds archive failed', e instanceof Error ? e.message : String(e))
+  }
+}
+
+// What the archive holds, and, for one event, each market's first observed price and closing proxy (with the reason when there is none).
+app.get('/odds-archive', async (c) => {
+  const db = c.env.DB
+  const t = await db.prepare(`SELECT (SELECT COUNT(*) FROM odds_runs) AS runs, (SELECT COUNT(*) FROM odds_quotes) AS quotes, (SELECT COUNT(DISTINCT event_id) FROM odds_runs) AS events,
+      (SELECT MIN(captured_at) FROM odds_runs) AS first, (SELECT MAX(captured_at) FROM odds_runs) AS last,
+      (SELECT COUNT(*) FROM odds_quotes WHERE freshness = 'stale') AS stale, (SELECT COUNT(*) FROM odds_quotes WHERE market_status = 'unavailable') AS unavailable`).first()
+  const byKind = (await db.prepare('SELECT kind, status, COUNT(*) AS runs FROM odds_runs GROUP BY kind, status ORDER BY kind, status').all()).results
+  const eventId = c.req.query('event')
+  if (eventId === undefined) return c.json({ data: { ...t, byKind } })
+  if (!/^[\w-]{1,64}$/.test(eventId)) return c.json({ error: 'bad event' }, 400)
+  const rows = (await db.prepare(
+    `SELECT player_name AS playerName, stat, line, side, book, source, captured_at AS capturedAt, price, market_status AS marketStatus, freshness, timestamp_source AS timestampSource, event_start AS eventStart
+     FROM odds_quotes WHERE event_id = ? ORDER BY captured_at LIMIT 20000`,
+  ).bind(eventId).all<{ playerName: string; stat: string; line: number; side: string; book: string; source: string; capturedAt: string; price: number | null; marketStatus: 'open' | 'unavailable'; freshness: 'fresh' | 'stale' | 'unknown'; timestampSource: string | null; eventStart: string | null }>()).results
+  const start = (await db.prepare('SELECT event_start AS s FROM odds_runs WHERE event_id = ? AND event_start IS NOT NULL LIMIT 1').bind(eventId).first<{ s: string }>())?.s ?? null
+  const byMarket = new Map<string, typeof rows>()
+  for (const r of rows) (byMarket.get(`${r.playerName}|${r.stat}|${r.line}|${r.side}|${r.book}|${r.source}`) ?? byMarket.set(`${r.playerName}|${r.stat}|${r.line}|${r.side}|${r.book}|${r.source}`, []).get(`${r.playerName}|${r.stat}|${r.line}|${r.side}|${r.book}|${r.source}`)!).push(r)
+  const markets = [...byMarket].slice(0, 500).map(([k, h]) => {
+    const [playerName, stat, line, side, book, source] = k.split('|')
+    const first = firstObserved(h)
+    return { playerName, stat, line: Number(line), side, book, source, observations: h.length, firstObserved: first ? { price: first.price, at: first.capturedAt } : null,
+      closing: start ? closingProxy(h, start) : { ok: false, reason: 'NO_EVENT_START' } }
+  })
+  return c.json({ data: { ...t, byKind, event: eventId, eventStart: start, markets } })
+})
+
 // ---------- picks (The Odds API + model) ----------
 
 async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: boolean; picks: Pick[]; meta: PicksMeta }> {
@@ -448,6 +493,9 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
       fresh),
     ),
   )
+
+  // Point-in-time archive: each retrieved snapshot is recorded once (the run row makes a repeat a no-op), best effort, never allowed to break the page.
+  await Promise.all(fetched.map((f) => archiveSnapshot(env, f.data, f.fetchedAt)))
 
   // How old is what we are about to show? Lines move before tip-off, so the age is part of the answer.
   const age = assessOddsAge(fetched.map((f) => f.fetchedAt), now)
