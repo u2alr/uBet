@@ -19,7 +19,8 @@ const CAUTION: Record<string, string> = { stale: 'Projection is over 24 hours ol
 
 /** Over / under with the best price and book. The side with positive expected value is the only one that is highlighted. */
 function Side({ label, p, lead, missing }: { label: string; p: Pick | null; lead: boolean; missing: string }) {
-  const good = !!p && lead && p.basis === 'authoritative' && p.ev > 0
+  // Green only where the numbers are authoritative AND the evidence behind them is not marked insufficient (a +11% EV from a 28-point model/market gap is not a green light).
+  const good = !!p && lead && p.basis === 'authoritative' && p.ev > 0 && p.auth?.evidence !== 'insufficient'
   return (
     <div className={`flex items-center justify-between rounded-xl border px-3 py-2 ${good ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-neutral-800'}`}>
       <div className="leading-tight">
@@ -73,7 +74,7 @@ export default function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2HSt
         <div className="flex items-baseline gap-x-5 gap-y-1">
           <span className="text-sm text-neutral-400"><Term k="proj" /> <b className="text-base font-semibold tabular-nums text-neutral-50">{state === 'missing' ? '–' : fmt(p.projection)}</b>
             {gap != null && <span className={`ml-1 text-xs tabular-nums ${gap > 0 ? 'text-emerald-400' : 'text-neutral-500'}`}>({gap > 0 ? '+' : ''}{gap.toFixed(1)} {side.toLowerCase()})</span>}</span>
-          <span className="ml-auto text-sm text-neutral-400">{side} <Term k="ev" /> <b className={`text-base font-semibold tabular-nums ${auth ? (p.ev > 0 ? 'text-emerald-400' : 'text-neutral-200') : 'text-neutral-400'}`} title={auth ? undefined : 'Simple blend, not validated: the engine could not price this line'}>{auth ? '' : '≈ '}{evText(p.ev)}</b>{!auth && <span className="ml-1 text-xs text-neutral-500">unvalidated</span>}</span>
+          <span className="ml-auto text-sm text-neutral-400">{side} <Term k="ev" /> <b className={`text-base font-semibold tabular-nums ${auth ? (p.ev > 0 && p.auth?.evidence !== 'insufficient' ? 'text-emerald-400' : 'text-neutral-200') : 'text-neutral-400'}`} title={auth ? undefined : 'Simple blend, not validated: the engine could not price this line'}>{auth ? '' : '≈ '}{evText(p.ev)}</b>{!auth && <span className="ml-1 text-xs text-neutral-500">unvalidated</span>}</span>
         </div>
         {state !== 'ok' && <p className="text-xs text-amber-500/90">{CAUTION[state]}</p>}
 

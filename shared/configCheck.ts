@@ -13,7 +13,7 @@ export interface ConfigInput {
   tracked: { path: string; text: string }[]
 }
 
-const SECRET_ASSIGNMENT = /\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\b\s*[=:]\s*['"]?([A-Za-z0-9_\-]{24,})['"]?/
+const SECRET_ASSIGNMENT = /\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\b\s*[=:]\s*['"]?([A-Za-z0-9_-]{24,})['"]?/
 
 export function checkConfig(i: ConfigInput, opts: { production?: boolean } = {}): Finding[] {
   const out: Finding[] = []

@@ -14,6 +14,8 @@ import { PRIOR_SQL, flatten, planArchive, priorFromRows, runSql, sqlValue } from
 import { attachOpponent, decide, legKey, MINDS_VERSION } from '../shared/minds.ts'
 import { parseCalibration } from '../shared/engine/calibration.ts'
 import { OPP_ALLOWED_SQL, buildOppTable } from '../shared/opponent.ts'
+import { applyAuthority } from '../shared/engine/authority.ts'
+import { boardPayload } from '../shared/boardPayload.ts'
 import { makeConfig } from '../shared/engine/config.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -147,7 +149,10 @@ let calibration = null
 try { calibration = parseCalibration(JSON.parse(readFileSync(path.join(ROOT, 'shared', 'calibration.json'), 'utf8'))) } catch (e) { console.error(`WARNING: calibration artifact unusable (${e.message}); nothing can be approved`) }
 const config = makeConfig()
 const inputs = attachOpponent(upcoming, oppTable)
-if (process.env.DUMP_PICKS) writeFileSync(process.env.DUMP_PICKS, JSON.stringify({ configured: true, data: upcoming, meta: { warnings: [] } }))   // developer aid: a picks payload for UI checks
+if (process.env.DUMP_PICKS) {   // developer aid: the payload /api/picks would send (authoritative numbers applied), for UI checks while the provider is unavailable
+  const shown = boardPayload(applyAuthority(inputs, { now, config, calibration, injuryChecked: injuries != null }))
+  writeFileSync(process.env.DUMP_PICKS, JSON.stringify({ configured: true, data: shown.picks, meta: { warnings: [], oddsAsOf: new Date(now).toISOString(), coverage: shown.coverage } }))
+}
 const decision = decide(inputs, { now, config, calibration, injuryChecked: injuries != null })
 const runId = `${day}-${MINDS_VERSION}-${decision.run.configHash.slice(0, 8)}-${now}`
 const { approved, leans, volume, research, rejected } = decision
