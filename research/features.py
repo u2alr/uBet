@@ -8,12 +8,14 @@ Leakage-safe stand-in for injury news: we do not have the official injury report
 approximated from PAST appearances only (rotation teammates who missed the previous game(s), and how many
 team games the player himself has just missed). It is weaker than the real report, and says so.
 """
+import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-DATA = Path(__file__).resolve().parent / "data"
+# UBET_RESEARCH_DATA points the pipeline at another directory of box-score CSVs (CI uses a small generated fixture; no paid or live API is needed).
+DATA = Path(os.environ.get("UBET_RESEARCH_DATA") or Path(__file__).resolve().parent / "data")
 STATS = ["pts", "reb", "ast", "fg3m"]
 COUNT_COLS = {"PTS": "pts", "REB": "reb", "AST": "ast", "FG3M": "fg3m", "MIN": "min"}
 

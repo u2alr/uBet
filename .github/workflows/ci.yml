@@ -1,0 +1,49 @@
+# Continuous integration. No secrets, no live API calls, no paid data: everything runs on code and generated fixtures.
+# Deployment is unchanged (Cloudflare Pages builds from the repository as before); this workflow only gates changes.
+#
+# Not run here: `npm run test:integration`. Those tests start the real Worker against a copy of a local D1 database that already holds real
+# synced box scores (tests/integration/harness.mjs), which a clean checkout does not have. Run them locally before merging.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Types, lint, unit tests, database tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:db          # in-memory SQLite: grading SQL for suggestions, the minds and your own bets
+      - run: npm run build
+
+  research:
+    name: Python research tests and the leakage test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4     # the Python tests compare against the real TypeScript model (shared/baseline.ts) through node
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: research/requirements.txt
+      - run: pip install -r research/requirements.txt
+      - name: Research tests (leakage test on a generated fixture league, a seeded leak must be caught)
+        run: python research/tests/run_all.py
+      - name: Ingest script tests (compiles ingest/sync.py, checks it grades everything)
+        run: node --no-warnings --test tests/ingest.test.mjs

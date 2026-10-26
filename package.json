@@ -14,6 +14,7 @@
     "test": "node --no-warnings --test shared/*.test.ts shared/engine/*.test.ts src/lib/*.test.ts",
     "typecheck": "tsc -b && tsc -p tsconfig.functions.json && tsc -p tsconfig.test.json",
     "check": "npm run typecheck && npm run lint && npm test && npm run test:db",
+    "test:research": "python research/tests/run_all.py",
     "test:db": "node --no-warnings --test tests/grade.test.mjs tests/grade_minds.test.mjs tests/grade_mybets.test.mjs",
     "test:ingest": "node --no-warnings --test tests/ingest.test.mjs",
     "grade": "ingest\\.venv\\Scripts\\python ingest\\sync.py --grade-only",

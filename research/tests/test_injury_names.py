@@ -18,3 +18,8 @@ def test_suffixes_and_accents_but_not_names_that_contain_them():
     assert norm_name("Jabari Ivey") == "jabari ivey"         # "iv" inside a name must survive
     assert norm_name("Ron Holland II") == "ron holland"
     assert norm_name("  De'Aaron   Fox ") == "deaaron fox"
+
+
+if __name__ == "__main__":
+    test_suffixes_and_accents_but_not_names_that_contain_them()
+    print("ok test_suffixes_and_accents_but_not_names_that_contain_them")

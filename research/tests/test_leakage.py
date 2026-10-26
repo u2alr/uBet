@@ -33,12 +33,21 @@ def compare(full: pd.DataFrame, other: pd.DataFrame, upto: pd.Timestamp, label: 
     return bad
 
 
+def pick_dates(players: pd.DataFrame) -> tuple[list[str], list[str], str]:
+    """Cutoffs and corruption days chosen from the data itself (so the same test runs on real data and on the generated CI fixture):
+    two cutoffs at 45% and 80% of the game days, three corruption days at 25%, 55% and 85%, and one control day at 55%."""
+    days = sorted(pd.to_datetime(players.GAME_DATE).dt.strftime("%Y-%m-%d").unique())
+    at = lambda q: days[int(len(days) * q)]  # noqa: E731
+    return [at(0.45), at(0.80)], [at(0.25), at(0.55), at(0.85)], at(0.55)
+
+
 def main():
     players, teams = load_raw()
     full = build(players, teams)
     failures = 0
+    cutoffs, corrupt_days, control_day = pick_dates(players)
 
-    for cutoff in ["2024-01-15", "2025-03-01"]:
+    for cutoff in cutoffs:
         c = pd.Timestamp(cutoff)
         pl = players[pd.to_datetime(players.GAME_DATE) <= c]
         tm = teams[pd.to_datetime(teams.GAME_DATE) <= c]
@@ -46,7 +55,7 @@ def main():
 
     rng = np.random.default_rng(0)
     dates = pd.to_datetime(players.GAME_DATE)
-    for day in ["2023-12-12", "2024-11-20", "2025-02-10"]:
+    for day in corrupt_days:
         d = pd.Timestamp(day)
         corrupt = players.copy()
         mask = ((dates == d) & (players.MIN > 0)).to_numpy()
@@ -60,7 +69,7 @@ def main():
         failures += compare(full, build(corrupt, t_corrupt), d, f"self/same-day corruption @ {day}")
 
     # Sanity check that the test itself can fail: features of LATER rows must change when we corrupt a day.
-    d = pd.Timestamp("2024-11-20")
+    d = pd.Timestamp(control_day)
     corrupt = players.copy()
     mask = ((dates == d) & (players.MIN > 0)).to_numpy()
     corrupt.loc[mask, "PTS"] = 80
