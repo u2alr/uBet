@@ -31,3 +31,28 @@ describe('/api/cheatsheet cache', () => {
     assert.deepEqual(b.body.data, a.body.data)
   })
 })
+
+describe('/api/schedule-context', () => {
+  it('refuses malformed input', async () => {
+    for (const q of ['', 'home=BOS&away=NYK', 'home=bos&away=NYK&date=2026-10-27', 'home=BOS&away=NYK&date=10/27/2026', 'home=BOS&away=NYK&date=2026-10-27&players=1,x']) assert.equal((await api(`/schedule-context?${q}`)).status, 400, q)
+  })
+  it('returns facts for both teams, a matchup summary and the model status, and says what is not known; it never carries a probability adjustment', async () => {
+    const { status, body } = await api('/schedule-context?home=BOS&away=NYK&date=2099-01-15&tip=2099-01-16T00:30:00Z')
+    assert.equal(status, 200)
+    const d = body.data
+    assert.equal(d.home.team, 'BOS'); assert.equal(d.away.team, 'NYK')
+    assert.equal(d.home.restDays, null, 'no game in the 30 days before that date: unknown, not zero')
+    assert.ok(d.home.unknown.includes('previous game'))
+    assert.equal(d.model.adjustsPredictions, false)
+    assert.equal(d.matchup.restEdge, 'unknown')
+    assert.doesNotMatch(JSON.stringify(d.matchup), /probab/i)
+  })
+  it('reads real workload for a player the database knows, without inventing a reason for any gap', async () => {
+    const search = (await api('/players?search=Curry')).body.data[0]
+    const { body } = await api(`/schedule-context?home=BOS&away=GSW&date=2099-01-15&players=${search.id}`)
+    const w = body.data.players[String(search.id)]
+    assert.ok(w && (w.lastGameMinutes === null || w.lastGameMinutes > 0))
+    assert.ok(['no', 'possible', 'unknown'].includes(w.returning))
+    assert.doesNotMatch(JSON.stringify(w), /injur|illness|suspen/i)
+  })
+})

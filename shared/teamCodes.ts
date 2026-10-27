@@ -9,3 +9,7 @@ export const NBA_ABBRS: readonly string[] = codes.nba
 export const normAbbr = (abbr: string): string => ESPN_TO_NBA[abbr] ?? abbr
 
 export const isNbaAbbr = (abbr: string): boolean => NBA_ABBRS.includes(abbr)
+
+/** NBA.com team ids by abbreviation (they also name the logo files). */
+export const TEAM_IDS: Readonly<Record<string, number>> = codes.ids
+export const abbrOfTeamId = (id: number): string | null => Object.entries(codes.ids).find(([, v]) => v === id)?.[0] ?? null

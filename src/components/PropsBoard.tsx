@@ -195,7 +195,7 @@ function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPl
         <div className="mt-3">
           {view === 'list'
             ? <PropList cards={shown} onOpenPlayer={onOpenPlayer} />
-            : <div className="grid items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">{shown.map((c) => <PropTile key={c.key} c={c} h2h={h2h} onOpenPlayer={onOpenPlayer} />)}</div>}
+            : <div className="grid items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">{shown.map((c) => <PropTile key={c.key} c={c} h2h={h2h} tipIso={g.info?.date ?? null} onOpenPlayer={onOpenPlayer} />)}</div>}
           {g.cards.length > limit && (
             <button onClick={more} className="mt-3 w-full rounded-xl border border-dashed border-neutral-800 py-3 text-sm text-neutral-500 hover:text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">Show more ({g.cards.length - limit} left)</button>
           )}

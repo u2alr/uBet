@@ -1,0 +1,8 @@
+{
+  "version": "hf-v1",
+  "evaluated": true,
+  "adjustsPredictions": false,
+  "groupsKept": [],
+  "summary": "None of the schedule, travel, elevation or workload features improved out-of-sample accuracy reliably enough to pass the pre-registered rule, so none of them changes any prediction. The facts above are shown for context only.",
+  "evidence": "research/RESULTS_HUMAN_FACTORS.md"
+}

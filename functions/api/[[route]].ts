@@ -10,8 +10,10 @@ import { DEFAULT_ENGINE_CONFIG } from '../../shared/engine/config.ts'
 import { OPP_ALLOWED_SQL, buildOppTable, type AllowedRow } from '../../shared/opponent.ts'
 import { attachOpponent } from '../../shared/minds.ts'
 import { boardPayload, slim } from '../../shared/boardPayload.ts'
-import { normAbbr } from '../../shared/teamCodes.ts'
+import { TEAM_IDS, abbrOfTeamId, normAbbr } from '../../shared/teamCodes.ts'
 import { evaluateHealth } from '../../shared/health.ts'
+import { matchupSummary, teamFacts, workloadFacts, type PlayedGame, type WorkloadFacts } from '../../shared/schedule.ts'
+import humanFactorsStatus from '../../shared/humanFactors.status.json' with { type: 'json' }
 import { PRIOR_SQL, closingProxy, firstObserved, flatten, planArchive, priorFromRows, runSql, type PriorRow } from '../../shared/oddsArchive.ts'
 import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
@@ -446,6 +448,45 @@ async function archiveSnapshot(env: Bindings, ev: OddsEvent, fetchedAt: number |
     console.error('odds archive failed', e instanceof Error ? e.message : String(e))
   }
 }
+
+// Schedule & fatigue FACTS for one game: rest, congestion, estimated travel, and (optionally) workload for some players. Computed from played games in this database and a static
+// arena table (shared/schedule.ts); nothing here changes a prediction, and `model` says whether the pre-registered evaluation found any use for these inputs.
+app.get('/schedule-context', async (c) => {
+  const q = c.req.query()
+  if (!/^[A-Z]{2,3}$/.test(q.home ?? '') || !/^[A-Z]{2,3}$/.test(q.away ?? '') || !/^\d{4}-\d{2}-\d{2}$/.test(q.date ?? '')) return c.json({ error: 'home, away (team codes) and date (YYYY-MM-DD) are required' }, 400)
+  const tip = q.tip && Number.isFinite(Date.parse(q.tip)) ? new Date(q.tip).toISOString() : null
+  const ids = (q.players ?? '').split(',').filter(Boolean).slice(0, 40).map(Number)
+  if (ids.some((n) => !Number.isInteger(n) || n < 1)) return c.json({ error: 'bad player id' }, 400)
+  const home = normAbbr(q.home), away = normAbbr(q.away)
+  const teamIds = [TEAM_IDS[home], TEAM_IDS[away]]
+  const games: PlayedGame[] = []
+  if (teamIds.every((t) => typeof t === 'number')) {
+    const { results } = await c.env.DB.prepare(
+      `SELECT id, date, home_team_id AS h, visitor_team_id AS v FROM games
+       WHERE (home_team_id IN (?, ?) OR visitor_team_id IN (?, ?)) AND date < ? AND date >= date(?, '-200 days') AND game_type != 'preseason' ORDER BY date DESC LIMIT 40`,
+    ).bind(teamIds[0], teamIds[1], teamIds[0], teamIds[1], q.date, q.date).all<{ id: number; date: string; h: number; v: number }>()
+    for (const r of results) { const h = abbrOfTeamId(r.h), v = abbrOfTeamId(r.v); if (h && v) games.push({ id: String(r.id), date: r.date, homeAbbr: h, awayAbbr: v, overtime: null }) }   // overtime cannot be read from partial box scores: unknown
+  }
+  const target = { id: 'target', date: q.date, tipIso: tip, homeAbbr: home, awayAbbr: away }
+  const awayFacts = teamFacts(away, games, target), homeFacts = teamFacts(home, games, target)
+  const players: Record<string, WorkloadFacts> = {}
+  if (ids.length) {
+    const { results } = await c.env.DB.prepare(
+      `SELECT pg.player_id AS id, g.date, pg.minutes FROM player_games pg JOIN games g ON g.id = pg.game_id
+       WHERE pg.player_id IN (${ids.map(() => '?').join(',')}) AND g.date < ? AND g.date >= date(?, '-120 days') AND g.game_type != 'preseason' AND pg.minutes > 0 ORDER BY g.date DESC`,
+    ).bind(...ids, q.date, q.date).all<{ id: number; date: string; minutes: number }>()
+    const by = new Map<number, { date: string; minutes: number }[]>()
+    for (const r of results) (by.get(r.id) ?? by.set(r.id, []).get(r.id)!).push({ date: r.date, minutes: r.minutes })
+    for (const id of ids) players[id] = workloadFacts(by.get(id) ?? [], q.date)
+  }
+  c.header('Cache-Control', 'private, max-age=300')      // facts change only when a game is played; five minutes is plenty
+  return c.json({ data: {
+    date: q.date, away: awayFacts, home: homeFacts, matchup: matchupSummary(awayFacts, homeFacts), players,
+    model: humanFactorsStatus,
+    source: 'played games in this database and a static arena table; travel and hours are estimates',
+    newestGameUsed: games[0]?.date ?? null,
+  } })
+})
 
 // Is this deployment configured and current? Booleans, counts and ages only: never a secret, never a value from the environment.
 app.get('/health', async (c) => {

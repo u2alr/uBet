@@ -26,3 +26,11 @@ test('the Python projection job reads the same file, not its own copy', () => {
   assert.match(py, /teamCodes\.json/)
   assert.doesNotMatch(py, /ESPN_TO_NBA\s*=\s*\{/)
 })
+
+test('the team-id table matches the one the browser uses for logos, and every team has one', async () => {
+  const { TEAM_IDS, abbrOfTeamId } = await import('./teamCodes.ts')
+  const { TEAMS } = await import('../src/lib/teams.ts')
+  for (const [abbr, id] of TEAMS) assert.equal(TEAM_IDS[abbr], id, abbr)
+  assert.deepEqual(Object.keys(TEAM_IDS).sort(), [...NBA_ABBRS].sort())
+  assert.equal(abbrOfTeamId(1610612738), 'BOS'); assert.equal(abbrOfTeamId(1), null)
+})

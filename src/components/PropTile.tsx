@@ -11,6 +11,7 @@ import EvidenceBadge from './EvidenceBadge'
 import { Term } from './MetricGuide'
 import { SlipButton } from './PickTable'
 import { PickSpark } from './PickSpark'
+import ScheduleFatigue from './ScheduleFatigue'
 import TeamLogo from './TeamLogo'
 
 const PickBars = lazy(() => import('./PickBars'))
@@ -35,7 +36,7 @@ function Side({ label, p, lead, missing }: { label: string; p: Pick | null; lead
   )
 }
 
-export default function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2HState; onOpenPlayer: (id: number) => void }) {
+export default function PropTile({ c, h2h, tipIso = null, onOpenPlayer }: { c: Card; h2h: H2HState; tipIso?: string | null; onOpenPlayer: (id: number) => void }) {
   const p = c.lead
   const [open, setOpen] = useState(false)
   const panel = useId()
@@ -120,6 +121,7 @@ export default function PropTile({ c, h2h, onOpenPlayer }: { c: Card; h2h: H2HSt
             )}
             <div className="flex items-center gap-4"><PickSpark p={p} w={150} h={40} /><span className="text-xs text-neutral-500">Last {p.recent.length} games against {p.line}; bright bars landed on the {p.side}.</span></div>
             <Suspense fallback={<div className="h-32" />}><PickBars p={p} /></Suspense>
+            <ScheduleFatigue p={p} tipIso={tipIso} />
             <H2HSummary p={p} rows={rows} failed={h2h.status === 'error'} />
             <H2HTable p={p} rows={rows} />
           </div>
