@@ -101,6 +101,8 @@ pre-event snapshots (credit-capped). The last observation before a documented cu
 No market-beating result exists: see `research/MARKET_EVAL_STATUS.md`.
 
 **One calculation.** The probability and expected value on every screen come from `shared/engine/authority.ts`, the same records Minds decides on. A pick the engine cannot price shows the older simple blend marked as unvalidated (a tilde and "unvalidated").
+**Schedule & fatigue.** A prop's details show rest, congestion, estimated travel and workload as facts (`shared/schedule.ts`, `GET /api/schedule-context`), with what is unknown listed. They change no prediction: the pre-registered ablation found no group worth using (`research/RESULTS_HUMAN_FACTORS.md`, how-to in `research/HUMAN_FACTORS.md`).
+
 `GET /api/health` reports configuration and data freshness without secrets.
 
 `AUDIT.md` lists what was found, what was fixed, what is unproven and what is blocked on data.
