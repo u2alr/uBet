@@ -3,6 +3,7 @@
 // It listens on 127.0.0.1 only and runs a fixed set of commands; nothing from the request is
 // ever passed to a shell.
 import { spawn } from 'node:child_process'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -85,11 +86,36 @@ createServer((req, res) => {
   json(res, 404, { error: 'Not found' })
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`uBet sync helper on http://127.0.0.1:${PORT}`)
-  // Automatic sync: once at startup, then every AUTO_SYNC_HOURS (default 3). AUTO_SYNC=0 turns it off; the Sync button always works.
-  if (process.env.AUTO_SYNC === '0') return console.log('auto-sync off (AUTO_SYNC=0)')
+  // Everything automatic. A check runs every 10 minutes:
+  //   - box scores + projections + grading: at startup, then every AUTO_SYNC_HOURS (default 3)        AUTO_SYNC=0 turns it off
+  //   - Minds picks (spends a few odds credits, 3 games max): once per day after 10:00 local, only once   AUTO_MINDS=0 turns it off
+  // The Sync button still works, and nothing runs while a sync is already in progress.
   const hours = Number(process.env.AUTO_SYNC_HOURS) > 0 ? Number(process.env.AUTO_SYNC_HOURS) : 3
-  const tick = () => { if (!state.running) { console.log(`auto-sync ${new Date().toLocaleTimeString()}`); startSync('all') } }
+  const stateFile = join(root, 'ingest', '.auto_state.json')   // survives restarts so a restart never re-spends credits
+  const saved = (() => { try { return JSON.parse(readFileSync(stateFile, 'utf8')) } catch { return {} } })()
+  const today = () => new Date().toLocaleDateString('en-CA')
+  const runMinds = () => new Promise((resolve) => {
+    state.running = true; state.label = 'Picking Minds bets'; state.error = ''
+    const child = spawn(process.execPath, [join(root, 'minds', 'run.mjs')], { cwd: root })
+    let tail = ''
+    for (const out of [child.stdout, child.stderr]) out.on('data', (b) => { tail = (tail + b.toString()).slice(-1500) })
+    child.on('error', (e) => { state.error = e.message; resolve() })
+    child.on('close', (code) => { if (code !== 0) state.error = tail.split(String.fromCharCode(10)).filter(Boolean).slice(-2).join(' | ') || `exit ${code}`; resolve() })
+  }).finally(() => { state.running = false; state.finishedAt = new Date().toISOString() })
+  const tick = async () => {
+    if (state.running) return
+    if (process.env.AUTO_SYNC !== '0' && Date.now() - (saved.syncAt ?? 0) >= hours * 3600_000) {
+      console.log(`auto-sync ${new Date().toLocaleTimeString()}`)
+      saved.syncAt = Date.now(); writeFileSync(stateFile, JSON.stringify(saved))
+      await startSync('all')
+    }
+    if (process.env.AUTO_MINDS !== '0' && new Date().getHours() >= 10 && saved.mindsDay !== today() && !state.running) {
+      console.log(`auto-minds ${new Date().toLocaleTimeString()}`)
+      saved.mindsDay = today(); writeFileSync(stateFile, JSON.stringify(saved))
+      await runMinds()
+    }
+  }
   tick()
-  setInterval(tick, hours * 3600_000)
-  console.log(`auto-sync every ${hours}h`)
+  setInterval(tick, 10 * 60_000)
+  console.log(`automatic: sync every ${hours}h, Minds once a day after 10:00 (state in ingest/.auto_state.json)`)
 })

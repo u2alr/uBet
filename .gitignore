@@ -31,3 +31,4 @@ research/out/
 __pycache__/
 *.pyc
 minds/out/
+ingest/.auto_state.json
