@@ -56,3 +56,18 @@ describe('/api/schedule-context', () => {
     assert.doesNotMatch(JSON.stringify(w), /injur|illness|suspen/i)
   })
 })
+
+describe('/api/live/:id (live box score)', () => {
+  it('returns parsed player lines', async () => {
+    const r = await api('/live/123456')
+    assert.equal(r.status, 200)
+    assert.equal(r.body.data.state, 'in')
+    assert.deepEqual(r.body.data.teams[0].players[0], { id: 77, name: 'Test Player', starter: true, minutes: 18, pts: 12, reb: 3, ast: 2, fg3m: 1 })
+  })
+  it('rejects a malformed id and hides provider failures', async () => {
+    assert.equal((await api('/live/abc')).status, 400)
+    const r = await api('/live/99999')
+    assert.equal(r.status, 502)
+    assert.deepEqual(Object.keys(r.body), ['error'])
+  })
+})

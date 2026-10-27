@@ -112,6 +112,12 @@ const server = createServer((req, res) => {
   if (path === '/__stats') return send(200, counts)
   if (path === '/__fail') { failing = url.searchParams.get('on') === '1'; return send(200, { failing }) }
   if (path.startsWith('/apis/site/v2/sports/basketball/nba/scoreboard')) return send(200, scoreboard())
+  if (path === '/apis/site/v2/sports/basketball/nba/summary') {
+    if (url.searchParams.get('event') === '99999') return send(503, { message: 'summary down' })
+    return send(200, { header: { competitions: [{ status: { type: { state: 'in', shortDetail: 'Q2 6:00' } } }] },
+      boxscore: { players: [{ team: { abbreviation: 'BOS' }, statistics: [{ names: ['MIN', 'PTS', 'REB', 'AST', '3PT'],
+        athletes: [{ athlete: { id: '77', displayName: 'Test Player' }, starter: true, stats: ['18', '12', '3', '2', '1-3'] }] }] }] } })
+  }
   if (path === '/apis/site/v2/sports/basketball/nba/injuries') {
     if (failingInjuries) return send(503, { message: 'injuries down' })
     return send(200, { injuries: [

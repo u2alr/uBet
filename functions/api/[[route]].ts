@@ -4,6 +4,9 @@ import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } 
 import { enrichPicks, listAbsences, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { MINDS_VERSION } from '../../shared/minds.ts'
 import { parseStandings } from '../../shared/standings.ts'
+import { parseLiveBox } from '../../shared/liveBox.ts'
+import { parseSportsDbEvents } from '../../shared/sportsdb.ts'
+import { teamByName } from '../../src/lib/teams.ts'
 import { applyAuthority } from '../../shared/engine/authority.ts'
 import { CALIBRATION } from '../../shared/engine/artifact.ts'
 import { DEFAULT_ENGINE_CONFIG } from '../../shared/engine/config.ts'
@@ -28,6 +31,7 @@ type Bindings = {
   /** Only for tests: point the Worker at fake providers (tests/integration). */
   ODDS_BASE_URL?: string
   ESPN_BASE_URL?: string
+  SPORTSDB_BASE_URL?: string
   /** 'v3' switches the fallback model to the negative-binomial baseline (see shared/baseline.ts). Default 'v2'. */
   FALLBACK_MODEL?: string
   ODDS_REGIONS?: string
@@ -304,6 +308,19 @@ app.get('/players/:id/teammates', async (c) => {
 async function loadGames(env: Bindings, fresh = false) {
   const dates = scoreboardDates(Date.now())
   return cachedJson<any[]>('scoreboard', 120, async () => {
+    try { return await espnScoreboard(env, dates) } catch (e) {
+      // ESPN is down: fall back to TheSportsDB's upcoming games (no live scores on the free tier) rather than showing nothing.
+      console.error('ESPN scoreboard unavailable, using TheSportsDB', e instanceof Error ? e.message : String(e))
+      const res = await fetch(`${env.SPORTSDB_BASE_URL ?? 'https://www.thesportsdb.com'}/api/v1/json/123/eventsnextleague.php?id=4387`)
+      if (!res.ok) throw new UpstreamError(`TheSportsDB ${res.status}`)
+      const soonest = Date.now() + 3 * 86400_000
+      return parseSportsDbEvents(await res.json(), (n) => teamByName(n)?.[0]).filter((g) => Date.parse(g.date) < soonest)
+    }
+  }, fresh)
+}
+
+async function espnScoreboard(env: Bindings, dates: string[]): Promise<any[]> {
+  {
     // ESPN rejects date ranges, so fetch one request per day.
     const days = await Promise.all(
       dates.map(async (date) => {
@@ -326,7 +343,7 @@ async function loadGames(env: Bindings, fresh = false) {
         away: { abbr: side('away').team.abbreviation, name: side('away').team.displayName, score: side('away').score },
       }
     })
-  }, fresh)
+  }
 }
 
 app.get('/games', async (c) => {
@@ -534,20 +551,27 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
   const meta: PicksMeta = { generatedAt: new Date(now).toISOString(), oddsAsOf: null, warnings: [] }
   if (!env.ODDS_API_KEY) return { configured: false, picks: [], meta }
 
-  const events = await cachedJson<any[]>('odds-events', 30 * 60, () => oddsFetch(env, '/events'), fresh)
-  const upcoming = events
-    .filter((e) => Date.parse(e.commence_time) < now + Number(env.ODDS_HOURS ?? 40) * 3600_000 && Date.parse(e.commence_time) > now)
-    .slice(0, Math.max(1, Math.min(15, Number(env.ODDS_MAX_EVENTS) || DEFAULT_MAX_EVENTS)))
-
-  const regions = env.ODDS_REGIONS ?? 'us'
-  const markets = env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists,player_points_rebounds_assists'
-  const fetched = await Promise.all(
-    upcoming.map((e) =>
-      cachedMeta<OddsEvent>(`odds-${e.id}-${regions}-${markets}`, ODDS_TTL, () =>
-        oddsFetch(env, `/events/${e.id}/odds`, { regions, markets, oddsFormat: 'decimal' }),
-      fresh),
-    ),
-  )
+  // Odds are optional: if the provider is out of credits or down, the rest of the app (scores, standings, injuries, stats) still works.
+  let fetched: Cached<OddsEvent>[]
+  try {
+    const events = await cachedJson<any[]>('odds-events', 30 * 60, () => oddsFetch(env, '/events'), fresh)
+    const upcoming = events
+      .filter((e) => Date.parse(e.commence_time) < now + Number(env.ODDS_HOURS ?? 40) * 3600_000 && Date.parse(e.commence_time) > now)
+      .slice(0, Math.max(1, Math.min(15, Number(env.ODDS_MAX_EVENTS) || DEFAULT_MAX_EVENTS)))
+    const regions = env.ODDS_REGIONS ?? 'us'
+    const markets = env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists,player_points_rebounds_assists'
+    fetched = await Promise.all(
+      upcoming.map((e) =>
+        cachedMeta<OddsEvent>(`odds-${e.id}-${regions}-${markets}`, ODDS_TTL, () =>
+          oddsFetch(env, `/events/${e.id}/odds`, { regions, markets, oddsFormat: 'decimal' }),
+        fresh),
+      ),
+    )
+  } catch (e) {
+    console.error('odds unavailable', e instanceof Error ? e.message : String(e))
+    meta.warnings.push({ code: 'odds_unavailable', message: 'Sportsbook lines are unavailable right now (provider error or out of credits). Scores, standings, injuries and player stats still work; props return when odds do.' })
+    return { configured: true, picks: [], meta }
+  }
 
   // Point-in-time archive: each retrieved snapshot is recorded once (the run row makes a repeat a no-op), best effort, never allowed to break the page.
   await Promise.all(fetched.map((f) => archiveSnapshot(env, f.data, f.fetchedAt)))
@@ -804,10 +828,28 @@ app.get('/absences', async (c) => {
   return c.json({ data: listAbsences(results, injuries) })
 })
 
-// League standings from ESPN's public feed, parsed by shared/standings.ts. Cached for 30 minutes.
+// Live or final box score for one game (ESPN summary). Short cache so live games stay current without hammering the feed.
+app.get('/live/:id', async (c) => {
+  const id = c.req.param('id')
+  if (!/^\d{5,12}$/.test(id)) return c.json({ error: 'bad game id' }, 400)
+  try {
+    const feed = await cachedJson<unknown>(`espn-box-${id}`, 20, async () => {
+      const res = await fetch(`${c.env.ESPN_BASE_URL ?? 'https://site.api.espn.com'}/apis/site/v2/sports/basketball/nba/summary?event=${id}`)
+      if (!res.ok) throw new UpstreamError(`ESPN summary ${res.status}`)
+      return res.json()
+    })
+    const box = parseLiveBox(feed)
+    return box ? c.json({ data: box }) : c.json({ error: 'No box score for this game yet.' }, 404)
+  } catch (e) {
+    console.error('box score unavailable', e instanceof Error ? e.message : String(e))
+    return c.json({ error: 'The live box score is unavailable right now.' }, 502)
+  }
+})
+
+// League standings from ESPN's public feed, parsed by shared/standings.ts. Cached for 5 minutes (they only change when a game ends).
 app.get('/standings', async (c) => {
   try {
-    const feed = await cachedJson<unknown>('espn-standings', 30 * 60, async () => {
+    const feed = await cachedJson<unknown>('espn-standings', 5 * 60, async () => {
       const res = await fetch(`${c.env.ESPN_BASE_URL ?? 'https://site.api.espn.com'}/apis/v2/sports/basketball/nba/standings`)
       if (!res.ok) throw new UpstreamError(`ESPN standings ${res.status}`)
       return res.json()

@@ -6,6 +6,7 @@ import type { Pick } from '../lib/picks'
 import { SORTS, favorite, normAbbr, opponentOf, sortCards, toCards, type Card, type SortKey } from '../lib/propsBoard'
 import { teamByName } from '../lib/teams'
 import type { H2H, H2HState } from '../lib/h2hView'
+import LiveBox from './LiveBox'
 import MetricGuide from './MetricGuide'
 import Notices from './Notices'
 import PropList from './PropList'
@@ -18,7 +19,7 @@ type StatKey = (typeof STATS)[number][0]
 type View = 'cards' | 'list'
 
 interface GameInfo {
-  id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; score: string }; away: { abbr: string; score: string }
+  id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; name?: string; score: string }; away: { abbr: string; name?: string; score: string }
   odds?: { spread: number | null; total: number | null; homeWinProb: number | null } | null
 }
 interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable'; label: string; note: string }
@@ -49,17 +50,21 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
   useEffect(() => {
     api<{ configured: boolean; data: Pick[]; meta: PicksMeta }>('/picks')
       .then((r) => { setConfigured(r.configured); setPicks(r.data); setMeta(r.meta ?? null) })
-      .catch((e) => setError(e.message))
+      .catch((e) => { setError(e.message); setPicks([]) })
   }, [refreshKey])
 
   // The schedule decides the order of the games, and live scores come from it. While any game is in progress it refreshes every 30 seconds.
   const anyLive = sched.some((g) => g.state === 'in')
   useEffect(() => {
     let live = true
+    const standings = () => api<{ data: Conference[] }>('/standings')
+      .then((r) => live && setTable(new Map(r.data.flatMap((c) => c.rows.map((row) => [row.abbr, { ...row, conference: c.name }] as const))))).catch(() => {})
     const load = () => api<{ data: GameInfo[] }>('/games').then((r) => live && setSched(r.data)).catch(() => {})
+    const onVisible = () => { if (document.visibilityState === 'visible') { load(); standings() } }
+    document.addEventListener('visibilitychange', onVisible)
     load()
-    const t = anyLive ? setInterval(load, 30_000) : undefined
-    return () => { live = false; if (t) clearInterval(t) }
+    const t = anyLive ? setInterval(() => { load(); standings() }, 30_000) : undefined
+    return () => { live = false; document.removeEventListener('visibilitychange', onVisible); if (t) clearInterval(t) }
   }, [refreshKey, anyLive])
 
   // Optional context. A failure just hides it.
@@ -100,9 +105,18 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
       const [a, h] = g.game.split(' @ ').map((n) => teamByName(n)?.[0])
       g.info = sched.find((x) => normAbbr(x.away.abbr) === a && normAbbr(x.home.abbr) === h) ?? null
     }
+    // Games the books have no props for (or odds are down) still show: scores, standings, injuries and the live box score do not depend on odds.
+    const newest = Math.max(0, ...sched.map((x) => Date.parse(x.date)))
+    if (stat === 'all' && game === 'all' && !q.trim() && !positive)
+      for (const x of sched) {
+        const away = x.away.name, home = x.home.name
+        if (!away || !home || x.state === 'post' && newest - Date.parse(x.date) > 36 * 3600_000) continue
+        const key = `${away} @ ${home}`
+        if (![...m.values()].some((s) => s.info?.id === x.id) && !m.has(key)) m.set(key, { game: key, date: x.date.slice(0, 10), cards: [], info: x })
+      }
     // Tip-off order from the schedule; a game the schedule does not know goes last, by date.
     return [...m.values()].sort((a, b) => (a.info?.date ?? `${a.date}T99`).localeCompare(b.info?.date ?? `${b.date}T99`) || a.game.localeCompare(b.game))
-  }, [cards, sched])
+  }, [cards, sched, stat, game, q, positive])
 
   // The page size resets whenever a filter changes, derived from the filters themselves rather than reset in an effect.
   const sig = `${stat}|${game}|${q}|${sort}|${positive}|${view}`
@@ -162,7 +176,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
       {error && <p className="text-sm text-neutral-500">{error}</p>}
       {picks === null ? <Empty>Loading…</Empty> : !configured ? (
         <Empty>Add an <code className="text-neutral-300">ODDS_API_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to pull live lines.</Empty>
-      ) : cards.length === 0 ? (
+      ) : sections.length === 0 ? (
         <Empty>No props match these filters. Lines appear once books post them, for players you have synced.</Empty>
       ) : (
         <div className="space-y-8">
@@ -178,6 +192,7 @@ function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPl
 }) {
   // Only the first three games start open: a slate of 12 games would otherwise put thousands of nodes on the page.
   const [open, setOpen] = useState(index < 3)
+  const [box, setBox] = useState(false)
   const [away, home] = g.game.split(' @ ')
   const players = new Set(g.cards.map((c) => c.lead.playerId)).size
   const shown = g.cards.slice(0, limit)
@@ -187,11 +202,17 @@ function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPl
         {[away, home].map((n) => { const t = teamByName(n); return t && <TeamLogo key={n} id={t[1]} abbr={t[0]} size={32} /> })}
         <h2 className="text-lg font-semibold text-neutral-50">{away} <span className="font-normal text-neutral-600">@</span> {home}</h2>
         <GameStatus info={g.info} />
-        <span className="text-sm text-neutral-500">{g.cards.length} props · {players} players</span>
+        <span className="text-sm text-neutral-500">{g.cards.length ? `${g.cards.length} props · ${players} players` : 'no sportsbook lines'}</span>
         <span className="ml-auto text-sm text-neutral-600">{open ? 'Hide' : 'Show'}</span>
       </button>
       <GameContext game={g.game} info={g.info} absent={absent} table={table} />
-      {open && (
+      {g.info && g.info.state !== 'pre' && (
+        <div className="mt-2">
+          <button onClick={() => setBox(!box)} aria-expanded={box} className="text-sm text-emerald-400 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">{box ? 'Hide box score' : g.info.state === 'in' ? 'Live box score' : 'Box score'}</button>
+          {box && <div className="mt-2"><LiveBox gameId={g.info.id} live={g.info.state === 'in'} onOpenPlayer={onOpenPlayer} /></div>}
+        </div>
+      )}
+      {open && g.cards.length > 0 && (
         <div className="mt-3">
           {view === 'list'
             ? <PropList cards={shown} onOpenPlayer={onOpenPlayer} />

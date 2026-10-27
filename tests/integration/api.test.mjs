@@ -198,12 +198,13 @@ describe('picks', () => {
 })
 
 describe('provider failures', () => {
-  it('give a generic 502 and never leak the provider text', async () => {
+  it('odds failing degrades to no props plus a warning (the page keeps working) and never leaks the provider text', async () => {
     await setUpstreamFailing(true)
     try {
       const r = await api('/picks?fresh=1', { headers: priv }) // bypass the cache so the failure is reached
-      assert.equal(r.status, 502)
-      assert.deepEqual(Object.keys(r.body), ['error'])
+      assert.equal(r.status, 200)
+      assert.deepEqual(r.body.data, [])
+      assert.ok(r.body.meta.warnings.some((w) => w.code === 'odds_unavailable'))
       assert.ok(!JSON.stringify(r.body).includes('boom'))
     } finally { await setUpstreamFailing(false) }
   })
