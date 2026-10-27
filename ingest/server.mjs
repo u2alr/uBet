@@ -83,4 +83,13 @@ createServer((req, res) => {
     return json(res, 202, { started: true })
   }
   json(res, 404, { error: 'Not found' })
-}).listen(PORT, '127.0.0.1', () => console.log(`uBet sync helper on http://127.0.0.1:${PORT}`))
+}).listen(PORT, '127.0.0.1', () => {
+  console.log(`uBet sync helper on http://127.0.0.1:${PORT}`)
+  // Automatic sync: once at startup, then every AUTO_SYNC_HOURS (default 3). AUTO_SYNC=0 turns it off; the Sync button always works.
+  if (process.env.AUTO_SYNC === '0') return console.log('auto-sync off (AUTO_SYNC=0)')
+  const hours = Number(process.env.AUTO_SYNC_HOURS) > 0 ? Number(process.env.AUTO_SYNC_HOURS) : 3
+  const tick = () => { if (!state.running) { console.log(`auto-sync ${new Date().toLocaleTimeString()}`); startSync('all') } }
+  tick()
+  setInterval(tick, hours * 3600_000)
+  console.log(`auto-sync every ${hours}h`)
+})
