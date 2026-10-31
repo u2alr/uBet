@@ -30,9 +30,9 @@ def load() -> pd.DataFrame:
     cache = OUT / "games.pkl"
     if cache.exists():
         return pd.read_pickle(cache)
-    _, tm = load_raw()
+    pl, tm = load_raw()
     miss = pd.read_pickle(OUT / "features.pkl")[["GAME_ID", "TEAM_ID", "miss_prev"]].drop_duplicates(["GAME_ID", "TEAM_ID"])
-    g = G.build_games(tm, miss)
+    g = G.build_games(tm, miss, pl)
     g.to_pickle(cache)
     return g
 

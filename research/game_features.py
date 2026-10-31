@@ -20,6 +20,7 @@ GROUPS = {
     "SCHEDULE": ["rest_diff", "b2b_home", "b2b_away", "away_miles", "away_tz", "away_road_trip", "home_elev"],
     "STYLE": [f"mm_{k}" for k in STYLE],
     "AVAIL": ["miss_home", "miss_away"],
+    "AVAIL2": ["ab_min_diff", "ab_pts_diff", "ab_top_home", "ab_top_away", "ab_n_home", "ab_n_away"],
 }
 BASE = ["elo_diff"]
 ALL = [c for cols in GROUPS.values() for c in cols]
@@ -81,13 +82,54 @@ def _elo(t: pd.DataFrame, state: bool = False):
     return (e, rating, last_season) if state else e
 
 
+def team_absences(players: pd.DataFrame, upcoming: pd.DataFrame | None = None, out_ids: set[int] | None = None) -> pd.DataFrame:
+    """Rotation players absent from each team-game (PREREG_GAMES.md addendum). One row per (GAME_ID, TEAM_ID): ab_min, ab_pts, ab_n, ab_top.
+
+    The rotation, and every statistic of an absentee, come from the team's PREVIOUS 10 games only; whether he is absent is the one same-game fact: no minutes in this game (history), or
+    listed Out (`out_ids`) for the rows in `upcoming` (GAME_ID, TEAM_ID, date), which are games not yet played.
+    """
+    p = players[players["MIN"] > 0] if "MIN" in players.columns else players
+    p = p.assign(date=pd.to_datetime(p.GAME_DATE))
+    rows = []
+    fake = {} if upcoming is None else {t: g for t, g in upcoming.groupby("TEAM_ID")}
+    for team, tg in p.groupby("TEAM_ID"):
+        order = tg.groupby("GAME_ID").date.first().sort_values().index.tolist()
+        extra = [] if team not in fake else fake[team].sort_values("date").GAME_ID.tolist()
+        games = order + extra
+        mins = tg.pivot_table(index="GAME_ID", columns="PLAYER_ID", values="MIN", aggfunc="sum").reindex(games)
+        pts = tg.pivot_table(index="GAME_ID", columns="PLAYER_ID", values="PTS", aggfunc="sum").reindex(games)
+        played = mins.notna() & (mins > 0)
+        mins, pts = mins.fillna(0.0), pts.fillna(0.0)
+        season_key = np.array([str(g)[:3] for g in games])      # the rotation never reaches back across a season boundary: players who left over the summer are not "absent"
+        roll = lambda df: df.groupby(season_key).transform(lambda x: x.shift(1).rolling(10, min_periods=1).sum())   # noqa: E731
+        c = roll(played.astype(float))
+        avgm = roll(mins) / c.where(c > 0)
+        avgp = roll(pts) / c.where(c > 0)
+        rot = (c >= 3) & (avgm >= 15)
+        absent = ~played
+        if extra:
+            absent.loc[extra, :] = False
+            if out_ids:
+                cols = [pid for pid in absent.columns if pid in out_ids]
+                absent.loc[extra, cols] = True
+        miss = rot & absent
+        score = avgm.where(rot).fillna(-1.0).to_numpy()
+        has_rot = rot.any(axis=1).to_numpy()
+        top_idx = score.argmax(axis=1)
+        miss_np = miss.to_numpy()
+        top_abs = pd.Series([bool(miss_np[i, j]) if has_rot[i] else False for i, j in enumerate(top_idx)], index=games)
+        rows.append(pd.DataFrame({"GAME_ID": games, "TEAM_ID": team, "ab_min": avgm.where(miss).sum(axis=1).values, "ab_pts": avgp.where(miss).sum(axis=1).values,
+                                  "ab_n": miss.sum(axis=1).values, "ab_top": top_abs.astype(float).values}))
+    return pd.concat(rows, ignore_index=True)
+
+
 def _league_prior(t: pd.DataFrame, col: str) -> pd.Series:
     daily = t.groupby("date")[col].agg(["sum", "count"])
     c = daily.cumsum().shift(1)
     return (c["sum"] / c["count"]).rename(f"lg_{col}")
 
 
-def build_games(teams: pd.DataFrame, miss: pd.DataFrame) -> pd.DataFrame:
+def build_games(teams: pd.DataFrame, miss: pd.DataFrame, players: pd.DataFrame | None = None) -> pd.DataFrame:
     """`miss`: one row per (GAME_ID, TEAM_ID) with `miss_prev` (rotation minutes missing from the previous game; features.build's proxy)."""
     t = _rolling(_team_games(teams))
     td = D.team_defense(teams)
@@ -118,6 +160,15 @@ def build_games(teams: pd.DataFrame, miss: pd.DataFrame) -> pd.DataFrame:
         # Each row's defence columns describe that row's OPPONENT: the home row carries the away team's defence, and the away row carries the home team's.
         g[f"mm_{k}"] = (h[f"{own}_l10"].values - mu) * (h[dcol].values - mu) - (a[f"{own}_l10"].values - mu) * (a[dcol].values - mu)
     g["miss_home"], g["miss_away"] = h.miss_prev.values, a.miss_prev.values
+    if players is not None:
+        ab = team_absences(players).set_index(["GAME_ID", "TEAM_ID"])
+        hv = ab.reindex(list(zip(g.GAME_ID, g.home_id)))
+        av = ab.reindex(list(zip(g.GAME_ID, g.away_id)))
+        g["ab_min_diff"], g["ab_pts_diff"] = hv.ab_min.values - av.ab_min.values, hv.ab_pts.values - av.ab_pts.values
+        g["ab_top_home"], g["ab_top_away"], g["ab_n_home"], g["ab_n_away"] = hv.ab_top.values, av.ab_top.values, hv.ab_n.values, av.ab_n.values
+    else:
+        for c in GROUPS["AVAIL2"]:
+            g[c] = np.nan
     g["week"] = pd.to_datetime(g.date).dt.to_period("W").astype(str)
     g["regular"] = g.GAME_ID.astype(str).str[:1].eq("2")
     return g.sort_values(["date", "GAME_ID"]).reset_index(drop=True)
