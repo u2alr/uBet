@@ -24,10 +24,14 @@ def load_raw() -> tuple[pd.DataFrame, pd.DataFrame]:
     players, teams = [], []
     for f in sorted(DATA.glob("player_*.csv")):
         d = pd.read_csv(f)
+        if d.empty:
+            continue   # a season with no games yet (header only) would turn every column into text on concat
         d["gtype"] = "playoffs" if f.stem.endswith("playoffs") else "regular"
         players.append(d)
     for f in sorted(DATA.glob("team_*.csv")):
         d = pd.read_csv(f)
+        if d.empty:
+            continue
         d["gtype"] = "playoffs" if f.stem.endswith("playoffs") else "regular"
         teams.append(d)
     return pd.concat(players, ignore_index=True), pd.concat(teams, ignore_index=True)

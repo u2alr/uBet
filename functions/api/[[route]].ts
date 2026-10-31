@@ -17,6 +17,7 @@ import { TEAM_IDS, abbrOfTeamId, normAbbr } from '../../shared/teamCodes.ts'
 import { evaluateHealth } from '../../shared/health.ts'
 import { matchupSummary, teamFacts, workloadFacts, type PlayedGame, type WorkloadFacts } from '../../shared/schedule.ts'
 import humanFactorsStatus from '../../shared/humanFactors.status.json' with { type: 'json' }
+import defenseStatus from '../../shared/defense.status.json' with { type: 'json' }
 import { PRIOR_SQL, closingProxy, firstObserved, flatten, planArchive, priorFromRows, runSql, type PriorRow } from '../../shared/oddsArchive.ts'
 import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
@@ -503,6 +504,34 @@ app.get('/schedule-context', async (c) => {
     source: 'played games in this database and a static arena table; travel and hours are estimates',
     newestGameUsed: games[0]?.date ?? null,
   } })
+})
+
+// Defensive matchup FACTS for one player against one opponent (research/defense_snapshot.py -> migration 0019 tables). Estimated defenders, team defence and the sample behind each;
+// `model` says whether the pre-registered evaluation found any of it useful enough to change a prediction. Nothing here is a probability.
+app.get('/defense-context', async (c) => {
+  const q = c.req.query()
+  const player = parseId(q.player ?? ''), opp = q.opp ?? ''
+  if (player === null || !/^[A-Z]{2,3}$/.test(opp)) return c.json({ error: 'player (id) and opp (team code) are required' }, 400)
+  const team = normAbbr(opp)
+  try {
+    const [metrics, matchup, meta] = await c.env.DB.batch([
+      c.env.DB.prepare('SELECT metric, value_l10, value_s2d, pct_l10 FROM defense_team WHERE team = ?').bind(team),
+      c.env.DB.prepare('SELECT rank, defender_id, defender, weight, dpoe100, foul100, expo, direct_poss, role, conf, herf, direct FROM defense_matchup WHERE player_id = ? AND opp = ? ORDER BY rank').bind(player, team),
+      c.env.DB.prepare('SELECT key, value FROM defense_meta'),
+    ])
+    const m = Object.fromEntries((meta.results as { key: string; value: string }[]).map((r) => [r.key, r.value]))
+    if (!metrics.results.length && !matchup.results.length) return c.json({ data: { available: false, model: defenseStatus } })
+    c.header('Cache-Control', 'private, max-age=300')
+    return c.json({ data: {
+      available: true, team: metrics.results, matchup: matchup.results,
+      meta: { as_of: m.as_of, matchups_through: m.matchups_through, dpoe_mean: Number(m.dpoe_mean), dpoe_sd: Number(m.dpoe_sd), defenders_rated: Number(m.defenders_rated), games_with_matchups: Number(m.games_with_matchups) },
+      model: defenseStatus,
+      source: 'NBA.com per-game matchup data (BoxScoreMatchupsV3) and team box scores; assignments are estimated from history, not confirmed',
+    } })
+  } catch (e) {
+    console.error('defense context unavailable', e instanceof Error ? e.message : String(e))
+    return c.json({ data: { available: false, model: defenseStatus } })   // tables not migrated yet, or no snapshot: the section simply does not show
+  }
 })
 
 // Is this deployment configured and current? Booleans, counts and ages only: never a secret, never a value from the environment.

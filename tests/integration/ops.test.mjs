@@ -1,7 +1,7 @@
 // Run: npm run test:integration. Operational endpoints: health reports facts without secrets, and the heavy cheat-sheet query is cached.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import { api, start } from './harness.mjs'
+import { api, openScratch, start } from './harness.mjs'
 
 let app
 before(async () => { app = await start({ extraBindings: ['CAPTURE_TOKEN=integration-token-value-0123456789'] }) })
@@ -69,5 +69,33 @@ describe('/api/live/:id (live box score)', () => {
     const r = await api('/live/99999')
     assert.equal(r.status, 502)
     assert.deepEqual(Object.keys(r.body), ['error'])
+  })
+})
+
+describe('/api/defense-context (display-only defensive matchup facts)', () => {
+  it('validates input and says "not available" when no snapshot exists, without failing', async () => {
+    assert.equal((await api('/defense-context')).status, 400)
+    assert.equal((await api('/defense-context?player=abc&opp=BOS')).status, 400)
+    assert.equal((await api('/defense-context?player=1&opp=bos')).status, 400)
+    const r = await api('/defense-context?player=1&opp=BOS')
+    assert.equal(r.status, 200)
+    assert.equal(r.body.data.available, false)
+    assert.equal(r.body.data.model.adjustsPredictions, false)
+  })
+  it('serves the estimated defenders, team traits and meta from the snapshot tables, never a probability', async () => {
+    const db = openScratch()
+    try {
+      db.prepare("INSERT INTO defense_team (team, metric, value_l10, value_s2d, pct_l10) VALUES ('BOS','p3a_rate',0.4,0.39,0.9)").run()
+      db.prepare("INSERT INTO defense_matchup (player_id, player, opp, rank, defender_id, defender, weight, dpoe100, foul100, expo, direct_poss, role, conf, herf, direct) VALUES (7,'Test Guard','BOS',1,9,'Test Defender',0.6,1.4,1.5,0.9,35,'G',0.7,0.4,0.5)").run()
+      for (const [k, v] of Object.entries({ as_of: '2026-10-31 09:00', matchups_through: '2026-10-30', dpoe_mean: '0', dpoe_sd: '1', defenders_rated: '300', games_with_matchups: '5000' })) db.prepare('INSERT OR REPLACE INTO defense_meta (key, value) VALUES (?, ?)').run(k, v)
+    } finally { db.close() }
+    const r = await api('/defense-context?player=7&opp=BOS')
+    assert.equal(r.status, 200)
+    assert.equal(r.body.data.available, true)
+    assert.equal(r.body.data.matchup[0].defender, 'Test Defender')
+    assert.equal(r.body.data.team[0].metric, 'p3a_rate')
+    assert.equal(r.body.data.meta.matchups_through, '2026-10-30')
+    assert.doesNotMatch(JSON.stringify(r.body.data), /probab|\bev\b/i)
+    assert.equal((await api('/defense-context?player=8&opp=BOS')).body.data.matchup.length, 0, 'another player has no estimated defenders, only the team traits')
   })
 })

@@ -67,7 +67,8 @@ def buckets(te: pd.DataFrame) -> dict[str, np.ndarray]:
     }
 
 
-def run_fold(df: pd.DataFrame, name: str, variants: dict[str, list[str]], rng, detail: bool = True) -> dict:
+def run_fold(df: pd.DataFrame, name: str, variants: dict[str, list[str]], rng, detail: bool = True, bucket_fn=None, assoc_cols=None, coverage_cols=None) -> dict:
+    """bucket_fn, assoc_cols and coverage_cols let another experiment (defense_eval.py) reuse this exact procedure with its own slices and features."""
     tr_seasons, te_season = FOLDS[name]
     base = (df.n_prior >= 5) & df["pts_l10"].notna()
     tr = df[base & df.season.isin(tr_seasons)].sort_values("date")
@@ -75,8 +76,10 @@ def run_fold(df: pd.DataFrame, name: str, variants: dict[str, list[str]], rng, d
     cut = int(len(tr) * 0.8)
     fit_part, alpha_part = tr.iloc[:cut], tr.iloc[cut:]
     weeks = te.date.dt.to_period("W").astype(str).to_numpy()
-    bk = buckets(te)
-    out = {"n_test": len(te), "season": f"{te_season}-{str(te_season + 1)[2:]}", "coverage": {c: float(te[c].notna().mean()) for c in ALL}, "stats": {}}
+    bk = (bucket_fn or buckets)(te)
+    assoc_cols = assoc_cols if assoc_cols is not None else ALL
+    coverage_cols = coverage_cols if coverage_cols is not None else ALL
+    out = {"n_test": len(te), "season": f"{te_season}-{str(te_season + 1)[2:]}", "coverage": {c: float(te[c].notna().mean()) for c in coverage_cols}, "stats": {}}
     for stat in ALL_STATS:
         disp = Dispersion().fit(fit(fit_part, alpha_part, stat, FEATURES), alpha_part[stat].to_numpy(float))
         y = te[stat].to_numpy(float)
@@ -111,7 +114,7 @@ def run_fold(df: pd.DataFrame, name: str, variants: dict[str, list[str]], rng, d
             res[vname] = r
         if detail:   # does any new feature explain what the baseline misses? Spearman against the baseline's standardised residual
             part = {}
-            for c in ALL:
+            for c in assoc_cols:
                 ok = te[c].notna().to_numpy()
                 part[c] = {"rho_with_baseline_residual": float(spearmanr(te.loc[ok, c], z0[ok])[0]) if ok.sum() > 500 and te.loc[ok, c].nunique() > 1 else None, "n": int(ok.sum())}
             res["partial_association"] = part

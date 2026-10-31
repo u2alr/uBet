@@ -11,6 +11,7 @@ import EvidenceBadge from './EvidenceBadge'
 import { Term } from './MetricGuide'
 import { SlipButton } from './PickTable'
 import { PickSpark } from './PickSpark'
+import DefensiveMatchup from './DefensiveMatchup'
 import ScheduleFatigue from './ScheduleFatigue'
 import TeamLogo from './TeamLogo'
 
@@ -122,6 +123,7 @@ export default function PropTile({ c, h2h, tipIso = null, onOpenPlayer }: { c: C
             <div className="flex items-center gap-4"><PickSpark p={p} w={150} h={40} /><span className="text-xs text-neutral-500">Last {p.recent.length} games against {p.line}; bright bars landed on the {p.side}.</span></div>
             <Suspense fallback={<div className="h-32" />}><PickBars p={p} /></Suspense>
             <ScheduleFatigue p={p} tipIso={tipIso} />
+            <DefensiveMatchup p={p} />
             <H2HSummary p={p} rows={rows} failed={h2h.status === 'error'} />
             <H2HTable p={p} rows={rows} />
           </div>

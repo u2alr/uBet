@@ -1,0 +1,8 @@
+{
+  "version": "def-v1",
+  "evaluated": false,
+  "adjustsPredictions": false,
+  "groupsKept": [],
+  "summary": "The defensive features have not been evaluated yet, so they do not change any prediction.",
+  "evidence": "research/PREREG_DEFENSE.md"
+}
