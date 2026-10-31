@@ -33,6 +33,11 @@ def load() -> pd.DataFrame:
     pl, tm = load_raw()
     miss = pd.read_pickle(OUT / "features.pkl")[["GAME_ID", "TEAM_ID", "miss_prev"]].drop_duplicates(["GAME_ID", "TEAM_ID"])
     g = G.build_games(tm, miss, pl)
+    # Early season (descriptive only): either team is in its first 15 games of the season.
+    long = pd.concat([g[["GAME_ID", "date", "season", "home_id"]].rename(columns={"home_id": "team"}), g[["GAME_ID", "date", "season", "away_id"]].rename(columns={"away_id": "team"})]).sort_values(["team", "date"])
+    long["n"] = long.groupby(["team", "season"]).cumcount() + 1
+    first = long.groupby("GAME_ID").n.min()
+    g["early"] = g.GAME_ID.map(first) <= 15
     g.to_pickle(cache)
     return g
 
@@ -70,8 +75,10 @@ def run_fold(g: pd.DataFrame, name: str, variants: dict[str, list[str]], rng, de
     p0, _ = fit_predict(tr, te, G.BASE)
     base_ll = logloss(y, p0)
     out = {"season": f"{te_season}-{str(te_season + 1)[2:]}", "n_test": len(te), "baseline": metrics(y, p0), "variants": {}}
+    lls = {}
     for vname, extra in variants.items():
         p, _ = fit_predict(tr, te, G.BASE + extra)
+        lls[vname] = logloss(y, p)
         d = base_ll - logloss(y, p)
         mean, lo, hi = boot(d, weeks, rng)
         r = {"dlogloss": mean, "ci_lo": lo, "ci_hi": hi, **metrics(y, p)}
@@ -83,13 +90,21 @@ def run_fold(g: pd.DataFrame, name: str, variants: dict[str, list[str]], rng, de
             r["by_band"] = {str(b): {"n": int((bands == b).sum()), "predicted": float(p[bands == b].mean()), "actual": float(y[bands == b].mean())} for b in bands.categories if (bands == b).any()}
             rd = pd.cut(te.rest_diff.to_numpy(float), [-99, -1.5, -0.5, 0.5, 1.5, 99], labels=["<= -2", "-1", "0", "+1", ">= +2"])
             r["by_rest_diff"] = {str(b): {"n": int((rd == b).sum()), "mean_dlogloss": float(d[np.asarray(rd == b)].mean())} for b in rd.categories if (rd == b).sum() >= 100}
+        if vname == "AVAIL3" and "AVAIL2" in lls:    # PREREG_GAMES addendum 2: AVAIL3 versus AVAIL2, paired (positive = AVAIL3 better)
+            dd = lls["AVAIL2"] - lls["AVAIL3"]
+            r["vs_avail2"] = {"dlogloss": float(dd.mean())}
+            early = te.early.to_numpy()
+            r["early_season"] = {"games": int(early.sum()), "baseline_logloss": float(base_ll[early].mean()), "avail2_logloss": float(lls["AVAIL2"][early].mean()), "avail3_logloss": float(lls["AVAIL3"][early].mean())}
         out["variants"][vname] = r
         print(f"{name} {vname:34s} dlogloss {mean:+.5f} [{lo:+.5f},{hi:+.5f}]  logloss {r['logloss']:.4f}  slope {r['cal_slope']:.3f}", flush=True)
     return out
 
 
 def passes(folds: dict, group: str, names: list[str]) -> bool:
-    return all(folds[f]["variants"][group]["ci_lo"] > 0 for f in names)
+    ok = all(folds[f]["variants"][group]["ci_lo"] > 0 for f in names)
+    if group == "AVAIL3":   # addendum 2: must also not be worse than AVAIL2 by more than 0.002 on either development fold
+        ok = ok and all(folds[f]["variants"]["AVAIL3"]["vs_avail2"]["dlogloss"] >= -0.002 for f in names)
+    return ok
 
 
 def main():
