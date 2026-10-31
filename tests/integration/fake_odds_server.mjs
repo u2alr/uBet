@@ -103,7 +103,9 @@ const scoreboard = () => ({ events: EVENTS.map((e) => ({
   competitions: [{ competitors: [
     { homeAway: 'home', team: { abbreviation: ESPN_ABBR[e.home], displayName: e.home }, score: '0' },
     { homeAway: 'away', team: { abbreviation: ESPN_ABBR[e.away], displayName: e.away }, score: '0' },
-  ] }],
+  ],
+  odds: [{ provider: { displayName: 'Draft Kings' }, spread: 4.5, overUnder: 221.5, homeTeamOdds: { favorite: true }, awayTeamOdds: { favorite: false },
+    moneyline: { home: { close: { odds: '-180' } }, away: { close: { odds: '+150' } } } }] }],
 })) })
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')

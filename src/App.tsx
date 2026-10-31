@@ -65,7 +65,7 @@ function Shell() {
       <main key={`${tab}${gameId ?? ''}`} className="anim-fade">
       <h1 className="sr-only">{tab === 'Today' ? 'Games' : tab === 'Cheatsheet' ? 'Cheat sheet' : tab}</h1>
       <Suspense fallback={<p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">Loading…</p>}>
-      {tab === 'Props' && <PropsBoard refreshKey={refreshKey} onOpenPlayer={openPlayer} />}
+      {tab === 'Props' && <PropsBoard refreshKey={refreshKey} onOpenPlayer={openPlayer} onOpenSlip={() => go({ tab: 'Slip' })} />}
       {tab === 'Today' && (gameId
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => go({ tab: 'Today' })} onOpenPlayer={openPlayer} />
         : <Today refreshKey={refreshKey} onOpenPlayer={openPlayer} onOpenGame={(id) => go({ tab: 'Today', gameId: id })} onOpenSlip={() => go({ tab: 'Slip' })} />)}

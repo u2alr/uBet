@@ -11,6 +11,7 @@ import MetricGuide from './MetricGuide'
 import Notices from './Notices'
 import PropList from './PropList'
 import PropTile from './PropTile'
+import TeamBets from './TeamBets'
 import TeamLogo from './TeamLogo'
 
 // The Props board: one card per player, stat and line, grouped by game in tip-off order. Filters live in one sticky toolbar.
@@ -20,7 +21,7 @@ type View = 'cards' | 'list'
 
 interface GameInfo {
   id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; name?: string; score: string }; away: { abbr: string; name?: string; score: string }
-  odds?: { spread: number | null; total: number | null; homeWinProb: number | null } | null
+  odds?: { spread: number | null; total: number | null; homeWinProb: number | null; bestMoneyline?: { home: number; away: number } | null } | null
 }
 interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable'; label: string; note: string }
 type TeamStanding = StandingRow & { conference: string }
@@ -29,7 +30,7 @@ interface Section { game: string; date: string; cards: Card[]; info: GameInfo | 
 const VIEW_KEY = 'ubet.props.view'
 const readView = (): View => { try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'cards' } catch { return 'cards' } }
 
-export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: number; onOpenPlayer: (id: number) => void }) {
+export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { refreshKey: number; onOpenPlayer: (id: number) => void; onOpenSlip: () => void }) {
   const [picks, setPicks] = useState<Pick[] | null>(null)
   const [configured, setConfigured] = useState(true)
   const [meta, setMeta] = useState<PicksMeta | null>(null)
@@ -163,6 +164,8 @@ export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: n
           </div>
         </div>
       </div>
+
+      <TeamBets games={sched} onOpenSlip={onOpenSlip} />
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
         <div className="min-w-0 flex-1"><Notices meta={meta} /></div>

@@ -214,6 +214,10 @@ describe('provider failures', () => {
       const r = await api('/games?fresh=1', { headers: priv })
       assert.equal(r.status, 200)
       assert.equal(r.body.meta.oddsAvailable, false)
+      const g = r.body.data[0]
+      assert.equal(g.odds.source, 'Draft Kings', 'with The Odds API down the single free book is used and labelled')
+      assert.deepEqual(g.odds.bestMoneyline, { home: 1 + 100 / 180, away: 2.5 })
+      assert.equal(g.odds.spread, -4.5)
     } finally { await setUpstreamFailing(false) }
   })
 })

@@ -6,6 +6,7 @@ import { MINDS_VERSION } from '../../shared/minds.ts'
 import { parseStandings } from '../../shared/standings.ts'
 import { parseLiveBox } from '../../shared/liveBox.ts'
 import { parseSportsDbEvents } from '../../shared/sportsdb.ts'
+import { parseEspnOdds } from '../../shared/espnOdds.ts'
 import { teamByName } from '../../src/lib/teams.ts'
 import { applyAuthority } from '../../shared/engine/authority.ts'
 import { CALIBRATION } from '../../shared/engine/artifact.ts'
@@ -342,6 +343,7 @@ async function espnScoreboard(env: Bindings, dates: string[]): Promise<any[]> {
         state: e.status.type.state as 'pre' | 'in' | 'post',
         home: { abbr: side('home').team.abbreviation, name: side('home').team.displayName, score: side('home').score },
         away: { abbr: side('away').team.abbreviation, name: side('away').team.displayName, score: side('away').score },
+        espnOdds: parseEspnOdds(comp),   // free, one book: keeps the market favourite and team bets working when The Odds API has no credits
       }
     })
   }
@@ -354,8 +356,13 @@ app.get('/games', async (c) => {
     console.error('team odds unavailable', e instanceof Error ? e.message : String(e))
     return null
   })])
+  // Team odds: the multi-book consensus when The Odds API answered, otherwise the single book ESPN's scoreboard carries (labelled, never mixed).
+  const fromEspn = (g: any) => (g.espnOdds ? { spread: g.espnOdds.spread, total: g.espnOdds.total, homeWinProb: g.espnOdds.homeWinProb, bestMoneyline: { home: g.espnOdds.home, away: g.espnOdds.away }, source: g.espnOdds.book as string } : null)
   return c.json({
-    data: games.map((g) => ({ ...g, odds: odds?.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)?.summary ?? null })),
+    data: games.map(({ espnOdds: _e, ...g }: any) => {
+      const multi = odds?.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)?.summary
+      return { ...g, odds: multi ? { ...multi, source: 'average of several books' } : fromEspn({ espnOdds: _e }) }
+    }),
     // Say so when the odds could not be loaded, instead of silently showing games with no odds.
     meta: { oddsAvailable: odds !== null, freshRequested: c.req.query('fresh') === '1', freshHonored: fresh },
   })
