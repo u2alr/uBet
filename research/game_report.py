@@ -42,13 +42,15 @@ def main():
           "- No sportsbook line exists historically here, so nothing in this file says the model beats the market. Markets are usually more accurate than a simple rating model; a gap between the two is more likely the model's blind spot than an opportunity.",
           "- Forward comparison starts now: every snapshot stores the model's and the market's chance side by side (`game_lean_log`)."]
     (HERE / "RESULTS_GAMES.md").write_text("\n".join(L) + "\n", encoding="utf-8")
-    b = d["B"]["baseline"]
     confirmed = final["groups_confirmed_on_F"] if final else []
+    # The model the app shows is the baseline plus the confirmed groups; describe it on the season it was confirmed on (the final season), else on the latest development season.
+    src = final["F"] if final else d["B"]
+    b = src["variants"][confirmed[0]] if confirmed and len(confirmed) == 1 else src["baseline"]
     STATUS.write_text(json.dumps({
         "version": "games-v1", "evaluated": True, "model": "baseline" if not confirmed else "baseline+" + "+".join(confirmed), "groupsKept": confirmed,
-        "logLoss": round(b["logloss"], 4), "brier": round(b["brier"], 4), "calibrationSlope": round(b["cal_slope"], 3), "accuracy": round(b["accuracy"], 3), "testGames": d["B"]["n_test"], "testSeason": d["B"]["season"],
-        "summary": ("A rating-based view (home advantage plus a margin-aware Elo). None of the schedule, style or availability groups improved it reliably enough to be included. It cannot see injuries or lineups, and it has not been tested against sportsbook lines."
-                    if not confirmed else f"A rating-based view plus {', '.join(confirmed)}. It cannot see injuries or lineups, and it has not been tested against sportsbook lines."),
+        "logLoss": round(b["logloss"], 4), "brier": round(b["brier"], 4), "calibrationSlope": round(b["cal_slope"], 3), "accuracy": round(b["accuracy"], 3), "testGames": src["n_test"], "testSeason": src["season"], "baselineLogLoss": round(src["baseline"]["logloss"], 4),
+        "summary": ("A rating-based view (home advantage plus a margin-aware Elo). None of the schedule, style or availability groups improved it reliably enough to be included. It has not been tested against sportsbook lines."
+                    if not confirmed else "Home advantage, a margin-aware Elo, and which rotation players the injury report lists as Out. It was tested with the players who actually sat out, so that is a best case: late scratches, Questionable players and lineup news are not seen, and a team's first three games of a season have no rotation to measure. It has not been tested against sportsbook lines."),
         "evidence": "research/RESULTS_GAMES.md"}, indent=2) + "\n", encoding="utf-8")
     print("wrote RESULTS_GAMES.md and games.status.json; kept groups:", kept)
 

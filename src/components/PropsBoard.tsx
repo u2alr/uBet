@@ -6,7 +6,7 @@ import type { Pick } from '../lib/picks'
 import { SORTS, favorite, normAbbr, opponentOf, sortCards, toCards, type Card, type SortKey } from '../lib/propsBoard'
 import { teamByName } from '../lib/teams'
 import type { H2H, H2HState } from '../lib/h2hView'
-import { lean, leanText, ratingFacts, type GameLeanRow } from '../../shared/games.ts'
+import { availabilityFact, lean, leanText, ratingFacts, type GameLeanRow } from '../../shared/games.ts'
 import LiveBox from './LiveBox'
 import MetricGuide from './MetricGuide'
 import Notices from './Notices'
@@ -268,13 +268,14 @@ function GameContext({ game, info, absent, table, leans }: { game: string; info:
         </p>
       )}
       {row && view && (
-        <div className="space-y-0.5" title="A rating-based view (home advantage plus Elo). It cannot see injuries or lineups and has not been tested against sportsbook lines.">
+        <div className="space-y-0.5" title="Home advantage, Elo and the rotation players the injury report lists Out. Tested with the players who actually sat out (a best case); late scratches and lineup news are not seen; not tested against sportsbook lines.">
           <p className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums ${view.lean ? 'text-amber-300' : ''}`}>
             <span className="text-neutral-500">Model view</span>
             <b className="font-medium text-neutral-200">{view.modelPick} {Math.round(view.modelProb * 100)}%</b>
             {view.lean && <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs">lean vs market</span>}
           </p>
           <p className="text-xs text-neutral-500">{leanText(view)}</p>
+          <p className="text-xs text-neutral-500">{availabilityFact(row)}</p>
           {ratingFacts(row).map((f) => <p key={f} className="text-xs text-neutral-500">{f}</p>)}
         </div>
       )}

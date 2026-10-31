@@ -12,7 +12,8 @@ Baseline (home advantage + Elo): log loss 0.6126, Brier 0.2130, calibration slop
 | SCHEDULE | +0.00520 [-0.00096, +0.01139] | 0.6074 | 0.2102 | 1.031 | 65.8% | 89 (54%) |
 | STYLE | +0.00052 [-0.00153, +0.00270] | 0.6121 | 0.2127 | 1.019 | 65.2% | 24 (50%) |
 | AVAIL | +0.00154 [-0.00037, +0.00354] | 0.6111 | 0.2122 | 1.033 | 65.6% | 29 (59%) |
-| ALL (information only) | +0.00738 [-0.00084, +0.01493] | 0.6052 | 0.2090 | 1.072 | 66.4% | 119 (56%) |
+| AVAIL2 | +0.00924 [+0.00215, +0.01666] | 0.6034 | 0.2089 | 1.036 | 65.1% | 87 (49%) |
+| ALL (information only) | +0.01131 [-0.00024, +0.02264] | 0.6013 | 0.2077 | 1.059 | 66.5% | 146 (55%) |
 
 ## Fold B: test season 2024-25 (1,225 games)
 
@@ -20,20 +21,21 @@ Baseline (home advantage + Elo): log loss 0.6089, Brier 0.2111, calibration slop
 
 | variant | dlogloss [95% interval] | log loss | Brier | calibration slope | accuracy | picks that differ from baseline (model right) |
 |---|---|---|---|---|---|---|
-| RATINGS | +0.00279 [+0.00049, +0.00502] | 0.6061 | 0.2098 | 0.985 | 65.9% | 38 (47%) |
-| SCHEDULE | +0.00146 [-0.00392, +0.00670] | 0.6074 | 0.2106 | 0.956 | 66.7% | 78 (55%) |
-| STYLE | -0.00048 [-0.00244, +0.00163] | 0.6093 | 0.2113 | 0.935 | 66.7% | 26 (65%) |
-| AVAIL | +0.00427 [+0.00084, +0.00726] | 0.6046 | 0.2091 | 0.978 | 66.5% | 36 (58%) |
-| ALL (information only) | +0.00831 [+0.00186, +0.01419] | 0.6005 | 0.2076 | 0.960 | 66.4% | 101 (52%) |
+| RATINGS | +0.00279 [+0.00047, +0.00514] | 0.6061 | 0.2098 | 0.985 | 65.9% | 38 (47%) |
+| SCHEDULE | +0.00146 [-0.00372, +0.00672] | 0.6074 | 0.2106 | 0.956 | 66.7% | 78 (55%) |
+| STYLE | -0.00048 [-0.00245, +0.00164] | 0.6093 | 0.2113 | 0.935 | 66.7% | 26 (65%) |
+| AVAIL | +0.00427 [+0.00111, +0.00752] | 0.6046 | 0.2091 | 0.978 | 66.5% | 36 (58%) |
+| AVAIL2 | +0.01084 [+0.00455, +0.01701] | 0.5980 | 0.2065 | 1.002 | 67.5% | 108 (58%) |
+| ALL (information only) | +0.01340 [+0.00484, +0.02120] | 0.5955 | 0.2056 | 0.978 | 66.9% | 142 (54%) |
 
 ## Calibration by predicted-probability band (fold B, all groups, descriptive)
 
 | band | games | predicted | actual |
 |---|---|---|---|
-| <35% | 237 | 24.5% | 25.3% |
-| 35-50% | 248 | 42.9% | 44.0% |
-| 50-65% | 299 | 57.6% | 55.2% |
-| >65% | 441 | 77.4% | 75.5% |
+| <35% | 247 | 24.2% | 20.6% |
+| 35-50% | 241 | 42.9% | 48.5% |
+| 50-65% | 292 | 57.6% | 56.5% |
+| >65% | 445 | 77.2% | 75.1% |
 
 ## Verdict by the rule fixed in advance
 
@@ -41,8 +43,9 @@ Baseline (home advantage + Elo): log loss 0.6089, Brier 0.2111, calibration slop
 - **SCHEDULE**: not kept (interval did not clear 0 on both folds)
 - **STYLE**: not kept (interval did not clear 0 on both folds)
 - **AVAIL**: not kept (interval did not clear 0 on both folds)
+- **AVAIL2**: passed both development folds
 
-Fold F (the final season) was **not used**: no group passed development, so the displayed model view is the baseline (home advantage + Elo).
+Fold F used once for ['AVAIL2']: confirmed ['AVAIL2'].
 
 ## What this means
 - The displayed view is the plain rating baseline unless a group passed. Its log loss is far below a coin flip, but it is a rating model: it cannot see injuries or lineups.

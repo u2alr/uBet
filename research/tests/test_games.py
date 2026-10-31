@@ -61,6 +61,41 @@ def test_elo_is_zero_sum_across_a_season():
     assert abs(sum(rating.values()) / len(rating) - G.ELO_START) < 1e-6 * G.ELO_START + 30, "ratings move between teams, they are not created"
 
 
+def test_serving_matches_training_when_the_report_is_right():
+    """Parity: take a late-season game, treat it as NOT YET PLAYED, and supply the players who actually sat out as the injury report. The features must equal the historical ones."""
+    players, teams = features.load_raw()
+    pl, _ = TD.augment(players, teams)
+    full = G.team_absences(pl).set_index(["GAME_ID", "TEAM_ID"])
+    pl = pl.assign(date=pd.to_datetime(pl.GAME_DATE))
+    checked = 0
+    for (gid, team), row in full[full.ab_n > 0].iloc[-40:].iterrows():
+        g = pl[pl.GAME_ID == gid].iloc[0]
+        tg = pl[(pl.TEAM_ID == team)]
+        before = sorted(tg[(tg.date < g.date) & (tg.SEASON_ID == g.SEASON_ID)].GAME_ID.unique())[-10:]
+        recent = tg[tg.GAME_ID.isin(before)].groupby("PLAYER_ID").MIN.agg(["count", "mean"])
+        rotation = set(recent[(recent["count"] >= 3) & (recent["mean"] >= 15)].index)
+        played_now = set(tg[(tg.GAME_ID == gid) & (tg.MIN > 0)].PLAYER_ID)
+        sat_out = rotation - played_now
+        upcoming = pd.DataFrame([{"GAME_ID": gid, "TEAM_ID": team, "date": g.date}])
+        history = pl[pl.date < g.date]      # serving happens after every played game and before the target, so nothing later exists
+        served = G.team_absences(history, upcoming=upcoming, out_ids=set(sat_out)).set_index(["GAME_ID", "TEAM_ID"]).loc[(gid, team)]
+        for c in ("ab_min", "ab_pts", "ab_n", "ab_top"):
+            assert abs(served[c] - row[c]) < 1e-9, (gid, team, c, served[c], row[c])
+        assert {int(i) for i in served.ab_ids.split(",") if i} == {int(x) for x in sat_out}
+        checked += 1
+    assert checked >= 10, "the fixture needs enough games with an absent rotation player"
+
+
+def test_a_player_not_in_the_rotation_is_never_absent():
+    players, teams = features.load_raw()
+    pl, _ = TD.augment(players, teams)
+    last = pl.sort_values("GAME_DATE").iloc[-1]
+    upcoming = pd.DataFrame([{"GAME_ID": 999999999, "TEAM_ID": last.TEAM_ID, "date": pd.to_datetime(last.GAME_DATE) + pd.Timedelta(days=2)}])
+    ghost = 123456789   # a player id that has never appeared
+    out = G.team_absences(pl, upcoming=upcoming, out_ids={ghost}).set_index(["GAME_ID", "TEAM_ID"]).loc[(999999999, last.TEAM_ID)]
+    assert out.ab_n == 0 and out.ab_min == 0, "a name the report lists but who is no part of the rotation changes nothing"
+
+
 def test_leakage_future_deletion_and_same_day_corruption():
     players, teams = features.load_raw()
     full = build(players, teams)

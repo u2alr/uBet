@@ -546,7 +546,7 @@ app.get('/defense-context', async (c) => {
 app.get('/game-lean', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
-      `SELECT date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of
+      `SELECT date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of, absent_home, absent_away
        FROM game_lean WHERE date >= date('now', '-1 day') ORDER BY date, home`,
     ).all()
     c.header('Cache-Control', 'private, max-age=300')

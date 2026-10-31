@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { LEAN_GAP, lean, leanText, ratingFacts, type GameLeanRow } from './games.ts'
+import { LEAN_GAP, availabilityFact, lean, leanText, ratingFacts, type GameLeanRow } from './games.ts'
 
 const row = (p: number, extra: Partial<GameLeanRow> = {}): GameLeanRow => ({ date: '2026-11-01', home: 'GSW', away: 'ATL', model_home_prob: p, elo_home: 1550, elo_away: 1500, home_net10: null, away_net10: null, home_off20: null, home_def20: null, away_off20: null, away_def20: null, as_of: 'x', ...extra })
 
@@ -47,4 +47,10 @@ test('rating facts are descriptive, skip what is missing, and call out a large g
   assert.equal(f.length, 2)
   assert.match(f[0], /GSW \+6\.2, ATL -1\.1/)
   assert.match(f[0], /7-point gap in favour of GSW/)
+})
+
+test('the availability fact names who the number assumes is out, and says so when nobody is', () => {
+  assert.equal(availabilityFact(row(0.5)), 'Assumed available: GSW: no rotation player listed out; ATL: no rotation player listed out.')
+  assert.equal(availabilityFact(row(0.5, { absent_home: 'Stephen Curry (32 min)', absent_away: '' })), 'Assumed available: GSW without Stephen Curry (32 min); ATL: no rotation player listed out.')
+  assert.match(leanText(lean(row(0.45), 0.58)), /injury report as of the snapshot/)
 })

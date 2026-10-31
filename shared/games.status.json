@@ -1,14 +1,17 @@
 {
   "version": "games-v1",
   "evaluated": true,
-  "model": "baseline",
-  "groupsKept": [],
-  "logLoss": 0.6089,
-  "brier": 0.2111,
-  "calibrationSlope": 0.967,
-  "accuracy": 0.66,
+  "model": "baseline+AVAIL2",
+  "groupsKept": [
+    "AVAIL2"
+  ],
+  "logLoss": 0.5864,
+  "brier": 0.2011,
+  "calibrationSlope": 1.045,
+  "accuracy": 0.686,
   "testGames": 1225,
-  "testSeason": "2024-25",
-  "summary": "A rating-based view (home advantage plus a margin-aware Elo). None of the schedule, style or availability groups improved it reliably enough to be included. It cannot see injuries or lineups, and it has not been tested against sportsbook lines.",
+  "testSeason": "2025-26",
+  "baselineLogLoss": 0.5973,
+  "summary": "Home advantage, a margin-aware Elo, and which rotation players the injury report lists as Out. It was tested with the players who actually sat out, so that is a best case: late scratches, Questionable players and lineup news are not seen, and a team's first three games of a season have no rotation to measure. It has not been tested against sportsbook lines.",
   "evidence": "research/RESULTS_GAMES.md"
 }

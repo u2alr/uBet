@@ -28,3 +28,10 @@ serve time, sourced from injury reports) cannot be built or evaluated without th
 ## What would unlock a valid test
 Archive the injury report with a timestamp before every game (see the point-in-time archive work in `functions/api/[[route]].ts` and `research/PREREG_MARKET.md`'s
 data plan). After one season of archived reports, pre-register the comparison (override on vs off, same folds, same metrics) and run it once.
+
+
+## Update: the game-winner view (PREREG_GAMES.md addendum)
+For TEAM results the missing piece was not an archive: who actually sat out a game is recoverable from box scores for every historical game, so "rotation players not playing" is defined the same way
+for training (box score) and serving (the report's Out list as of the snapshot). That feature (AVAIL2) passed both development seasons and the final season. It was validated with the actual absentees, which
+is a best case for the live report; `injury_log` now records each report read so its accuracy can be measured. This does NOT change the player-prop decision above: for props the same-game absence is not
+yet validated against props, and the serving mismatch described here still applies there.

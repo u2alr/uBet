@@ -11,6 +11,8 @@ export interface GameLeanRow {
   home_net10: number | null; away_net10: number | null
   home_off20: number | null; home_def20: number | null; away_off20: number | null; away_def20: number | null
   as_of: string
+  /** Rotation players the injury report lists Out, "Name (avg minutes)" separated by semicolons; empty when none (or when the team has no rotation yet this season). */
+  absent_home?: string | null; absent_away?: string | null
 }
 
 export interface Lean {
@@ -37,6 +39,12 @@ export function lean(row: Pick3, marketHomeProb: number | null): Lean {
 }
 type Pick3 = Pick<GameLeanRow, 'home' | 'away' | 'model_home_prob'>
 
+/** What the model assumed about availability, in words. Names the rotation players treated as out so the number can be checked against the news. */
+export function availabilityFact(r: GameLeanRow): string {
+  const side = (team: string, list?: string | null) => (list && list.trim() ? `${team} without ${list}` : `${team}: no rotation player listed out`)
+  return `Assumed available: ${side(r.home, r.absent_home)}; ${side(r.away, r.absent_away)}.`
+}
+
 const sign = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(1)}`
 
 /** Descriptive facts only (they did not pass validation as model inputs): how each team has been playing over its recent games. */
@@ -57,5 +65,5 @@ export function leanText(l: Lean): string {
   if (l.marketPick === null) return `The model favours ${l.modelPick} at ${Math.round(l.modelProb * 100)}%. There is no market price to compare it with.`
   if (l.agree) return `The model and the market both favour ${l.modelPick} (${Math.round(l.modelProb * 100)}% and ${Math.round(l.marketProb! * 100)}%).`
   if (!l.lean) return `The model slightly prefers ${l.modelPick} (${Math.round(l.modelProb * 100)}%) while the market favours ${l.marketPick} (${Math.round(l.marketProb! * 100)}%); the gap is small enough to be noise.`
-  return `The model leans ${l.modelPick} (${Math.round(l.modelProb * 100)}%) against a market that favours ${l.marketPick} (${Math.round(l.marketProb! * 100)}%), a ${Math.round(Math.abs(l.gap!) * 100)}-point gap. The model cannot see injuries or lineups, which is the usual reason for a gap like this: check the news before reading anything into it.`
+  return `The model leans ${l.modelPick} (${Math.round(l.modelProb * 100)}%) against a market that favours ${l.marketPick} (${Math.round(l.marketProb! * 100)}%), a ${Math.round(Math.abs(l.gap!) * 100)}-point gap. The model reads the injury report as of the snapshot but not late scratches, Questionable players or lineup news, which is the usual reason for a gap like this: check the news before reading anything into it.`
 }
