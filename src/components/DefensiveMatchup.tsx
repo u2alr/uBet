@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { describeMatchup, teamLines, type DefenseMeta, type MatchupRow, type TeamMetricRow } from '../../shared/defense.ts'
+import { describeMatchup, offenseLines, teamLines, type DefenseMeta, type MatchupRow, type TeamMetricRow } from '../../shared/defense.ts'
 import { api } from '../lib/format'
 import type { Pick } from '../lib/picks'
 import { opponentOf } from '../lib/propsBoard'
@@ -30,23 +30,30 @@ const CONFIDENCE = { high: 'High', medium: 'Medium', low: 'Low' } as const
  * and notable traits of the team defence for THIS statistic. It never shows a probability impact: the pre-registered evaluation decides whether any of it may change a prediction.
  */
 export default function DefensiveMatchup({ p }: { p: Pick }) {
+  return <MatchupContext playerId={p.playerId} opp={opponentOf(p)} stat={p.stat} />
+}
+
+/** The same section for any player, opponent and statistic (the Matchups tab uses it). `own` adds the player's own team offence as descriptive context. */
+export function MatchupContext({ playerId, opp, stat, own }: { playerId: number; opp: string | null | undefined; stat: string; own?: string | null }) {
   const [ctx, setCtx] = useState<Context | null>(null)
+  const [mine, setMine] = useState<Context | null>(null)
   const [error, setError] = useState(false)
-  const opp = opponentOf(p)
   useEffect(() => {
     if (!opp) return
     let live = true
-    load(p.playerId, opp).then((c) => live && setCtx(c)).catch(() => live && setError(true))
+    load(playerId, opp).then((c) => live && setCtx(c)).catch(() => live && setError(true))
+    if (own) load(playerId, own).then((c) => live && setMine(c)).catch(() => {})
     return () => { live = false }
-  }, [p.playerId, opp])
+  }, [playerId, opp, own])
 
   if (!opp || error) return null
   if (!ctx) return <p className="text-xs text-neutral-600">Loading defensive matchup…</p>
   if (!ctx.available || !ctx.meta) return null
 
   const view = describeMatchup(ctx.matchup ?? [], ctx.meta)
-  const lines = teamLines(ctx.team ?? [], p.stat)
-  if (!view && !lines.length) return null
+  const lines = teamLines(ctx.team ?? [], stat)
+  const offence = own && mine?.available ? offenseLines(mine.team ?? [], stat) : []
+  if (!view && !lines.length && !offence.length) return null
   return (
     <section aria-label="Defensive matchup" className="space-y-1.5 rounded-xl border border-neutral-800 p-3">
       <h4 className="text-xs uppercase tracking-widest text-neutral-500">Defensive matchup</h4>
@@ -66,11 +73,15 @@ export default function DefensiveMatchup({ p }: { p: Pick }) {
         )}
         {view?.confidence && (
           <div className="flex gap-3"><dt className="w-20 shrink-0 text-neutral-500">Confidence</dt>
-            <dd className="text-neutral-300">{CONFIDENCE[view.confidence]} <span className="text-xs text-neutral-500">(how much matchup history stands behind the defenders above; assignments can still change)</span></dd></div>
+            <dd className="text-neutral-300">{CONFIDENCE[view.confidence]} <span className="text-xs text-neutral-500">(limited by the matchup history behind these defenders and by how concentrated the estimate is; assignments can still change)</span></dd></div>
         )}
         {lines.length > 0 && (
           <div className="flex gap-3"><dt className="w-20 shrink-0 text-neutral-500">Team</dt>
             <dd className="text-neutral-300">{lines.map((l) => <span key={l} className="block">{l}</span>)}</dd></div>
+        )}
+        {offence.length > 0 && (
+          <div className="flex gap-3"><dt className="w-20 shrink-0 text-neutral-500">Offence</dt>
+            <dd className="text-neutral-300">{offence.map((l) => <span key={l} className="block">{l}</span>)}<span className="block text-xs text-neutral-500">Descriptive context: team offence traits were not part of the model evaluation.</span></dd></div>
         )}
         <div className="flex gap-3"><dt className="w-20 shrink-0 text-neutral-500">Model</dt>
           <dd className="text-neutral-300">{ctx.model.adjustsPredictions ? 'These inputs are part of the projection.' : `No adjustment: ${ctx.model.summary}`}</dd></div>

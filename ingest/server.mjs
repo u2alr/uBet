@@ -57,6 +57,9 @@ async function startSync(mode, player) {
       await run(['--all-active', '--seasons', '1', '--delay', '1'], 'Syncing box scores')
       // Fresh game logs -> fresh projections for the upcoming games.
       await run([], 'Updating projections', projectScript)
+      // New games' matchups (incremental: only games not yet stored) and the defensive context for the next games. Display only; a failure here never blocks the rest.
+      await run([], 'Updating defensive matchups', join(root, 'research', 'pull_matchups.py'))
+      await run([], 'Computing defensive context', join(root, 'research', 'defense_snapshot.py'))
     }
   } finally {
     state.running = false

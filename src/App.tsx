@@ -8,6 +8,7 @@ const Results = lazy(() => import('./components/Results'))
 const Slip = lazy(() => import('./components/Slip'))
 const Standings = lazy(() => import('./components/Standings'))
 const CheatSheet = lazy(() => import('./components/CheatSheet'))
+const Matchups = lazy(() => import('./components/Matchups'))
 import PropsBoard from './components/PropsBoard'
 import SyncBar from './components/SyncBar'
 import Today from './components/Today'
@@ -68,6 +69,7 @@ function Shell() {
       {tab === 'Today' && (gameId
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => go({ tab: 'Today' })} onOpenPlayer={openPlayer} />
         : <Today refreshKey={refreshKey} onOpenPlayer={openPlayer} onOpenGame={(id) => go({ tab: 'Today', gameId: id })} onOpenSlip={() => go({ tab: 'Slip' })} />)}
+      {tab === 'Matchups' && <Matchups refreshKey={refreshKey} onOpenPlayer={openPlayer} />}
       {tab === 'Cheatsheet' && <CheatSheet refreshKey={refreshKey} onOpenPlayer={openPlayer} />}
       {tab === 'Standings' && <Standings refreshKey={refreshKey} />}
       {tab === 'Slip' && <Slip />}

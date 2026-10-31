@@ -52,12 +52,41 @@ export function teamLines(rows: TeamMetricRow[], stat: string): string[] {
   return out
 }
 
+const OFFENCE: Record<string, MetricInfo> = {
+  off_pace: { high: 'plays at a fast pace, which means more possessions for everyone', low: 'plays at a slow pace, which means fewer possessions for everyone', stats: ['pts', 'reb', 'ast', 'fg3m', 'pra'] },
+  off_ppp: { high: 'scores efficiently', low: 'scores inefficiently', stats: ['pts', 'ast', 'pra'] },
+  off_p3a: { high: 'takes a lot of threes', low: 'takes few threes', stats: ['fg3m', 'pts', 'pra'] },
+  off_ast: { high: 'moves the ball (high assist rate)', low: 'has a low assist rate', stats: ['ast', 'pra'] },
+  off_oreb: { high: 'crashes the offensive glass', low: 'rarely goes for offensive rebounds', stats: ['reb', 'pra'] },
+  off_ftr: { high: 'gets to the free-throw line often', low: 'rarely gets to the free-throw line', stats: ['pts', 'pra'] },
+}
+
+/** Plain-language lines about the player's OWN team offence for this statistic (top or bottom quarter of the league, last 10 games). Descriptive only: these were not evaluated as model inputs. */
+export function offenseLines(rows: TeamMetricRow[], stat: string): string[] {
+  const out: string[] = []
+  for (const r of rows) {
+    const info = OFFENCE[r.metric]
+    if (!info || !info.stats.includes(stat) || r.pct_l10 === null) continue
+    if (r.pct_l10 >= 0.75) out.push(`His team ${info.high} (higher than ${Math.round(r.pct_l10 * 100)}% of teams over its last 10 games).`)
+    else if (r.pct_l10 <= 0.25) out.push(`His team ${info.low} (lower than ${Math.round((1 - r.pct_l10) * 100)}% of teams over its last 10 games).`)
+  }
+  return out
+}
+
 export interface MatchupView {
   defenders: { name: string; share: number; rating: DefenderRating; sample: string }[]
   confidence: Confidence | null
   basis: string
   /** True when the history says one defender takes most of the assignment; false means it is spread out and may change through switches. */
   concentrated: boolean
+}
+
+const ORDER: Confidence[] = ['low', 'medium', 'high']
+/** Sample confidence says how much history stands behind the defenders; it cannot exceed how concentrated the estimated assignment is. A top share under 25% is low, under 50% is at most medium. */
+export function capByAssignment(sample: Confidence | null, topShare: number): Confidence | null {
+  if (sample === null) return null
+  const assignment: Confidence = topShare >= 0.5 ? 'high' : topShare >= 0.25 ? 'medium' : 'low'
+  return ORDER[Math.min(ORDER.indexOf(sample), ORDER.indexOf(assignment))]
 }
 
 export function describeMatchup(rows: MatchupRow[], meta: DefenseMeta): MatchupView | null {
@@ -74,6 +103,6 @@ export function describeMatchup(rows: MatchupRow[], meta: DefenseMeta): MatchupV
       name: r.defender, share: r.weight, rating: rateDefender(r.dpoe100, r.expo, meta),
       sample: r.direct_poss && r.direct_poss > 0 ? `${Math.round(r.direct_poss)} past matchup possessions with him` : 'no past matchups with him',
     })),
-    confidence: matchupConfidence(first.conf), basis, concentrated: (first.herf ?? 0) >= 0.25,
+    confidence: capByAssignment(matchupConfidence(first.conf), Math.max(...sorted.map((r) => r.weight))), basis, concentrated: (first.herf ?? 0) >= 0.25,
   }
 }

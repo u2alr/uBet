@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { describeMatchup, matchupConfidence, rateDefender, teamLines, type DefenseMeta, type MatchupRow } from './defense.ts'
+import { capByAssignment, describeMatchup, offenseLines, matchupConfidence, rateDefender, teamLines, type DefenseMeta, type MatchupRow } from './defense.ts'
 
 const meta: DefenseMeta = { as_of: '2026-10-31', matchups_through: '2026-10-30', dpoe_mean: 0, dpoe_sd: 1, defenders_rated: 300, games_with_matchups: 5000 }
 
@@ -49,4 +49,24 @@ test('matchup description separates direct history from a role-based estimate', 
   assert.match(weak.basis, /tends to guard players in his role/)
   assert.equal(weak.defenders[0].sample, 'no past matchups with him')
   assert.equal(describeMatchup([], meta), null)
+})
+
+test('displayed confidence cannot exceed how concentrated the estimated assignment is', () => {
+  assert.equal(capByAssignment('high', 0.6), 'high')
+  assert.equal(capByAssignment('high', 0.4), 'medium')
+  assert.equal(capByAssignment('high', 0.19), 'low')
+  assert.equal(capByAssignment('low', 0.9), 'low')
+  assert.equal(capByAssignment(null, 0.9), null)
+})
+
+test('offence lines describe the own team of the player, only for relevant statistics, and only when notable', () => {
+  const rows = [
+    { metric: 'off_pace', value_l10: 104, value_s2d: 103, pct_l10: 0.9 },
+    { metric: 'off_ast', value_l10: 0.2, value_s2d: 0.2, pct_l10: 0.1 },
+    { metric: 'off_ftr', value_l10: 0.25, value_s2d: 0.25, pct_l10: 0.5 },
+  ]
+  assert.match(offenseLines(rows, 'pts')[0], /fast pace/)
+  assert.equal(offenseLines(rows, 'pts').length, 1)
+  assert.match(offenseLines(rows, 'ast').join(' '), /low assist rate/)
+  assert.equal(offenseLines(rows, 'reb').length, 1, 'pace applies to rebounds; assist rate does not')
 })

@@ -79,7 +79,7 @@ def main():
     m = D.load_matchups(sqlite3.connect(HERE / "data" / "matchups.sqlite"), tm)
     through = str(m.date.max().date())
 
-    prefix = str(int(tm.GAME_ID.max()))[:3]
+    prefix = str(int(tm.loc[pd.to_datetime(tm.GAME_DATE).idxmax(), "GAME_ID"]))[:3]      # the season of the most recent game (playoff ids start differently from regular-season ids)
     fake = lambda k: int(f"{prefix}99{k:03d}")                           # noqa: E731 - a game id in the current season's range that no real game has
     up = []
     for k, g in enumerate(games):
@@ -98,6 +98,8 @@ def main():
             if len(pg) < 3 or pg.MIN.mean() < 12:
                 continue
             hist = pl[pl.PLAYER_ID == pid].sort_values("date").tail(10)
+            if hist.TEAM_ID.iloc[-1] != u.TEAM_ID:
+                continue   # traded since: he belongs to his latest team only
             rows.append({"PLAYER_ID": pid, "GAME_ID": u.GAME_ID, "TEAM_ID": u.TEAM_ID, "OPP_ID": u.OPP_ID, "date": pd.Timestamp(u.GAME_DATE), "n_prior": int((pl.PLAYER_ID == pid).sum()),
                          "min_l10": hist.MIN.mean(), "pts_l10": hist.PTS.mean(), "reb_l10": hist.REB.mean(), "ast_l10": hist.AST.mean(), "fg3m_l10": hist.FG3M.mean(), "name": pg.PLAYER_NAME.iloc[0]})
     dfu = pd.DataFrame(rows)
@@ -117,6 +119,22 @@ def main():
             pct = float((td[f"df_td_{mname}_l10"] < v10).mean()) if np.isfinite(v10) else None   # share of teams with a LOWER value
             team_rows.append((id_abbr[t], mname, v10, vs, pct))
 
+    # Team OFFENCE profile (descriptive context only; these were not part of the evaluation). Last 10 games and the current season, as of now.
+    o = tm.copy()
+    o["date"] = pd.to_datetime(o.GAME_DATE)
+    o["poss"] = o.FGA + 0.44 * o.FTA + o.TOV - o.OREB
+    o = o.sort_values(["TEAM_ID", "date"])
+    o["season_key"] = o.GAME_ID.astype(str).str[:3]
+    cur_key = o.season_key.iloc[-1] if len(o) else ""
+    offence = {"off_pace": lambda g: g.poss.mean(), "off_ppp": lambda g: g.PTS.sum() / g.poss.sum() * 100, "off_p3a": lambda g: g.FG3A.sum() / g.poss.sum(),
+               "off_ast": lambda g: g.AST.sum() / g.poss.sum(), "off_oreb": lambda g: g.OREB.sum() / g.poss.sum(), "off_ftr": lambda g: g.FTA.sum() / g.FGA.sum(), "off_tov": lambda g: g.TOV.sum() / g.poss.sum()}
+    for mname, fn in offence.items():
+        l10 = {t: fn(g.tail(10)) for t, g in o.groupby("TEAM_ID") if len(g) >= 5}
+        s2d = {t: fn(g[g.season_key == cur_key]) for t, g in o.groupby("TEAM_ID") if (g.season_key == cur_key).sum() >= 3}
+        vals = pd.Series(l10)
+        for t, v in l10.items():
+            team_rows.append((id_abbr[t], mname, v, s2d.get(t), float((vals < v).mean())))
+
     # Individual defenders: league distribution of shrunk quality among defenders with a decent sample, for plain-language labels.
     st = D.state_metrics(D.defender_state(m, pl.rename(columns={"MIN": "min"})))
     cur = st.sort_values("date").groupby("def_id").tail(1)
@@ -124,7 +142,7 @@ def main():
     meta = {"as_of": datetime.now(ET).strftime("%Y-%m-%d %H:%M"), "matchups_through": through, "dpoe_mean": float(sample.mean()), "dpoe_sd": float(sample.std()), "defenders_rated": int(len(sample)),
             "games_with_matchups": int(m.GAME_ID.nunique())}
 
-    mu = out[["PLAYER_ID", "GAME_ID", "df_mu_conf", "df_mu_herf", "df_mu_direct"]].set_index(["PLAYER_ID", "GAME_ID"])
+    mu = out[["PLAYER_ID", "GAME_ID", "df_mu_conf", "df_mu_herf", "df_mu_direct"]].set_index(["PLAYER_ID", "GAME_ID"]).sort_index()
     mrows = []
     for (pid, gid), grp in det.groupby(["PLAYER_ID", "GAME_ID"]):
         opp = id_abbr.get(int(grp.OPP_ID.iloc[0]))
