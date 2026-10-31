@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { STAT_LABEL, api, pct } from '../lib/format'
-import { combine } from '../lib/picks'
-import { combineLegs, conflicts, parlayLabel } from '../../shared/teamBets.ts'
+import { conflicts, parlayLabel } from '../../shared/teamBets.ts'
 import { pickKey } from '../lib/picks'
+import { slipTotals } from '../lib/slipMath'
 import { useSlip } from '../lib/slipContext'
 
 export default function Slip() {
@@ -24,10 +24,7 @@ export default function Slip() {
     )
 
   const priceOf = (l: (typeof legs)[number]) => { const t = Number(taken[pickKey(l)]); return Number.isFinite(t) && t > 1 ? t : l.price }
-  // Team (moneyline) legs are priced from the market and combined with the prop legs. Their chance is the market's no-margin chance, not a model's.
-  const propPart = combine(legs)
-  const all = [...legs.map((l) => ({ price: l.price, prob: l.prob })), ...teamLegs.map((t) => ({ price: t.price, prob: t.marketProb }))]
-  const { odds, prob, ev } = teamLegs.length ? combineLegs(all) : propPart
+  const { odds, prob, ev } = slipTotals(legs, teamLegs)
   const myOdds = legs.reduce((a, l) => a * priceOf(l), 1) * teamLegs.reduce((a, t) => a * t.price, 1)
   const amount = Number(stake) || 0
   const bad = legs.some((l) => taken[pickKey(l)] && !(Number(taken[pickKey(l)]) > 1))

@@ -32,6 +32,60 @@ export function hitRate(c: Card): number {
  */
 export const evRank = (p: Pick): number => (p.basis === 'authoritative' ? 1000 + p.ev : p.ev)
 
+/**
+ * The best leads across the slate, highest EV first, one per player. Validated (authoritative) numbers with positive EV and enough evidence
+ * come first; only when none qualify does it fall back to the simple-blend estimates, flagged `validated: false`. The two are never mixed.
+ */
+export function topPicks(cards: Card[], n = 8): { picks: Card[]; validated: boolean } {
+  const best = (list: Card[]) => {
+    const seen = new Set<number>()
+    const out: Card[] = []
+    for (const c of [...list].sort((x, y) => evRank(y.lead) - evRank(x.lead))) {
+      if (seen.has(c.lead.playerId)) continue
+      seen.add(c.lead.playerId)
+      out.push(c)
+      if (out.length === n) break
+    }
+    return out
+  }
+  const validated = best(cards.filter((c) => c.lead.basis === 'authoritative' && c.lead.ev > 0 && c.lead.auth?.evidence !== 'insufficient'))
+  if (validated.length) return { picks: validated, validated: true }
+  return { picks: best(cards.filter((c) => c.lead.basis !== 'authoritative' && c.lead.ev > 0)), validated: false }
+}
+
+/**
+ * The `n` cards per team whose lead side has the highest chance of winning (ties by expected value). Win chance is not value: a likely side at a short
+ * price can still lose money on average, so this keeps the board short and is not a ranking of good bets. A card with no known team is kept in a group of its own.
+ */
+export function capPerTeam(cards: Card[], n = 10): Card[] {
+  const byTeam = new Map<string, Card[]>()
+  for (const c of cards) {
+    const k = c.lead.team ?? c.lead.teamName ?? `?${c.lead.game}`
+    byTeam.set(k, [...(byTeam.get(k) ?? []), c])
+  }
+  const keep = new Set<Card>()
+  for (const list of byTeam.values())
+    for (const c of [...list].sort((a, b) => b.lead.prob - a.lead.prob || evRank(b.lead) - evRank(a.lead)).slice(0, n)) keep.add(c)
+  return cards.filter((c) => keep.has(c))
+}
+
+/** Runs of neighbouring items that share a key, in order: the slate is already in tip-off order, so this makes one group per tip time. */
+export function groupConsecutive<T>(items: T[], key: (t: T) => string): { key: string; items: T[] }[] {
+  const out: { key: string; items: T[] }[] = []
+  for (const it of items) {
+    const k = key(it)
+    const last = out[out.length - 1]
+    if (last && last.key === k) last.items.push(it); else out.push({ key: k, items: [it] })
+  }
+  return out
+}
+
+/** "Scoot Henderson" -> "S. Henderson"; suffixes stay with the surname ("J. Jackson Jr."). */
+export function shortName(name: string): string {
+  const [first, ...rest] = name.trim().split(/\s+/)
+  return rest.length ? `${first[0]}. ${rest.join(' ')}` : name
+}
+
 export const SORTS = [
   { key: 'ev', label: 'Expected value (EV)', hint: 'Expected profit per unit staked at the best price. The only order that ranks by value.' },
   { key: 'hit', label: 'Recent hit rate (history only)', hint: 'How often the lead side landed in recent games. Says nothing about price or value.' },

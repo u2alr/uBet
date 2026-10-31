@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { evText, hitRate, projectionEdge, projectionState, sortCards, toCards } from './propsBoard.ts'
+import { evText, hitRate, projectionEdge, projectionState, capPerTeam, groupConsecutive, shortName, sortCards, toCards, topPicks } from './propsBoard.ts'
 import type { Pick } from './picks.ts'
 
 const pick = (o: Partial<Pick>): Pick => ({
@@ -67,4 +67,45 @@ test('the favourite is the side the market gives over 50%, with the spread shown
   assert.equal(favorite(g(0.5004))!.tossUp, true)
   assert.equal(favorite(g(null)), null)
   assert.equal(favorite({ home: { abbr: 'A' }, away: { abbr: 'B' }, odds: { spread: null, total: null, homeWinProb: null } }), null)
+})
+
+test('top picks keep only validated positive-EV leads with enough evidence, best first, one per player', () => {
+  const a = (o: Partial<Pick>) => pick({ basis: 'authoritative', auth: { evidence: 'sufficient' }, ...o } as Partial<Pick>)
+  const cards = toCards([
+    a({ playerId: 1, player: 'Best', ev: 0.12 }),
+    a({ playerId: 1, player: 'Best', stat: 'reb', ev: 0.1 }),
+    a({ playerId: 2, player: 'Second', ev: 0.05 }),
+    a({ playerId: 3, player: 'Negative', ev: -0.01 }),
+    a({ playerId: 4, player: 'Thin', ev: 0.3, auth: { evidence: 'insufficient' } } as Partial<Pick>),
+    pick({ playerId: 5, player: 'Unvalidated', ev: 0.4, basis: 'legacy' } as Partial<Pick>),
+  ])
+  const top = topPicks(cards)
+  assert.deepEqual(top.picks.map((c) => c.lead.player), ['Best', 'Second']); assert.equal(top.validated, true)
+  assert.equal(topPicks(cards, 1).picks.length, 1)
+})
+
+test('top picks fall back to unvalidated estimates, flagged, only when nothing validated qualifies', () => {
+  const cards = toCards([pick({ playerId: 5, player: 'Blend', ev: 0.2, basis: 'legacy' } as Partial<Pick>), pick({ playerId: 6, player: 'Neg', ev: -0.1, basis: 'legacy' } as Partial<Pick>)])
+  const top = topPicks(cards)
+  assert.deepEqual(top.picks.map((c) => c.lead.player), ['Blend']); assert.equal(top.validated, false)
+})
+
+test('the per-team cap keeps the likeliest leads of each team, leaves other teams alone, and keeps the input order', () => {
+  const mk = (id: number, team: string, prob: number) => pick({ playerId: id, player: `P${id}`, team, prob, line: 10 + id })
+  const cards = toCards([mk(1, 'BOS', 0.4), mk(2, 'BOS', 0.7), mk(3, 'BOS', 0.55), mk(4, 'NYK', 0.3), mk(5, 'BOS', 0.6)])
+  const kept = capPerTeam(cards, 2).map((c) => c.lead.player)
+  assert.deepEqual(kept, ['P2', 'P4', 'P5'])
+  assert.equal(capPerTeam(cards, 10).length, cards.length)
+})
+
+test('neighbouring games with the same tip time form one group, in order, and a later repeat starts a new one', () => {
+  const g = groupConsecutive(['a:1', 'b:1', 'c:2', 'd:1'], (x) => x.split(':')[1])
+  assert.deepEqual(g.map((x) => [x.key, x.items]), [['1', ['a:1', 'b:1']], ['2', ['c:2']], ['1', ['d:1']]])
+  assert.deepEqual(groupConsecutive([], (x: string) => x), [])
+})
+
+test('player names shorten to an initial and the surname, keeping suffixes', () => {
+  assert.equal(shortName('Scoot Henderson'), 'S. Henderson')
+  assert.equal(shortName('Jaren Jackson Jr.'), 'J. Jackson Jr.')
+  assert.equal(shortName('Nene'), 'Nene')
 })

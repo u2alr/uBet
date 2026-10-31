@@ -14,6 +14,7 @@ import { PickSpark } from './PickSpark'
 import DefensiveMatchup from './DefensiveMatchup'
 import ScheduleFatigue from './ScheduleFatigue'
 import TeamLogo from './TeamLogo'
+import WhyPick from './WhyPick'
 
 const PickBars = lazy(() => import('./PickBars'))
 
@@ -87,6 +88,8 @@ export default function PropTile({ c, h2h, tipIso = null, onOpenPlayer }: { c: C
           <span><Term k="hit" /> {hr < 0 ? '–' : `${landed}/${decided}`}</span>
           <span><Term k="games" /> {p.sample}</span>
         </p>
+
+        <WhyPick c={c} />
       </div>
 
       <div className="border-t border-neutral-800">
