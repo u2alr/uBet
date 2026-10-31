@@ -75,7 +75,12 @@ def main():
     confirmed = final["groups_confirmed_on_F"] if final else []
     status = {"version": "def-v1", "evaluated": True, "adjustsPredictions": False, "groupsKept": confirmed,
               "summary": ("None of the team-defence, individual-defender or likely-matchup features improved out-of-sample accuracy reliably enough to pass the pre-registered rule, so none of them changes any prediction. The defensive context is shown for information only."
-                          if not kept else f"Groups passing development: {', '.join(kept)}; they remain research-only and do not change any prediction."),
+                          if not kept else (
+                              f"Team-level defensive features ({', '.join(confirmed or kept)}) improved out-of-sample accuracy on both development seasons"
+                              + (" and held on the final season" if confirmed else "")
+                              + ", with small gains. They are research-only: they are not calibrated for production or approved, so they do not change any prediction yet. "
+                              "The individual-defender and likely-matchup features did not pass, so the matchup context shown is descriptive."
+                              if confirmed else f"Groups passing development: {', '.join(kept)}; the final season has not confirmed them yet, and they do not change any prediction.")),
               "evidence": "research/RESULTS_DEFENSE.md"}
     STATUS.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
     print("wrote RESULTS_DEFENSE.md and defense.status.json; kept groups:", kept)

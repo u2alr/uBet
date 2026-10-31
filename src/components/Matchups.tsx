@@ -105,7 +105,7 @@ export default function Matchups({ refreshKey, onOpenPlayer }: { refreshKey: num
 
       <p className="text-xs text-neutral-500">
         For each player with a game coming up: the highest {STAT_NAME[stat]} threshold he cleared in at least {Math.round(rate * 100)}% of his last 10 (for example {LADDER[stat][4]}+), how he has done against tonight's opponent, and the defensive and offensive context.
-        No sportsbook line is involved, and a hit rate is history, not an edge. Matchup context is descriptive: the model evaluation found no defensive feature reliable enough to change a prediction.
+        No sportsbook line is involved, and a hit rate is history, not an edge. Matchup context is descriptive: in testing, team-level defence helped slightly but is not yet used in predictions, and the individual-defender and likely-matchup estimates did not pass.
         <span className="ml-2 tabular-nums text-neutral-600" aria-live="polite">{players ? `${rows.length} players` : ''}</span>
       </p>
 

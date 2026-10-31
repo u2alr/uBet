@@ -4,7 +4,13 @@ import { after, before, describe, it } from 'node:test'
 import { api, openScratch, start } from './harness.mjs'
 
 let app
-before(async () => { app = await start({ extraBindings: ['CAPTURE_TOKEN=integration-token-value-0123456789'] }) })
+before(async () => { app = await start({ extraBindings: ['CAPTURE_TOKEN=integration-token-value-0123456789'] }); clearSnapshots() })
+/** The scratch database is a copy of the real local one, which may hold a real snapshot: start these tests from empty snapshot tables. */
+function clearSnapshots() {
+  const db = openScratch()
+  try { for (const t of ['defense_team', 'defense_matchup', 'defense_meta', 'game_lean', 'game_lean_log']) db.prepare(`DELETE FROM ${t}`).run() } finally { db.close() }
+}
+
 after(async () => { await app?.stop() })
 
 describe('/api/health', () => {
@@ -97,5 +103,23 @@ describe('/api/defense-context (display-only defensive matchup facts)', () => {
     assert.equal(r.body.data.meta.matchups_through, '2026-10-30')
     assert.doesNotMatch(JSON.stringify(r.body.data), /probab|\bev\b/i)
     assert.equal((await api('/defense-context?player=8&opp=BOS')).body.data.matchup.length, 0, 'another player has no estimated defenders, only the team traits')
+  })
+})
+
+describe('/api/game-lean (display-only game-winner view)', () => {
+  it('returns snapshot rows with the model status, and an empty list when there is no snapshot', async () => {
+    const empty = await api('/game-lean')
+    assert.equal(empty.status, 200)
+    assert.deepEqual(empty.body.data.rows, [])
+    assert.equal(empty.body.data.model.evaluated, true)
+    const db = openScratch()
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      db.prepare("INSERT INTO game_lean (date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of) VALUES (?, 'BOS', 'NYK', 0.61, 1560, 1520, 3.1, -1.2, 117, 111, 112, 113, 'x')").run(today)
+    } finally { db.close() }
+    const r = await api('/game-lean')
+    assert.equal(r.body.data.rows.length, 1)
+    assert.equal(r.body.data.rows[0].home, 'BOS')
+    assert.doesNotMatch(JSON.stringify(r.body.data.model), /profit|edge/i)
   })
 })

@@ -28,6 +28,27 @@ ET = ZoneInfo("America/New_York")
 METRICS = list(D.TD_METRICS)
 
 
+def american_prob(v) -> float | None:
+    """'+210' -> implied probability (with the book margin still in it)."""
+    try:
+        n = float(str(v).replace("EVEN", "100"))
+    except ValueError:
+        return None
+    return 100 / (n + 100) if n > 0 else (-n) / (-n + 100) if n < 0 else None
+
+
+def espn_market(comp: dict) -> dict:
+    """The no-margin chance that the home team wins, from the one book ESPN's scoreboard carries; empty when no moneyline is posted."""
+    try:
+        o = comp["odds"][0]
+        ih, ia = american_prob(o["moneyline"]["home"]["close"]["odds"]), american_prob(o["moneyline"]["away"]["close"]["odds"])
+        if ih is None or ia is None:
+            return {}
+        return {"market_home_prob": ih / (ih + ia), "market_book": o.get("provider", {}).get("displayName") or "ESPN"}
+    except (KeyError, IndexError, TypeError):
+        return {}
+
+
 def upcoming_games(days: int) -> list[dict]:
     games = []
     for k in range(days):
@@ -40,7 +61,7 @@ def upcoming_games(days: int) -> list[dict]:
                 continue
             comp = e["competitions"][0]
             side = {c["homeAway"]: CODES.get(c["team"]["abbreviation"], c["team"]["abbreviation"]) for c in comp["competitors"]}
-            games.append({"date": datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET).strftime("%Y-%m-%d"), "home": side["home"], "away": side["away"]})
+            games.append({"date": datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET).strftime("%Y-%m-%d"), "home": side["home"], "away": side["away"], **espn_market(comp)})
     return games
 
 

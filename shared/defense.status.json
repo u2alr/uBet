@@ -1,8 +1,10 @@
 {
   "version": "def-v1",
-  "evaluated": false,
+  "evaluated": true,
   "adjustsPredictions": false,
-  "groupsKept": [],
-  "summary": "The defensive features have not been evaluated yet, so they do not change any prediction.",
-  "evidence": "research/PREREG_DEFENSE.md"
+  "groupsKept": [
+    "TD"
+  ],
+  "summary": "Team-level defensive features (TD) improved out-of-sample accuracy on both development seasons and held on the final season, with small gains. They are research-only: they are not calibrated for production or approved, so they do not change any prediction yet. The individual-defender and likely-matchup features did not pass, so the matchup context shown is descriptive.",
+  "evidence": "research/RESULTS_DEFENSE.md"
 }

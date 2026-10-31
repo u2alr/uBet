@@ -19,6 +19,7 @@ import { evaluateHealth } from '../../shared/health.ts'
 import { matchupSummary, teamFacts, workloadFacts, type PlayedGame, type WorkloadFacts } from '../../shared/schedule.ts'
 import humanFactorsStatus from '../../shared/humanFactors.status.json' with { type: 'json' }
 import defenseStatus from '../../shared/defense.status.json' with { type: 'json' }
+import gamesStatus from '../../shared/games.status.json' with { type: 'json' }
 import { PRIOR_SQL, closingProxy, firstObserved, flatten, planArchive, priorFromRows, runSql, type PriorRow } from '../../shared/oddsArchive.ts'
 import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
 import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
@@ -538,6 +539,21 @@ app.get('/defense-context', async (c) => {
   } catch (e) {
     console.error('defense context unavailable', e instanceof Error ? e.message : String(e))
     return c.json({ data: { available: false, model: defenseStatus } })   // tables not migrated yet, or no snapshot: the section simply does not show
+  }
+})
+
+// The model's chance for each upcoming game (research/game_snapshot.py -> migration 0020), shown next to the market's. `model` says what the view is and how it was validated.
+app.get('/game-lean', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of
+       FROM game_lean WHERE date >= date('now', '-1 day') ORDER BY date, home`,
+    ).all()
+    c.header('Cache-Control', 'private, max-age=300')
+    return c.json({ data: { rows: results, model: gamesStatus } })
+  } catch (e) {
+    console.error('game lean unavailable', e instanceof Error ? e.message : String(e))
+    return c.json({ data: { rows: [], model: gamesStatus } })   // not migrated or no snapshot yet: the view simply does not show
   }
 })
 

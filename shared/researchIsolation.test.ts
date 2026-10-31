@@ -13,7 +13,7 @@ const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
 test('no production source imports the research context features, the teammate-out lift or the injury override', () => {
   const production = ['functions', 'shared', 'src', 'minds'].flatMap((d) => walk(path.join(root, d)))
   assert.ok(production.length > 30)
-  const forbidden = /context_features|context_model|human_factors|defense_features|defense_eval|teammate_out|ctx_(g7|g14|min7|miles_prev|tz_shift|road_trip|close_|overlap|ot_recent)|injury[-_]features/
+  const forbidden = /context_features|context_model|human_factors|defense_features|defense_eval|game_features|game_eval|teammate_out|ctx_(g7|g14|min7|miles_prev|tz_shift|road_trip|close_|overlap|ot_recent)|injury[-_]features/
   for (const f of production) assert.doesNotMatch(readFileSync(f, 'utf8'), forbidden, `${path.relative(root, f)} depends on a research-only feature`)
 })
 
@@ -29,6 +29,11 @@ test('defensive matchup context is display-only: no probability, EV or approval 
   for (const f of engine) assert.doesNotMatch(readFileSync(path.join(root, f), 'utf8'), /from ['"][^'"]*\/defense(\.ts)?['"]|defense\.status/, `${f} must not depend on defensive matchup context`)
   const status = JSON.parse(readFileSync(path.join(root, 'shared', 'defense.status.json'), 'utf8'))
   assert.equal(status.adjustsPredictions, false, 'flip this only together with a validated, calibrated, approved model change')
+})
+
+test('the game-winner view is display-only: no player-prop probability, EV or approval code imports it', () => {
+  const engine = ['shared/picks.ts', 'shared/baseline.ts', 'shared/minds.ts', ...readdirSync(path.join(root, 'shared', 'engine')).filter((f) => !/\.test\./.test(f)).map((f) => `shared/engine/${f}`)]
+  for (const f of engine) assert.doesNotMatch(readFileSync(path.join(root, f), 'utf8'), /from ['"][^'"]*\/games(\.ts)?['"]|games\.status/, `${f} must not depend on the game-winner view`)
 })
 
 test('the projection job leaves the missing-teammate features alone unless the experimental flag is passed', () => {

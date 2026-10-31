@@ -6,6 +6,7 @@ import type { Pick } from '../lib/picks'
 import { SORTS, favorite, normAbbr, opponentOf, sortCards, toCards, type Card, type SortKey } from '../lib/propsBoard'
 import { teamByName } from '../lib/teams'
 import type { H2H, H2HState } from '../lib/h2hView'
+import { lean, leanText, ratingFacts, type GameLeanRow } from '../../shared/games.ts'
 import LiveBox from './LiveBox'
 import MetricGuide from './MetricGuide'
 import Notices from './Notices'
@@ -46,6 +47,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
   const [sched, setSched] = useState<GameInfo[]>([])
   const [absent, setAbsent] = useState<Absence[]>([])
   const [table, setTable] = useState<Map<string, TeamStanding>>(new Map())
+  const [leans, setLeans] = useState<GameLeanRow[]>([])
   const setView = (v: View) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v) } catch { /* private mode: the choice just is not remembered */ } }
 
   useEffect(() => {
@@ -71,6 +73,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
   // Optional context. A failure just hides it.
   useEffect(() => {
     let live = true
+    api<{ data: { rows: GameLeanRow[] } }>('/game-lean').then((r) => live && setLeans(r.data.rows)).catch(() => live && setLeans([]))
     api<{ data: Absence[] }>('/absences').then((r) => live && setAbsent(r.data)).catch(() => live && setAbsent([]))
     api<{ data: Conference[] }>('/standings')
       .then((r) => live && setTable(new Map(r.data.flatMap((c) => c.rows.map((row) => [row.abbr, { ...row, conference: c.name }] as const)))))
@@ -183,15 +186,15 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
         <Empty>No props match these filters. Lines appear once books post them, for players you have synced.</Empty>
       ) : (
         <div className="space-y-8">
-          {sections.map((g, i) => <GameSection key={g.game} g={g} index={i} absent={absent} table={table} h2h={h2h} view={view} limit={limit} more={() => setLimit(limit + step)} onOpenPlayer={onOpenPlayer} />)}
+          {sections.map((g, i) => <GameSection key={g.game} g={g} index={i} absent={absent} table={table} leans={leans} h2h={h2h} view={view} limit={limit} more={() => setLimit(limit + step)} onOpenPlayer={onOpenPlayer} />)}
         </div>
       )}
     </div>
   )
 }
 
-function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPlayer }: {
-  g: Section; index: number; absent: Absence[]; table: Map<string, TeamStanding>; h2h: H2HState; view: View; limit: number; more: () => void; onOpenPlayer: (id: number) => void
+function GameSection({ g, index, absent, table, leans, h2h, view, limit, more, onOpenPlayer }: {
+  g: Section; index: number; absent: Absence[]; table: Map<string, TeamStanding>; leans: GameLeanRow[]; h2h: H2HState; view: View; limit: number; more: () => void; onOpenPlayer: (id: number) => void
 }) {
   // Only the first three games start open: a slate of 12 games would otherwise put thousands of nodes on the page.
   const [open, setOpen] = useState(index < 3)
@@ -208,7 +211,7 @@ function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPl
         <span className="text-sm text-neutral-500">{g.cards.length ? `${g.cards.length} props · ${players} players` : 'no sportsbook lines'}</span>
         <span className="ml-auto text-sm text-neutral-600">{open ? 'Hide' : 'Show'}</span>
       </button>
-      <GameContext game={g.game} info={g.info} absent={absent} table={table} />
+      <GameContext game={g.game} info={g.info} absent={absent} table={table} leans={leans} />
       {g.info && g.info.state !== 'pre' && (
         <div className="mt-2">
           <button onClick={() => setBox(!box)} aria-expanded={box} className="text-sm text-emerald-400 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">{box ? 'Hide box score' : g.info.state === 'in' ? 'Live box score' : 'Box score'}</button>
@@ -232,12 +235,15 @@ function GameSection({ g, index, absent, table, h2h, view, limit, more, onOpenPl
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 
 /** Each team's record and seed, plus the injury report for both teams, as one quiet block under the game title. */
-function GameContext({ game, info, absent, table }: { game: string; info: GameInfo | null; absent: Absence[]; table: Map<string, TeamStanding> }) {
+function GameContext({ game, info, absent, table, leans }: { game: string; info: GameInfo | null; absent: Absence[]; table: Map<string, TeamStanding>; leans: GameLeanRow[] }) {
   const teams = game.split(' @ ').map((n) => teamByName(n)).filter((t) => !!t)
   const rows = teams.map((t) => ({ abbr: t![0], s: table.get(t![0]) })).filter((x) => x.s)
   const mine = absent.filter((a) => a.team && teams.some((t) => t![0] === a.team))
   const fav = info && info.state === 'pre' ? favorite(info) : null
-  if (!rows.length && !mine.length && !fav) return null
+  const [aw, hm] = teams.map((t) => t![0])
+  const row = info?.state === 'pre' ? leans.find((l) => l.home === hm && l.away === aw) : undefined
+  const view = row ? lean(row, info?.odds?.homeWinProb ?? null) : null
+  if (!rows.length && !mine.length && !fav && !row) return null
   const tone = { out: 'bg-red-500/15 text-red-300', doubtful: 'bg-amber-500/15 text-amber-300', questionable: 'bg-neutral-800 text-neutral-300' }
   return (
     <div className="mt-1.5 space-y-1.5 text-sm text-neutral-400">
@@ -260,6 +266,17 @@ function GameContext({ game, info, absent, table }: { game: string; info: GameIn
           {fav.spread != null && !fav.tossUp && <span className="text-neutral-500">{fav.abbr} {fav.spread === 0 ? 'pick' : fav.spread}</span>}
           {fav.total != null && <span className="text-neutral-500">total {fav.total}</span>}
         </p>
+      )}
+      {row && view && (
+        <div className="space-y-0.5" title="A rating-based view (home advantage plus Elo). It cannot see injuries or lineups and has not been tested against sportsbook lines.">
+          <p className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums ${view.lean ? 'text-amber-300' : ''}`}>
+            <span className="text-neutral-500">Model view</span>
+            <b className="font-medium text-neutral-200">{view.modelPick} {Math.round(view.modelProb * 100)}%</b>
+            {view.lean && <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs">lean vs market</span>}
+          </p>
+          <p className="text-xs text-neutral-500">{leanText(view)}</p>
+          {ratingFacts(row).map((f) => <p key={f} className="text-xs text-neutral-500">{f}</p>)}
+        </div>
       )}
       {mine.length > 0 && (
         <p className="flex flex-wrap items-center gap-1.5 text-xs">

@@ -60,6 +60,7 @@ async function startSync(mode, player) {
       // New games' matchups (incremental: only games not yet stored) and the defensive context for the next games. Display only; a failure here never blocks the rest.
       await run([], 'Updating defensive matchups', join(root, 'research', 'pull_matchups.py'))
       await run([], 'Computing defensive context', join(root, 'research', 'defense_snapshot.py'))
+      await run([], 'Scoring upcoming games', join(root, 'research', 'game_snapshot.py'))
     }
   } finally {
     state.running = false

@@ -1,0 +1,14 @@
+{
+  "version": "games-v1",
+  "evaluated": true,
+  "model": "baseline",
+  "groupsKept": [],
+  "logLoss": 0.6089,
+  "brier": 0.2111,
+  "calibrationSlope": 0.967,
+  "accuracy": 0.66,
+  "testGames": 1225,
+  "testSeason": "2024-25",
+  "summary": "A rating-based view (home advantage plus a margin-aware Elo). None of the schedule, style or availability groups improved it reliably enough to be included. It cannot see injuries or lineups, and it has not been tested against sportsbook lines.",
+  "evidence": "research/RESULTS_GAMES.md"
+}

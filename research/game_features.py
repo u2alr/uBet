@@ -56,7 +56,7 @@ def _rolling(t: pd.DataFrame) -> pd.DataFrame:
     return t
 
 
-def _elo(t: pd.DataFrame) -> pd.DataFrame:
+def _elo(t: pd.DataFrame, state: bool = False):
     """Pre-game Elo for both teams of every game, margin-aware, updated after the game only."""
     games = t[t.home == 1][["GAME_ID", "date", "season", "TEAM_ID", "OPP", "PTS", "opp_pts"]].sort_values(["date", "GAME_ID"])
     rating: dict[int, float] = {}
@@ -78,7 +78,7 @@ def _elo(t: pd.DataFrame) -> pd.DataFrame:
         delta = ELO_K * mult * (res - exp_h)
         rating[h], rating[a] = rh + delta, ra - delta
     e = pd.DataFrame.from_dict(out, orient="index", columns=["elo_home", "elo_away"]).rename_axis("GAME_ID").reset_index()
-    return e
+    return (e, rating, last_season) if state else e
 
 
 def _league_prior(t: pd.DataFrame, col: str) -> pd.Series:

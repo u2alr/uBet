@@ -101,6 +101,12 @@ pre-event snapshots (credit-capped). The last observation before a documented cu
 No market-beating result exists: see `research/MARKET_EVAL_STATUS.md`.
 
 **One calculation.** The probability and expected value on every screen come from `shared/engine/authority.ts`, the same records Minds decides on. A pick the engine cannot price shows the older simple blend marked as unvalidated (a tilde and "unvalidated").
+**Defensive matchups.** Prop details and the Matchups tab show the estimated defenders (never a confirmed assignment), team defence and offence traits, and the sample behind each (`shared/defense.ts`, `GET /api/defense-context`, `research/DEFENSE.md`). The pre-registered ablation found team-level defence helps slightly (research-only, not used in predictions) and the individual-defender and likely-matchup estimates did not pass (`research/RESULTS_DEFENSE.md`).
+
+**Game-winner view.** Each upcoming game shows a rating-based model chance (home advantage + margin-aware Elo) beside the market's, and a "lean" only when they pick different teams by at least 7 points. It cannot see injuries or lineups and has no historical sportsbook test; model and market chances are logged side by side from now on (`research/RESULTS_GAMES.md`, `research/PREREG_GAMES.md`).
+
+**Team bets.** Moneyline legs on the Props page and in the slip (ATL + GSW + MIN + LAL), priced from the market; ESPN's free DraftKings line keeps them working without Odds API credits. They cannot be logged for grading yet.
+
 **Schedule & fatigue.** A prop's details show rest, congestion, estimated travel and workload as facts (`shared/schedule.ts`, `GET /api/schedule-context`), with what is unknown listed. They change no prediction: the pre-registered ablation found no group worth using (`research/RESULTS_HUMAN_FACTORS.md`, how-to in `research/HUMAN_FACTORS.md`).
 
 `GET /api/health` reports configuration and data freshness without secrets.
