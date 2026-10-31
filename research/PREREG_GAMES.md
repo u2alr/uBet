@@ -33,3 +33,15 @@ A group is kept for the displayed "model view" only if its paired log-loss impro
 
 ## Not claimed
 Accuracy over plain baselines is not an edge over sportsbooks. 2025-26 was seen in earlier experiments, so F is confirmation, not a pristine holdout. No profit claim is made.
+
+---
+
+# Addendum (written before AVAIL2 was run; the first ablation had already found no group passing, and fold F was never used)
+
+**Why.** The first ablation could only see a weak availability proxy (rotation minutes missing from the PREVIOUS game). But the app does have an injury report, and who actually sat out a game is recoverable from box scores for every historical game. So the same quantity, "which rotation players are not playing in this game", can be defined identically for training (from the box score) and for serving (from the report as of the snapshot). This replaces the "no historical injury data" limitation for the game view; it does not need an archive.
+
+**Definition (AVAIL2, strictly prior for everything except who is absent).** For a team-game, the rotation is the players with at least 3 appearances and at least 15 average minutes over the team's previous 10 games. A rotation player is **absent** if he has no minutes in this game (training) or is listed Out in the snapshot's injury report (serving). Features, each from PRIOR statistics of the absent players: `ab_min` (their average minutes, summed), `ab_pts` (their average points when they played, summed), `ab_n` (count), `ab_top` (1 if the rotation's highest-minutes player is absent). Game-level inputs: `ab_min_diff`, `ab_pts_diff` (home minus away), `ab_top_home`, `ab_top_away`, `ab_n_home`, `ab_n_away`. A long-term absentee drops out of the rotation after a few games (his absence is then already inside the team's form), the same on both sides.
+
+**What the test means, and does not mean.** Training and testing use the ACTUAL set of absent players, i.e. what a perfect final injury report would say at tip-off. That is an upper bound for the live view: late scratches, a report that is stale at snapshot time, and Questionable players who play or sit are not captured. The leakage test therefore checks that the absentees' PRIOR statistics never contain the game's own results and that nothing from later dates enters; it cannot, and does not claim to, remove the use of the game's own participation, which is the point of the feature. The live job also stores each snapshot's reported-Out list (`injury_log`) so the report's accuracy against who actually sat can be measured going forward.
+
+**Rule.** Same as above: AVAIL2 is kept if its paired log-loss improvement over BASE is entirely above 0 on BOTH development folds; F (the 2025-26 season, still untouched for this experiment) is used once, only if it passes. If it passes, the displayed model view becomes BASE + AVAIL2 and the interface says it uses the injury report as of the snapshot and can be wrong about late changes. If it does not, the view stays BASE. The ALL row is information only.
