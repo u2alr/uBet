@@ -1,5 +1,5 @@
 """Computes the model's chance for each upcoming game and writes it to D1 (migrations 0020, 0021) for the app to DISPLAY next to the market's. A rating-based view that READS THE INJURY
-REPORT: players ESPN lists as Out who are in a team's rotation are treated as absent, exactly the quantity the model was validated on (research/PREREG_GAMES.md addendum, AVAIL2).
+REPORT: players ESPN lists as Out who are in a team's rotation are treated as absent, exactly the quantity the model was validated on (research/PREREG_GAMES.md addendums, AVAIL3).
 Nothing here changes a player-prop probability.
 
     ingest/.venv/Scripts/python research/game_snapshot.py [--remote] [--days 2] [--dry]
@@ -24,7 +24,7 @@ from game_eval import fit_predict  # noqa: E402
 from project import norm_name  # noqa: E402
 
 OUT = HERE / "out"
-COLS = G.BASE + G.GROUPS["AVAIL2"]
+COLS = G.BASE + G.GROUPS["AVAIL3"]
 
 
 def current_form(t: pd.DataFrame) -> dict[int, dict]:
@@ -87,7 +87,7 @@ def main():
         gid = int(f"{prefix}97{k:03d}")                          # a game id in the current season's range that no real game has
         up += [{"GAME_ID": gid, "TEAM_ID": abbr_to_id[g["home"]], "date": pd.Timestamp(g["date"]), "game": k}, {"GAME_ID": gid, "TEAM_ID": abbr_to_id[g["away"]], "date": pd.Timestamp(g["date"]), "game": k}]
     up = pd.DataFrame(up)
-    ab = G.team_absences(pl, upcoming=up[["GAME_ID", "TEAM_ID", "date"]], out_ids=out_ids).set_index(["GAME_ID", "TEAM_ID"])
+    ab = G.team_absences(pl, upcoming=up[["GAME_ID", "TEAM_ID", "date"]], out_ids=out_ids, cross_season=True).set_index(["GAME_ID", "TEAM_ID"])
 
     rows, log = [], []
     now = datetime.now(ET).strftime("%Y-%m-%d %H:%M")
@@ -96,8 +96,8 @@ def main():
         h, aw = abbr_to_id[g["home"]], abbr_to_id[g["away"]]
         gid = int(f"{prefix}97{k:03d}")
         hv, av = ab.loc[(gid, h)], ab.loc[(gid, aw)]
-        test = pd.DataFrame({"elo_diff": [rating[h] - rating[aw]], "ab_min_diff": [hv.ab_min - av.ab_min], "ab_pts_diff": [hv.ab_pts - av.ab_pts], "ab_top_home": [hv.ab_top], "ab_top_away": [av.ab_top],
-                             "ab_n_home": [hv.ab_n], "ab_n_away": [av.ab_n]})
+        test = pd.DataFrame({"elo_diff": [rating[h] - rating[aw]], "ab3_min_diff": [hv.ab_min - av.ab_min], "ab3_pts_diff": [hv.ab_pts - av.ab_pts], "ab3_top_home": [hv.ab_top], "ab3_top_away": [av.ab_top],
+                             "ab3_n_home": [hv.ab_n], "ab3_n_away": [av.ab_n]})
         p, _ = fit_predict(train, test, COLS)
         fh, fa = form.get(h, {}), form.get(aw, {})
         names_of = lambda s: "; ".join(f"{label.get(int(i), i)} ({avg_min.get(int(i), 0):.0f} min)" for i in str(s).split(",") if i)   # noqa: E731

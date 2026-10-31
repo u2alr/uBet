@@ -30,6 +30,20 @@ def main():
     L += ["## Calibration by predicted-probability band (fold B, all groups, descriptive)", "", "| band | games | predicted | actual |", "|---|---|---|---|"]
     for band, x in allv["by_band"].items():
         L.append(f"| {band} | {x['n']:,} | {x['predicted']:.1%} | {x['actual']:.1%} |")
+    if final:
+        fr = final["F"]
+        L += ["", f"## Final season {fr['season']} ({fr['n_test']:,} games), used once for the groups that passed development", "", "| variant | dlogloss [95% interval] | log loss | calibration slope | accuracy |", "|---|---|---|---|---|"]
+        for v, x in fr["variants"].items():
+            L.append(f"| {v} | {x['dlogloss']:+.5f} [{x['ci_lo']:+.5f}, {x['ci_hi']:+.5f}] | {x['logloss']:.4f} | {x['cal_slope']:.3f} | {x['accuracy']:.1%} |")
+        L += ["", f"Baseline on this season: log loss {fr['baseline']['logloss']:.4f}."]
+    a3 = d["A"]["variants"].get("AVAIL3")
+    if a3 and "vs_avail2" in a3:
+        L += ["", "## AVAIL3 versus AVAIL2 (addendum 2: the early-season blind spot)", "", "| fold | AVAIL3 minus AVAIL2 (log loss, positive = AVAIL3 better) | first 15 games of a season: games | baseline | AVAIL2 | AVAIL3 |", "|---|---|---|---|---|---|"]
+        for f in ("A", "B"):
+            x = d[f]["variants"]["AVAIL3"]
+            e = x["early_season"]
+            L.append(f"| {f} ({d[f]['season']}) | {x['vs_avail2']['dlogloss']:+.5f} | {e['games']} | {e['baseline_logloss']:.4f} | {e['avail2_logloss']:.4f} | {e['avail3_logloss']:.4f} |")
+        L.append("")
     L += ["", "## Verdict by the rule fixed in advance", ""]
     verdict = d["verdict_dev"]
     for g, ok in verdict.items():
@@ -43,6 +57,8 @@ def main():
           "- Forward comparison starts now: every snapshot stores the model's and the market's chance side by side (`game_lean_log`)."]
     (HERE / "RESULTS_GAMES.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     confirmed = final["groups_confirmed_on_F"] if final else []
+    if "AVAIL3" in confirmed and "AVAIL2" in confirmed:
+        confirmed = ["AVAIL3"]      # addendum 2: AVAIL3 replaces AVAIL2 when it passes and is not worse than it by more than 0.002 on a development fold
     # The model the app shows is the baseline plus the confirmed groups; describe it on the season it was confirmed on (the final season), else on the latest development season.
     src = final["F"] if final else d["B"]
     b = src["variants"][confirmed[0]] if confirmed and len(confirmed) == 1 else src["baseline"]
@@ -50,7 +66,7 @@ def main():
         "version": "games-v1", "evaluated": True, "model": "baseline" if not confirmed else "baseline+" + "+".join(confirmed), "groupsKept": confirmed,
         "logLoss": round(b["logloss"], 4), "brier": round(b["brier"], 4), "calibrationSlope": round(b["cal_slope"], 3), "accuracy": round(b["accuracy"], 3), "testGames": src["n_test"], "testSeason": src["season"], "baselineLogLoss": round(src["baseline"]["logloss"], 4),
         "summary": ("A rating-based view (home advantage plus a margin-aware Elo). None of the schedule, style or availability groups improved it reliably enough to be included. It has not been tested against sportsbook lines."
-                    if not confirmed else "Home advantage, a margin-aware Elo, and which rotation players the injury report lists as Out. It was tested with the players who actually sat out, so that is a best case: late scratches, Questionable players and lineup news are not seen, and a team's first three games of a season have no rotation to measure. It has not been tested against sportsbook lines."),
+                    if not confirmed else "Home advantage, a margin-aware Elo, and which rotation players the injury report lists as Out. It was tested with the players who actually sat out, so that is a best case: late scratches, Questionable players and lineup news are not seen, and a player who changed team over the summer can be wrongly counted as out in a team's first one or two games of a season. It has not been tested against sportsbook lines."),
         "evidence": "research/RESULTS_GAMES.md"}, indent=2) + "\n", encoding="utf-8")
     print("wrote RESULTS_GAMES.md and games.status.json; kept groups:", kept)
 

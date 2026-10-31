@@ -96,6 +96,33 @@ def test_a_player_not_in_the_rotation_is_never_absent():
     assert out.ab_n == 0 and out.ab_min == 0, "a name the report lists but who is no part of the rotation changes nothing"
 
 
+def test_cross_season_rotation_keeps_a_player_out_since_game_one_and_drops_one_who_moved():
+    """AVAIL3: the rotation reaches back across the season boundary, but a player whose latest appearance was for another team is not a rotation player here."""
+    A, B = 1, 2
+    rows = []
+    gid = 0
+
+    def game(date, season, team, minutes_by_player):
+        nonlocal gid
+        gid += 1
+        for pid, m in minutes_by_player.items():
+            rows.append(dict(GAME_ID=gid, TEAM_ID=team, PLAYER_ID=pid, GAME_DATE=date, SEASON_ID=season, MIN=m, PTS=m / 2))
+        return gid
+
+    # last season: team A's rotation is players 10..14; team B's is 20..24 (ten games each, on separate days)
+    for d in range(10):
+        game(f"2026-03-{d + 1:02d}", 22025, A, {10: 30, 11: 28, 12: 26, 13: 24, 14: 20})
+        game(f"2026-03-{d + 1:02d}", 22025, B, {20: 30, 21: 28, 22: 26, 23: 24, 24: 20})
+    # new season: player 11 (was with A) now plays for B; player 10 is out from the first game (no appearances at all); A's first game is on Oct 25
+    game("2026-10-24", 22026, B, {20: 30, 21: 28, 22: 26, 23: 24, 24: 20, 11: 22})   # player 11 appears for B
+    players = pd.DataFrame(rows)
+    upcoming = pd.DataFrame([{"GAME_ID": 900, "TEAM_ID": A, "date": pd.Timestamp("2026-10-26")}])
+    out = G.team_absences(players, upcoming=upcoming, out_ids={10, 11}, cross_season=True).set_index(["GAME_ID", "TEAM_ID"]).loc[(900, A)]
+    assert set(int(i) for i in out.ab_ids.split(",") if i) == {10}, "10 (out since game one) counts as absent; 11 (now plays for B) does not"
+    within = G.team_absences(players, upcoming=upcoming, out_ids={10, 11}, cross_season=False).set_index(["GAME_ID", "TEAM_ID"]).loc[(900, A)]
+    assert within.ab_n == 0, "the within-season definition cannot see either, which is the blind spot AVAIL3 fixes"
+
+
 def test_leakage_future_deletion_and_same_day_corruption():
     players, teams = features.load_raw()
     full = build(players, teams)
