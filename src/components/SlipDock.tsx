@@ -1,17 +1,15 @@
 import { useState } from 'react'
-import { conflicts } from '../../shared/teamBets.ts'
 import { STAT_LABEL, pct } from '../lib/format'
-import { pickKey } from '../lib/picks'
-import { slipTotals } from '../lib/slipMath'
+import { combine, pickKey } from '../lib/picks'
 import { useSlip } from '../lib/slipContext'
 
 /** The slip, always beside the props. Add and remove legs and read the parlay without leaving the board; logging a bet stays on the full Slip screen. */
 export default function SlipDock({ onOpenSlip }: { onOpenSlip: () => void }) {
   const slip = useSlip()
   const [stake, setStake] = useState('10')
-  const { legs, teamLegs } = slip
-  const count = legs.length + teamLegs.length
-  const { odds, prob, ev } = slipTotals(legs, teamLegs)
+  const { legs } = slip
+  const count = legs.length
+  const { odds, prob, ev } = combine(legs)
   const amount = Number(stake) || 0
   const games = new Map<string, number>()
   for (const l of legs) games.set(l.game, (games.get(l.game) ?? 0) + 1)
@@ -29,12 +27,6 @@ export default function SlipDock({ onOpenSlip }: { onOpenSlip: () => void }) {
       ) : (
         <>
           <ul className="space-y-1.5">
-            {teamLegs.map((t) => (
-              <li key={`${t.gameId}${t.team}`} className="flex items-start justify-between gap-2 rounded-lg bg-neutral-950/50 px-2.5 py-2 text-xs">
-                <span className="min-w-0"><span className="block truncate text-neutral-100">{t.team} to win</span><span className="block truncate text-neutral-500">{t.game}</span></span>
-                <span className="flex shrink-0 items-center gap-2 tabular-nums"><span className="text-neutral-100">{t.price.toFixed(2)}</span><button className="text-neutral-600 hover:text-neutral-200" onClick={() => slip.removeTeam(t)} aria-label={`Remove ${t.team}`}>✕</button></span>
-              </li>
-            ))}
             {legs.map((l) => (
               <li key={pickKey(l)} className="flex items-start justify-between gap-2 rounded-lg bg-neutral-950/50 px-2.5 py-2 text-xs">
                 <span className="min-w-0"><span className="block truncate text-neutral-100">{l.player}</span><span className="block truncate text-neutral-500">{l.side === 'over' ? 'Over' : 'Under'} {l.line} {STAT_LABEL[l.stat]}</span></span>
@@ -56,7 +48,7 @@ export default function SlipDock({ onOpenSlip }: { onOpenSlip: () => void }) {
             <span className="ml-auto text-neutral-400">returns <b className="text-neutral-100">{(amount * odds).toFixed(2)}</b></span>
           </div>
 
-          {(correlated || conflicts(teamLegs)) && <p className="text-xs leading-snug text-neutral-500">{conflicts(teamLegs) ? 'Two teams from one game cannot both win. ' : 'Legs from the same game or player move together, so the chance above is probably off.'}</p>}
+          {correlated && <p className="text-xs leading-snug text-neutral-500">Legs from the same game or player move together, so the chance above is probably off.</p>}
           {legs.some((l) => l.basis !== 'authoritative') && <p className="text-xs leading-snug text-amber-400/90">Some legs are unvalidated simple-blend estimates.</p>}
 
           <div className="flex items-center gap-2">

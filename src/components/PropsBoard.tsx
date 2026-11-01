@@ -2,12 +2,11 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import type { PicksMeta } from '../../shared/picks.ts'
 import type { Conference, StandingRow } from '../../shared/standings.ts'
 import { STAT_LABEL, api } from '../lib/format'
-import type { Pick } from '../lib/picks'
+import { combine, type Pick } from '../lib/picks'
 import { SORTS, capPerTeam, evRank, evText, favorite, groupConsecutive, shortName, normAbbr, opponentOf, sortCards, toCards, type Card, type SortKey } from '../lib/propsBoard'
 import { teamByName } from '../lib/teams'
 import type { H2H, H2HState } from '../lib/h2hView'
 import { gameReasons, lean, type GameLeanRow } from '../../shared/games.ts'
-import { slipTotals } from '../lib/slipMath'
 import { useSlip } from '../lib/slipContext'
 import GamesRail, { type RailGame } from './GamesRail'
 import LiveBox from './LiveBox'
@@ -154,7 +153,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
   }
   const rail: RailGame[] = sections.map((g) => ({ game: g.game, time: g.info ? new Date(g.info.date).toLocaleTimeString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : null, state: g.info?.state ?? null, props: g.cards.length }))
   const slip = useSlip()
-  const slipCount = slip.legs.length + slip.teamLegs.length
+  const slipCount = slip.legs.length
 
   const ctl = 'rounded-lg bg-neutral-900 px-3 py-1.5 text-sm text-neutral-200 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500'
   return (
@@ -251,7 +250,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
       {slipCount > 0 && (
         <button onClick={onOpenSlip} className="fixed inset-x-3 bottom-3 z-30 flex items-center justify-between rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-medium text-neutral-950 shadow-lg xl:hidden">
           <span>Slip · {slipCount} {slipCount === 1 ? 'leg' : 'legs'}</span>
-          <span className="tabular-nums">{slipTotals(slip.legs, slip.teamLegs).odds.toFixed(2)}x · Review</span>
+          <span className="tabular-nums">{combine(slip.legs).odds.toFixed(2)}x · Review</span>
         </button>
       )}
     </div>

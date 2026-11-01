@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { STAT_LABEL, api, pct } from '../lib/format'
-import { conflicts, parlayLabel } from '../../shared/teamBets.ts'
-import { pickKey } from '../lib/picks'
-import { slipTotals } from '../lib/slipMath'
+import { combine, pickKey } from '../lib/picks'
 import { useSlip } from '../lib/slipContext'
 
 export default function Slip() {
@@ -11,9 +9,9 @@ export default function Slip() {
   // The odds actually taken at the book, per leg. Blank means the price shown. Grading uses these, not the app's price.
   const [taken, setTaken] = useState<Record<string, string>>({})
   const [logState, setLogState] = useState<{ status: 'idle' | 'saving' | 'done' | 'error'; message?: string }>({ status: 'idle' })
-  const { legs, teamLegs } = slip
+  const { legs } = slip
 
-  if (legs.length === 0 && teamLegs.length === 0)
+  if (legs.length === 0)
     return (
       <div className="space-y-2">
       {logState.status === 'done' && <p className="rounded-lg bg-emerald-500/10 px-3 py-3 text-sm text-emerald-300" role="status">{logState.message}</p>}
@@ -24,8 +22,8 @@ export default function Slip() {
     )
 
   const priceOf = (l: (typeof legs)[number]) => { const t = Number(taken[pickKey(l)]); return Number.isFinite(t) && t > 1 ? t : l.price }
-  const { odds, prob, ev } = slipTotals(legs, teamLegs)
-  const myOdds = legs.reduce((a, l) => a * priceOf(l), 1) * teamLegs.reduce((a, t) => a * t.price, 1)
+  const { odds, prob, ev } = combine(legs)
+  const myOdds = legs.reduce((a, l) => a * priceOf(l), 1)
   const amount = Number(stake) || 0
   const bad = legs.some((l) => taken[pickKey(l)] && !(Number(taken[pickKey(l)]) > 1))
 
@@ -50,20 +48,6 @@ export default function Slip() {
 
   return (
     <div className="space-y-3">
-      {teamLegs.length > 0 && (
-        <section aria-label="Team legs" className="space-y-1.5 rounded-lg bg-neutral-900 p-3">
-          <h3 className="text-xs uppercase tracking-widest text-neutral-500">Team bets: {parlayLabel(teamLegs)}</h3>
-          <ul className="divide-y divide-neutral-800 text-sm">
-            {teamLegs.map((t) => (
-              <li key={`${t.gameId}${t.team}`} className="flex items-center justify-between gap-3 py-2">
-                <span className="min-w-0"><span className="text-neutral-100">{t.team} to win</span> <span className="text-xs text-neutral-500">{t.game}</span></span>
-                <span className="flex shrink-0 items-center gap-4 tabular-nums"><span className="text-xs text-neutral-500" title="The market's no-margin chance">{pct(t.marketProb)}</span><span className="text-neutral-100">{t.price.toFixed(2)}</span><button className="text-neutral-600 hover:text-neutral-200" onClick={() => slip.removeTeam(t)} title="Remove">✕</button></span>
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs text-neutral-500">Team chances are the market's no-margin win chances (the app has no game-winner model), so the expected value below measures price shopping against the market, not an edge.{conflicts(teamLegs) ? ' Two teams from one game cannot both win.' : ''}</p>
-        </section>
-      )}
       {legs.length > 0 && <ul className="divide-y divide-neutral-800 rounded-lg bg-neutral-900">
         {legs.map((l) => (
           <li key={`${l.playerId}${l.stat}${l.side}${l.line}`} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
@@ -122,13 +106,12 @@ export default function Slip() {
       </p>
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg bg-neutral-900 p-3 text-sm">
-        <button onClick={logBet} disabled={logState.status === 'saving' || amount <= 0 || bad || teamLegs.length > 0 || legs.length === 0}
+        <button onClick={logBet} disabled={logState.status === 'saving' || amount <= 0 || bad || legs.length === 0}
           className="rounded-md bg-emerald-500 px-4 py-2 font-medium text-neutral-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300">
           {logState.status === 'saving' ? 'Logging…' : 'I placed this bet'}
         </button>
         <span className="text-xs text-neutral-500">Records {amount.toFixed(2)} at <b className="text-neutral-300">{myOdds.toFixed(2)}x</b>{myOdds !== odds ? ' (your odds)' : ''} so it can be graded. The app never places bets.</span>
         {bad && <span className="text-xs text-amber-400">Odds you got must be decimal odds above 1.</span>}
-        {teamLegs.length > 0 && <span className="text-xs text-amber-400">Parlays with team legs cannot be logged yet: game results are not stored reliably, so they could not be graded. Remove the team legs to log the player props.</span>}
         {logState.status === 'error' && <span className="text-xs text-red-400" role="alert">{logState.message}</span>}
       </div>
       {logState.status === 'done' && <p className="text-xs text-emerald-400" role="status">{logState.message}</p>}

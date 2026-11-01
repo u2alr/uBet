@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { pickKey, type Pick } from './picks'
-import { teamLegKey, type TeamLeg } from '../../shared/teamBets.ts'
 import { SlipContext, type Slip } from './slipContext'
 
 const KEY = 'ubet-slip'
-const TEAM_KEY = 'ubet-slip-team'
+// Moneyline legs were removed; drop what an older version saved so it does not sit in storage forever.
+try { localStorage.removeItem('ubet-slip-team') } catch { /* storage blocked */ }
 
 /** Remember the slip across reloads. Blocked or full storage (private mode, a quota) only means it is not remembered: it must never break adding a leg. */
 function save(key: string, value: unknown) {
@@ -16,24 +16,15 @@ export function SlipProvider({ children }: { children: ReactNode }) {
     try { return JSON.parse(localStorage.getItem(KEY) ?? '[]') } catch { return [] }
   })
   useEffect(() => save(KEY, legs), [legs])
-  const [teamLegs, setTeamLegs] = useState<TeamLeg[]>(() => {
-    try { return JSON.parse(localStorage.getItem(TEAM_KEY) ?? '[]') } catch { return [] }
-  })
-  useEffect(() => save(TEAM_KEY, teamLegs), [teamLegs])
 
   const has = (p: Pick) => legs.some((l) => pickKey(l) === pickKey(p))
   const value: Slip = {
     legs,
-    teamLegs,
-    hasTeam: (l) => teamLegs.some((t) => teamLegKey(t) === teamLegKey(l)),
-    // Picking the other side of a game replaces the first: both teams cannot win.
-    toggleTeam: (l) => setTeamLegs((ts) => (ts.some((t) => teamLegKey(t) === teamLegKey(l)) ? ts.filter((t) => teamLegKey(t) !== teamLegKey(l)) : [...ts.filter((t) => t.gameId !== l.gameId), l])),
-    removeTeam: (l) => setTeamLegs((ts) => ts.filter((t) => teamLegKey(t) !== teamLegKey(l))),
     has,
     toggle: (p) => setLegs((ls) => (ls.some((l) => pickKey(l) === pickKey(p)) ? ls.filter((l) => pickKey(l) !== pickKey(p)) : [...ls, p])),
     addAll: (ps) => setLegs((ls) => [...ls, ...ps.filter((p) => !ls.some((l) => pickKey(l) === pickKey(p)))]),
     remove: (p) => setLegs((ls) => ls.filter((l) => pickKey(l) !== pickKey(p))),
-    clear: () => { setLegs([]); setTeamLegs([]) },
+    clear: () => setLegs([]),
   }
   return <SlipContext.Provider value={value}>{children}</SlipContext.Provider>
 }
