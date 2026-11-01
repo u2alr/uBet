@@ -3,3 +3,5 @@ ODDS_API_KEY=your_key_from_the-odds-api.com
 ODDS_REGIONS=us
 # Games to pull player props for per refresh. Each game costs one credit per market (4 markets = 4 credits), so keep this small on the free tier.
 ODDS_MAX_EVENTS=3
+# Credits the app may spend per month (UTC) before it stops fetching odds. The free plan is about 500; the default leaves a margin.
+ODDS_MONTHLY_CREDITS=450

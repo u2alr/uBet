@@ -79,7 +79,8 @@ Environment variables (set in `.dev.vars` locally, as Pages secrets when deploye
 | `CAPTURE_TOKEN` | If set, routes that spend credits or write (`/api/capture`, `?fresh=1`, `POST /api/predictions`) need this in the `x-capture-token` header. If unset they only work from localhost. **Set it before deploying.** |
 | `FALLBACK_MODEL` | `v3` switches the fallback model to the negative-binomial baseline (default `v2`; see `AUDIT.md` finding 14) |
 | `ODDS_REGIONS`, `ODDS_MARKETS`, `ODDS_HOURS`, `ODDS_BOOKS` | what to fetch (each region/market costs credits) |
-| `ODDS_MAX_EVENTS` | games whose props are pulled per refresh (default 3; one credit per market per game) |
+| `ODDS_MAX_EVENTS` | games whose props are pulled per refresh (default 3, at most 15; one credit per market per game) |
+| `ODDS_MONTHLY_CREDITS` | credits the app may spend per UTC month before it stops fetching odds (default 450 of the free plan's ~500). The count is kept in D1 and shown at `/api/status` as `oddsCredits`. |
 
 `CAPTURE_TOKEN` also protects personal data (`GET/POST/DELETE /api/my-bets`). On a deployed copy, enter it once under Results > My bets; it is kept in that browser only.
 

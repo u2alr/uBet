@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
+import { checkBudget, creditCost, monthKey, monthlyLimit } from '../../shared/oddsBudget.ts'
 import { enrichPicks, listAbsences, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
 import { MINDS_VERSION } from '../../shared/minds.ts'
 import { parseStandings } from '../../shared/standings.ts'
@@ -43,6 +44,8 @@ type Bindings = {
   ODDS_MAX_EVENTS?: string
   ODDS_HOURS?: string
   ODDS_BOOKS?: string
+  /** Credits the app may spend per calendar month (UTC) before it stops fetching odds. Default 450 of the free plan's ~500. */
+  ODDS_MONTHLY_CREDITS?: string
 }
 type Env = { Bindings: Bindings }
 type Ctx = Context<Env>
@@ -129,10 +132,32 @@ async function cachedMeta<T>(key: string, ttl: number, load: () => Promise<T>, f
 }
 const cachedJson = async <T>(key: string, ttl: number, load: () => Promise<T>, fresh = false) => (await cachedMeta(key, ttl, load, fresh)).data
 
+/**
+ * Reserve `cost` credits from this month's budget before spending them. One statement does the check and the add, so parallel requests cannot all see the same
+ * room and overspend together. Returns false (and spends nothing) when the month does not have room.
+ */
+async function reserveCredits(env: Bindings, cost: number): Promise<boolean> {
+  if (cost === 0) return true
+  const limit = monthlyLimit(env.ODDS_MONTHLY_CREDITS)
+  if (cost > limit) return false
+  const row = await env.DB.prepare(
+    `INSERT INTO meta (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + ? AS TEXT) WHERE CAST(value AS INTEGER) + ? <= ?
+     RETURNING value`,
+  ).bind(`odds_credits_${monthKey(Date.now())}`, String(cost), cost, cost, limit).first<{ value: string }>()
+  return row !== null
+}
+
+const refundCredits = (env: Bindings, cost: number) =>
+  cost === 0 ? Promise.resolve() : env.DB.prepare('UPDATE meta SET value = CAST(MAX(CAST(value AS INTEGER) - ?, 0) AS TEXT) WHERE key = ?').bind(cost, `odds_credits_${monthKey(Date.now())}`).run().then(() => {}, () => {})
+
 async function oddsFetch<T>(env: Bindings, path: string, params: Record<string, string> = {}): Promise<T> {
+  const cost = creditCost(path, params)
+  if (!(await reserveCredits(env, cost).catch(() => false)))
+    throw new UpstreamError(`Monthly odds credit budget reached (${monthlyLimit(env.ODDS_MONTHLY_CREDITS)} credits); fetching resumes next month, or raise ODDS_MONTHLY_CREDITS`)
   const qs = new URLSearchParams({ apiKey: env.ODDS_API_KEY!, ...params })
-  const res = await fetch(`${env.ODDS_BASE_URL ?? ODDS_DEFAULT}${path}?${qs}`)
-  if (!res.ok) throw new UpstreamError(`The Odds API ${res.status}`)
+  const res = await fetch(`${env.ODDS_BASE_URL ?? ODDS_DEFAULT}${path}?${qs}`).catch(async (e) => { await refundCredits(env, cost); throw e })
+  if (!res.ok) { await refundCredits(env, cost); throw new UpstreamError(`The Odds API ${res.status}`) }
   const body = await res.text()
   // Keep every odds response exactly as received (the API key is never stored) so closing lines can be
   // reconstructed later. A storage failure must never break the request.
@@ -170,8 +195,10 @@ app.get('/status', async (c) => {
   const counts = await c.env.DB.prepare(
     'SELECT (SELECT COUNT(*) FROM players) AS players, (SELECT MAX(date) FROM games) AS newestGame',
   ).first<{ players: number; newestGame: string | null }>()
+  const spent = await c.env.DB.prepare('SELECT value FROM meta WHERE key = ?').bind(`odds_credits_${monthKey(Date.now())}`).first<{ value: string }>().catch(() => null)
+  const odds = checkBudget(Number(spent?.value ?? 0), 0, monthlyLimit(c.env.ODDS_MONTHLY_CREDITS))
   // D1's datetime('now') is UTC without a zone marker.
-  return c.json({ lastSync: last ? `${last.value.replace(' ', 'T')}Z` : null, ...counts })
+  return c.json({ lastSync: last ? `${last.value.replace(' ', 'T')}Z` : null, ...counts, oddsCredits: { month: monthKey(Date.now()), used: odds.used, limit: odds.limit, remaining: odds.remaining } })
 })
 
 // ---------- players & stats ----------
