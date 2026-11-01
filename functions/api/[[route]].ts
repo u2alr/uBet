@@ -972,7 +972,7 @@ app.get('/minds', async (c) => {
        ON (',' || COALESCE(b.proposed_by, b.mind) || ',') LIKE ('%,' || m.mind || ',%')
      WHERE b.version = ? AND b.tier = 'strict' GROUP BY m.mind`,
   ).bind(version).all()).results
-  const tierRow = async (mind: string, tier: string) => (await db.prepare(`SELECT '${mind}' AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.tier = '${tier}' HAVING COUNT(*) > 0`).bind(version).all()).results
+  const tierRow = async (mind: string, tier: string) => (await db.prepare(`SELECT ? AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.tier = ? HAVING COUNT(*) > 0`).bind(mind, version, tier).all()).results
   const summary = [...(await tierRow('chief', 'strict')), ...(await tierRow('lean', 'lean')), ...personalities, ...(await tierRow('volume', 'volume')), ...(await tierRow('research', 'research'))]
   const curve = (await db.prepare(
     `SELECT 'chief' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND tier = 'strict' GROUP BY day

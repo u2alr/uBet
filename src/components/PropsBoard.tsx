@@ -274,7 +274,8 @@ function GameSection({ g, open, onToggle, absent, table, leans, h2h, view, limit
   const best = g.cards.reduce<Card | null>((m, c) => (!m || evRank(c.lead) > evRank(m.lead) ? c : m), null)?.lead
   return (
     <section id={sectionId(g.game)} aria-label={g.game} className="scroll-mt-40">
-      <button onClick={onToggle} aria-expanded={open} aria-controls={bodyId} title={g.game}
+      <h3>
+      <button onClick={onToggle} aria-expanded={open} aria-controls={open ? bodyId : undefined} title={g.game}
         className="grid min-h-11 w-full grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl px-3 py-1.5 text-left hover:bg-neutral-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500 sm:grid-cols-[1rem_9.5rem_minmax(0,1fr)_minmax(0,1.3fr)]">
         <span aria-hidden className={`text-neutral-500 transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
         <span className="flex items-center gap-2">
@@ -292,6 +293,7 @@ function GameSection({ g, open, onToggle, absent, table, leans, h2h, view, limit
             : <span className="text-neutral-600">no sportsbook lines</span>}
         </span>
       </button>
+      </h3>
       {/* The toggle collapses everything under the title: context, box score and props. */}
       {open && (
         <div id={bodyId} className="mt-1 px-3">
