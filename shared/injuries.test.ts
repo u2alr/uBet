@@ -47,7 +47,7 @@ test('impossible minutes are ignored rather than averaged in', () => {
   assert.equal(r.min10, 30)
 })
 
-test('absences list Out, Doubtful and Questionable players matched to the roster by name, most serious first', async () => {
+test('absences list Out, Doubtful, Questionable and Day-To-Day players matched to the roster by name, most serious first', async () => {
   const { listAbsences } = await import('./injuries.ts')
   const inj = new Map([
     ['paolo banchero', { status: 'out' as const, label: 'Out', note: 'knee' }],
@@ -57,7 +57,16 @@ test('absences list Out, Doubtful and Questionable players matched to the roster
   ])
   const roster = [{ id: 1, name: 'Franz Wagner', team: 'ORL' }, { id: 2, name: 'Paolo Banchero', team: 'ORL' }, { id: 3, name: 'Jalen Suggs', team: 'ORL' }, { id: 4, name: 'Healthy Guy', team: 'ORL' }]
   const out = listAbsences(roster, inj)
-  assert.deepEqual(out.map((a) => [a.name, a.status]), [['Paolo Banchero', 'out'], ['Franz Wagner', 'questionable']])
+  assert.deepEqual(out.map((a) => [a.name, a.status]), [['Paolo Banchero', 'out'], ['Franz Wagner', 'questionable'], ['Jalen Suggs', 'day-to-day']])
   assert.equal(out[0].note, 'knee')
   assert.deepEqual(listAbsences([], inj), [])
+})
+
+test('absences take the club from the report, and report a listed player the roster does not have', async () => {
+  const { listAbsences } = await import('./injuries.ts')
+  const withTeam = { injuries: [{ displayName: 'Portland Trail Blazers', injuries: [{ status: 'Out', shortComment: 'ankle', athlete: { displayName: 'Shaedon Sharpe' } }] }, { displayName: 'Orlando Magic', injuries: [{ status: 'Day-To-Day', athlete: { displayName: 'Jalen Suggs' } }] }] }
+  const abbr = (n: string) => ({ 'Portland Trail Blazers': 'POR', 'Orlando Magic': 'ORL' } as Record<string, string>)[n] ?? null
+  const out = listAbsences([{ id: 3, name: 'Jalen Suggs', team: 'ATL' }], parseInjuries(withTeam), abbr)
+  assert.deepEqual(out.map((a) => [a.name, a.team, a.status, a.id < 0]), [['Shaedon Sharpe', 'POR', 'out', true], ['Jalen Suggs', 'ORL', 'day-to-day', false]])
+  assert.deepEqual(listAbsences([], parseInjuries(withTeam)), [])
 })

@@ -28,7 +28,7 @@ interface GameInfo {
   id: string; date: string; status: string; state: 'pre' | 'in' | 'post'; home: { abbr: string; name?: string; score: string }; away: { abbr: string; name?: string; score: string }
   odds?: { spread: number | null; total: number | null; homeWinProb: number | null; bestMoneyline?: { home: number; away: number } | null } | null
 }
-interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable'; label: string; note: string }
+interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable' | 'day-to-day'; label: string; note: string }
 type TeamStanding = StandingRow & { conference: string }
 interface Section { game: string; date: string; cards: Card[]; info: GameInfo | null }
 
@@ -321,6 +321,9 @@ function GameSection({ g, open, onToggle, absent, table, leans, h2h, view, limit
 
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 
+/** "Gary Payton III" -> "Payton", "Mikel Brown Jr." -> "Brown". */
+const surname = (name: string) => { const w = name.split(' '); return /^(jr\.?|sr\.?|ii|iii|iv|v)$/i.test(w[w.length - 1]) && w.length > 2 ? w[w.length - 2] : w[w.length - 1] }
+
 /** One summary line under the game title (market favourite, model view, injuries out), with records, model reasoning and the injury report behind "Game info". */
 function GameContext({ game, info, absent, table, leans }: { game: string; info: GameInfo | null; absent: Absence[]; table: Map<string, TeamStanding>; leans: GameLeanRow[] }) {
   const [more, setMore] = useState(false)
@@ -333,9 +336,9 @@ function GameContext({ game, info, absent, table, leans }: { game: string; info:
   const row = info?.state === 'pre' ? leans.find((l) => l.home === hm && l.away === aw) : undefined
   const view = row ? lean(row, info?.odds?.homeWinProb ?? null) : null
   if (!rows.length && !mine.length && !fav && !row) return null
-  const tone = { out: 'bg-red-500/15 text-red-300', doubtful: 'bg-amber-500/15 text-amber-300', questionable: 'bg-neutral-800 text-neutral-300' }
+  const tone = { out: 'bg-red-500/15 text-red-300', doubtful: 'bg-amber-500/15 text-amber-300', questionable: 'bg-neutral-800 text-neutral-300', 'day-to-day': 'bg-neutral-800 text-neutral-400' }
   const outCount = mine.filter((a) => a.status === 'out').length
-  const uncertain = mine.filter((a) => a.status === 'questionable' || a.status === 'doubtful').map((a) => ({ team: a.team!, name: a.name, status: a.status }))
+  const uncertain = mine.filter((a) => a.status !== 'out').map((a) => ({ team: a.team!, name: a.name, status: a.status }))
   const hasDetail = rows.length > 0 || !!row || mine.length > 0
   return (
     <div className="mt-1.5 text-sm text-neutral-400">
@@ -380,7 +383,7 @@ function GameContext({ game, info, absent, table, leans }: { game: string; info:
           {mine.length > 0 && (
             <p className="flex flex-wrap items-center gap-1.5 text-xs">
               <span className="text-neutral-500">Injury report</span>
-              {mine.map((a) => <span key={a.id} title={a.note || a.label} className={`rounded-full px-2.5 py-0.5 ${tone[a.status]}`}>{a.team} {a.name.split(' ').slice(-1)[0]} · {a.status}</span>)}
+              {mine.map((a) => <span key={a.id} title={a.note || a.label} className={`rounded-full px-2.5 py-0.5 ${tone[a.status]}`}>{a.team} {surname(a.name)} · {a.status}</span>)}
             </p>
           )}
         </div>

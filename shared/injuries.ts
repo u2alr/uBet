@@ -2,7 +2,8 @@
 import { normName } from './picks.ts'
 
 export type InjuryStatus = 'out' | 'doubtful' | 'questionable' | 'day-to-day' | 'other'
-export interface Injury { status: InjuryStatus; label: string; note: string }
+/** `team` and `name` are as ESPN lists them; the club is newer than our roster's last box score after a trade. */
+export interface Injury { status: InjuryStatus; label: string; note: string; team?: string; name?: string }
 
 const SEVERITY: Record<InjuryStatus, number> = { out: 4, doubtful: 3, questionable: 2, 'day-to-day': 1, other: 0 }
 
@@ -15,7 +16,7 @@ const statusOf = (raw: string): InjuryStatus => {
   return 'other'
 }
 
-interface EspnInjuryFeed { injuries?: { injuries?: { status?: string; shortComment?: string; athlete?: { displayName?: string } }[] }[] }
+interface EspnInjuryFeed { injuries?: { displayName?: string; injuries?: { status?: string; shortComment?: string; athlete?: { displayName?: string } }[] }[] }
 
 /** Player (by normalised name) -> their most serious listed status. Malformed entries are skipped, never thrown on. */
 export function parseInjuries(feed: unknown): Map<string, Injury> {
@@ -30,7 +31,7 @@ export function parseInjuries(feed: unknown): Map<string, Injury> {
       const key = normName(name)
       const cur = out.get(key)
       if (!cur || SEVERITY[status] > SEVERITY[cur.status])
-        out.set(key, { status, label: i.status, note: typeof i.shortComment === 'string' ? i.shortComment.slice(0, 240) : '' })
+        out.set(key, { status, label: i.status, note: typeof i.shortComment === 'string' ? i.shortComment.slice(0, 240) : '', name, ...(typeof t.displayName === 'string' ? { team: t.displayName } : {}) })
     }
   return out
 }
@@ -94,13 +95,28 @@ export function enrichPicks<P extends { playerId: number; player: string; role?:
 
 export interface Absence { id: number; name: string; team: string | null; status: InjuryStatus; label: string; note: string }
 
-/** Players on the injury report who matter for tonight (Out, Doubtful, Questionable), matched to our roster by name. Out first, then by team and name. */
-export function listAbsences(players: { id: number; name: string; team: string | null }[], injuries: Map<string, Injury>): Absence[] {
+/**
+ * Players on the injury report who matter for tonight (Out, Doubtful, Questionable, Day-To-Day). Out first, then by team and name.
+ * The club comes from the report itself when `abbrOf` can read it (our roster's team is the last box score and lags a trade). A listed player our roster
+ * does not have (no box scores yet) is still reported, with a negative id, because teammates and the game are affected whether or not we hold their stats.
+ */
+export function listAbsences(players: { id: number; name: string; team: string | null }[], injuries: Map<string, Injury>, abbrOf: (teamName: string) => string | null = () => null): Absence[] {
   const rank: Record<InjuryStatus, number> = { out: 0, doubtful: 1, questionable: 2, 'day-to-day': 3, other: 4 }
+  const relevant = (s: InjuryStatus) => s === 'out' || s === 'doubtful' || s === 'questionable' || s === 'day-to-day'
   const out: Absence[] = []
+  const seen = new Set<string>()
   for (const p of players) {
-    const inj = injuries.get(normName(p.name))
-    if (inj && (inj.status === 'out' || inj.status === 'doubtful' || inj.status === 'questionable')) out.push({ id: p.id, name: p.name, team: p.team, status: inj.status, label: inj.label, note: inj.note })
+    const key = normName(p.name)
+    const inj = injuries.get(key)
+    if (!inj || !relevant(inj.status) || seen.has(key)) continue
+    seen.add(key)
+    out.push({ id: p.id, name: p.name, team: (inj.team ? abbrOf(inj.team) : null) ?? p.team, status: inj.status, label: inj.label, note: inj.note })
+  }
+  let next = -1
+  for (const [key, inj] of injuries) {
+    const team = inj.team ? abbrOf(inj.team) : null
+    if (seen.has(key) || !relevant(inj.status) || !team || !inj.name) continue
+    out.push({ id: next--, name: inj.name, team, status: inj.status, label: inj.label, note: inj.note })
   }
   return out.sort((a, b) => rank[a.status] - rank[b.status] || (a.team ?? '').localeCompare(b.team ?? '') || a.name.localeCompare(b.name))
 }

@@ -872,12 +872,12 @@ app.get('/cheatsheet', async (c) => {
   return c.json({ data: hit.data, cachedAt: hit.fetchedAt ? new Date(hit.fetchedAt).toISOString() : null })
 })
 
-// Who is on the injury report (Out, Doubtful, Questionable), matched to our roster. Cached with the injury feed (15 minutes).
+// Who is on the injury report (Out, Doubtful, Questionable, Day-To-Day), matched to our roster, plus listed players the roster lacks. Cached with the injury feed (15 minutes).
 app.get('/absences', async (c) => {
   const injuries = await loadInjuries(c.env)
   if (!injuries) return c.json({ error: 'The injury report is unavailable right now.' }, 502)
   const { results } = await c.env.DB.prepare('SELECT id, name, team FROM players').all<{ id: number; name: string; team: string | null }>()
-  return c.json({ data: listAbsences(results, injuries) })
+  return c.json({ data: listAbsences(results, injuries, (name) => teamByName(name)?.[0] ?? null) })
 })
 
 // Live or final box score for one game (ESPN summary). Short cache so live games stay current without hammering the feed.

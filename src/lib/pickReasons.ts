@@ -47,7 +47,7 @@ export function pickReasons(c: Card): PickReason[] {
   const r = p.role
   if (r && r.trend != null && Math.abs(r.trend) >= MIN_TREND) {
     const rising = r.trend > 0
-    add(rising === over ? 'for' : 'against', 'Minutes', `${r.label}, about ${Math.round(r.min10)} minutes a game, and ${rising ? 'rising' : 'falling'} (${rising ? '+' : ''}${one(r.trend)} over the last 5 games).`)
+    add(rising === over ? 'for' : 'against', 'Minutes', `${r.label === 'Starter' ? 'A heavy-minutes role' : r.label}, about ${Math.round(r.min10)} minutes a game, and ${rising ? 'rising' : 'falling'} (${rising ? '+' : ''}${one(r.trend)} over the last 5 games).`)
   }
 
   // 5. The opponent's tendency on this statistic.

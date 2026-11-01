@@ -11,7 +11,7 @@ import TeamLogo from './TeamLogo'
 
 interface Player { id: number; name: string; team: string | null; gameDate: string; injury: Injury | null; games: RecentGame[] }
 interface Game { id: string; date: string; state: 'pre' | 'in' | 'post'; home: { abbr: string }; away: { abbr: string } }
-interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable' }
+interface Absence { id: number; name: string; team: string | null; status: 'out' | 'doubtful' | 'questionable' | 'day-to-day' }
 type H2H = Record<string, RecentGame[]>
 interface Row { p: Player; opp: string; home: boolean; date: string; stat: CheatStat; threshold: number; hits10: number; n10: number; hits5: number; n5: number; values: number[]; avg: number; minutes: number }
 
