@@ -5,4 +5,4 @@ pages_build_output_dir = "./dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "ubet"
-database_id = "REPLACE_AFTER_wrangler_d1_create"
+database_id = "b1ab2a3e-d3fa-460a-bd52-67dfa6279e46"
