@@ -14,7 +14,7 @@ export default function WhyPick({ c }: { c: Card }) {
   return (
     <div>
       <button onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={id}
-        className="flex w-full items-center gap-2 rounded-lg text-left text-xs text-neutral-400 hover:text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">
+        className="flex w-full items-center gap-2 rounded-lg py-1.5 text-left text-xs text-neutral-400 hover:text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">
         <span aria-hidden className={`inline-block transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
         <span className="font-medium text-neutral-300">Why the {c.lead.side}?</span>
         <span className="text-neutral-500">{summary}</span>

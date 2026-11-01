@@ -20,7 +20,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 /** Copy the local D1 into a scratch directory and empty the tables tests write to. */
 export function freshState() {
   if (!existsSync(REAL_STATE)) throw new Error('No local database found. Run npm run db:migrate and sync some players first.')
-  rmSync(TEST_STATE, { recursive: true, force: true })
+  // Windows can still hold a lock on the previous run's files for a moment after its worker is killed; retry instead of failing the whole file.
+  rmSync(TEST_STATE, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 })
   cpSync(REAL_STATE, TEST_STATE, { recursive: true })
   const dir = join(TEST_STATE, 'v3', 'd1', 'miniflare-D1DatabaseObject')
   for (const f of readdirSync(dir).filter((n) => n.endsWith('.sqlite'))) {
@@ -46,6 +47,12 @@ export function openScratch() {
   throw new Error('scratch database not found')
 }
 
+/**
+ * Settings the tests depend on. wrangler also reads the developer's .dev.vars, so anything the tests rely on is pinned here: a developer who changes
+ * their own ODDS_HOURS or ODDS_REGIONS must not change what the suite sees. A test can still override any of these through `extraBindings`.
+ */
+const HERMETIC = [['ODDS_MAX_EVENTS', '8'], ['ODDS_HOURS', '40'], ['ODDS_REGIONS', 'us']]
+
 export async function start({ extraBindings = [], seed } = {}) {
   freshState()
   if (seed) {
@@ -54,7 +61,7 @@ export async function start({ extraBindings = [], seed } = {}) {
   }
   await new Promise((r) => fake.listen(FAKE_PORT, '127.0.0.1', r))
   const args = ['wrangler', 'pages', 'dev', '--port', String(APP_PORT), '--persist-to', TEST_STATE,
-    '--binding', `ODDS_BASE_URL=${FAKE}/v4/sports/basketball_nba`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'ODDS_API_KEY=test-key-not-real', ...(extraBindings.some((b) => b.startsWith('ODDS_MAX_EVENTS=')) ? [] : ['--binding', 'ODDS_MAX_EVENTS=8']), ...extraBindings.flatMap((b) => ['--binding', b])]
+    '--binding', `ODDS_BASE_URL=${FAKE}/v4/sports/basketball_nba`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'ODDS_API_KEY=test-key-not-real', ...HERMETIC.filter(([k]) => !extraBindings.some((b) => b.startsWith(`${k}=`))).flatMap(([k, v]) => ['--binding', `${k}=${v}`]), ...extraBindings.flatMap((b) => ['--binding', b])]
   const child = spawn('npx', args, { cwd: ROOT, shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   child.stdout.on('data', (b) => { log += b })

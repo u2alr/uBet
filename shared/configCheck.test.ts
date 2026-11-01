@@ -50,3 +50,12 @@ test('.dev.vars must be gitignored', () => {
   const i = good(); i.gitignore = 'node_modules\n'
   assert.equal(by(checkConfig(i), 'secrets file').level, 'fail')
 })
+
+test('a fake credential marked "not-real" is not reported, but the marker in a comment does not excuse a real-looking value', () => {
+  const fake = 'integration-token-not-real-0123456789', real = 'abcdef0123456789abcdef0123456789'
+  const i = good()
+  i.tracked.push({ path: 'tests/fixture.mjs', text: `const CAPTURE_TOKEN = '${fake}'` })
+  assert.equal(by(checkConfig(i), 'committed secrets').level, 'ok')
+  i.tracked.push({ path: 'src/oops.ts', text: `const CAPTURE_TOKEN = '${real}' // not-real` })
+  assert.equal(by(checkConfig(i), 'committed secrets').level, 'fail')
+})

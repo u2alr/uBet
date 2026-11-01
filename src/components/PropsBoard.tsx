@@ -358,7 +358,7 @@ function GameContext({ game, info, absent, table, leans }: { game: string; info:
         )}
         {outCount > 0 && <span className="text-xs text-red-300/80">{outCount} out</span>}
         {hasDetail && (
-          <button onClick={() => setMore(!more)} aria-expanded={more} aria-controls={detailId} className="ml-auto rounded text-xs text-emerald-400 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">
+          <button onClick={() => setMore(!more)} aria-expanded={more} aria-controls={detailId} className="ml-auto rounded px-1 py-1.5 text-xs text-emerald-400 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">
             Why &amp; game info {more ? '▴' : '▾'}
           </button>
         )}

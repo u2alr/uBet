@@ -6,15 +6,20 @@ import { SlipContext, type Slip } from './slipContext'
 const KEY = 'ubet-slip'
 const TEAM_KEY = 'ubet-slip-team'
 
+/** Remember the slip across reloads. Blocked or full storage (private mode, a quota) only means it is not remembered: it must never break adding a leg. */
+function save(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* not remembered */ }
+}
+
 export function SlipProvider({ children }: { children: ReactNode }) {
   const [legs, setLegs] = useState<Pick[]>(() => {
     try { return JSON.parse(localStorage.getItem(KEY) ?? '[]') } catch { return [] }
   })
-  useEffect(() => localStorage.setItem(KEY, JSON.stringify(legs)), [legs])
+  useEffect(() => save(KEY, legs), [legs])
   const [teamLegs, setTeamLegs] = useState<TeamLeg[]>(() => {
     try { return JSON.parse(localStorage.getItem(TEAM_KEY) ?? '[]') } catch { return [] }
   })
-  useEffect(() => localStorage.setItem(TEAM_KEY, JSON.stringify(teamLegs)), [teamLegs])
+  useEffect(() => save(TEAM_KEY, teamLegs), [teamLegs])
 
   const has = (p: Pick) => legs.some((l) => pickKey(l) === pickKey(p))
   const value: Slip = {

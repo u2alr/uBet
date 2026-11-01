@@ -15,6 +15,9 @@ export interface ConfigInput {
 
 const SECRET_ASSIGNMENT = /\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\b\s*[=:]\s*['"]?([A-Za-z0-9_-]{24,})['"]?/
 
+/** Test fixtures mark their fake credentials with this (as `test-key-not-real` does), so the scan can tell them from a real one. */
+const NOT_REAL = /not-real/i
+
 export function checkConfig(i: ConfigInput, opts: { production?: boolean } = {}): Finding[] {
   const out: Finding[] = []
   const f = (level: Level, check: string, detail: string) => out.push({ level, check, detail })
@@ -42,7 +45,7 @@ export function checkConfig(i: ConfigInput, opts: { production?: boolean } = {})
   const leaks: string[] = []
   for (const file of i.tracked) {
     if (/\.example$|package-lock\.json$/.test(file.path)) continue
-    file.text.split('\n').forEach((line, n) => { if (SECRET_ASSIGNMENT.test(line)) leaks.push(`${file.path}:${n + 1}`) })
+    file.text.split('\n').forEach((line, n) => { const v = SECRET_ASSIGNMENT.exec(line)?.[1]; if (v && !NOT_REAL.test(v)) leaks.push(`${file.path}:${n + 1}`) })
   }
   if (leaks.length) f('fail', 'committed secrets', `secret-looking assignments in tracked files (values not shown): ${leaks.slice(0, 5).join(', ')}${leaks.length > 5 ? ` and ${leaks.length - 5} more` : ''}`)
   else f('ok', 'committed secrets', `no secret-looking assignments in ${i.tracked.length} tracked files`)

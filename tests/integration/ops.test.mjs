@@ -4,7 +4,7 @@ import { after, before, describe, it } from 'node:test'
 import { api, openScratch, start } from './harness.mjs'
 
 let app
-before(async () => { app = await start({ extraBindings: ['CAPTURE_TOKEN=integration-token-value-0123456789'] }); clearSnapshots() })
+before(async () => { app = await start({ extraBindings: ['CAPTURE_TOKEN=integration-token-not-real-0123456789'] }); clearSnapshots() })
 /** The scratch database is a copy of the real local one, which may hold a real snapshot: start these tests from empty snapshot tables. */
 function clearSnapshots() {
   const db = openScratch()
@@ -20,7 +20,7 @@ describe('/api/health', () => {
     assert.ok(['ok', 'degraded', 'down'].includes(body.status))
     assert.ok(body.checks.length >= 5)
     const text = JSON.stringify(body)
-    assert.equal(text.includes('integration-token-value-0123456789'), false)
+    assert.equal(text.includes('integration-token-not-real-0123456789'), false)
     assert.equal(text.includes('test-key-not-real'), false)
     assert.equal(body.checks.find((c) => c.name === 'access token').ok, true)
     assert.equal(body.checks.find((c) => c.name === 'odds provider key').ok, true)
