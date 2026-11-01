@@ -51,7 +51,10 @@ async function startSync(mode, player) {
   state.done = 0
   state.total = 0
   try {
-    if (mode === 'player') {
+    if (mode === 'games') {
+      // Re-score the upcoming games from today's injury report. No box-score sync: it reads the data already on disk, so it takes seconds.
+      await run([], 'Scoring upcoming games', join(root, 'research', 'game_snapshot.py'))
+    } else if (mode === 'player') {
       await run(['--seasons', '3', player], `Syncing ${player}`)
     } else if (await run(['--teams-only'], 'Updating teams')) {
       await run(['--all-active', '--seasons', '1', '--delay', '1'], 'Syncing box scores')
@@ -85,7 +88,7 @@ createServer((req, res) => {
     if (state.running) return json(res, 409, { error: 'A sync is already running', ...state })
     const player = url.searchParams.get('player')
     if (player !== null && !isSafePlayerName(player)) return json(res, 400, { error: 'Bad player name' })
-    startSync(player ? 'player' : 'all', player)
+    startSync(url.searchParams.get('only') === 'games' ? 'games' : player ? 'player' : 'all', player)
     return json(res, 202, { started: true })
   }
   json(res, 404, { error: 'Not found' })

@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
-import type { PicksMeta } from '../../shared/picks.ts'
+import { normName, type PicksMeta } from '../../shared/picks.ts'
 import type { Conference, StandingRow } from '../../shared/standings.ts'
 import { STAT_LABEL, api } from '../lib/format'
 import { combine, type Pick } from '../lib/picks'
@@ -338,7 +338,10 @@ function GameContext({ game, info, absent, table, leans }: { game: string; info:
   if (!rows.length && !mine.length && !fav && !row) return null
   const tone = { out: 'bg-red-500/15 text-red-300', doubtful: 'bg-amber-500/15 text-amber-300', questionable: 'bg-neutral-800 text-neutral-300', 'day-to-day': 'bg-neutral-800 text-neutral-400' }
   const outCount = mine.filter((a) => a.status === 'out').length
-  const uncertain = mine.filter((a) => a.status !== 'out').map((a) => ({ team: a.team!, name: a.name, status: a.status }))
+  // The model counts the rotation players the report listed Out when it was scored. Anyone the report lists now who is not among them is shown, not hidden.
+  const counted = new Set([row?.absent_home, row?.absent_away].flatMap((s) => (s ?? '').split(';')).map((s) => normName(s.replace(/\s*\(\d+ min\)\s*$/, ''))).filter(Boolean))
+  const uncertain = mine.filter((a) => a.status !== 'out' || (!!row && !counted.has(normName(a.name))))
+    .map((a) => ({ team: a.team!, name: a.name, status: a.status === 'out' ? 'out, not counted' : a.status }))
   const hasDetail = rows.length > 0 || !!row || mine.length > 0
   return (
     <div className="mt-1.5 text-sm text-neutral-400">

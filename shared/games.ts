@@ -133,7 +133,7 @@ export function gameReasons(r: GameLeanRow, marketHomeProb: number | null, uncer
 
   // What the model cannot see.
   const doubt = uncertain.filter((u) => u.team === r.home || u.team === r.away)
-  if (doubt.length) add('caution', 'Not seen by the model', `${doubt.map((u) => `${u.team} ${u.name} (${u.status})`).join('; ')}. The model counts only players listed Out, so these could change the picture.`)
+  if (doubt.length) add('caution', 'Not seen by the model', `${doubt.map((u) => `${u.team} ${u.name} (${u.status})`).join('; ')}. ${doubt.some((u) => u.status === 'out, not counted') ? `"Out, not counted" means the report lists him Out now but he was not among the rotation players the model counted: it was scored ${r.as_of} ET, or he has missed too many of the team's recent games to count as rotation. ` : ''}The model counts only rotation players listed Out when it was scored, so these could change the picture.`)
   add('caution', 'Limits', 'Late scratches and lineup news are not seen, and the model has not been tested against sportsbook lines.')
 
   const order: Record<GameReasonKind, number> = { for: 0, against: 1, caution: 2, context: 3 }
