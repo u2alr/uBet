@@ -1,6 +1,6 @@
-// A stand-in for The Odds API, so the real Worker can be exercised end to end with controlled data and
-// without spending credits. It also COUNTS requests, which lets tests prove whether an unauthenticated
-// caller can make the Worker spend upstream credits.
+// A stand-in for SharpAPI (GET /api/v1/odds, cursor paging, X-API-Key header), so the real Worker can be exercised end to end with controlled data
+// and without touching the real provider's rate limit. It also COUNTS requests, which lets tests prove whether an unauthenticated
+// caller can make the Worker spend upstream requests. Props requests count under '/events/:id/odds', team-odds requests under '/odds'.
 //
 //   node tests/integration/fake_odds_server.mjs [port]
 //   GET /__stats   -> request counts per route      GET /__reset -> zero them
@@ -91,6 +91,22 @@ function teamOdds(ev) {
     bookmakers: [mk('DraftKings', [1.8, 2.05], -2.5, 224.5), mk('FanDuel', [1.83, 2.0], -2, 225)] }
 }
 
+const SHARP_MARKET = { player_threes: 'player_made_threes', player_points_rebounds_assists: 'player_points_+_rebounds_+_assists' }
+const row = (ev, b, o) => ({ ...o, sportsbook: b.key, event_id: ev.id, home_team: ev.home_team, away_team: ev.away_team, event_start_time: ev.commence_time,
+  is_active: true, is_live: false, is_main_line: true, is_stale_pregame_price: false, timestamp: iso(Date.now()) })
+let seq = 0
+function propRows(ev) {
+  return ev.bookmakers.flatMap((b) => b.markets.flatMap((m) => m.outcomes.map((o) => row(ev, b, {
+    id: `p${++seq}`, market_type: SHARP_MARKET[m.key] ?? m.key, selection: o.name, selection_type: o.name.toLowerCase(), odds_decimal: o.price, line: o.point, player_name: o.description }))))
+}
+function teamRows(ev) {
+  return ev.bookmakers.flatMap((b) => b.markets.flatMap((m) => m.outcomes.map((o) => {
+    const market_type = { h2h: 'moneyline', spreads: 'point_spread', totals: 'total_points' }[m.key]
+    const selection_type = o.name === ev.home_team ? 'home' : o.name === ev.away_team ? 'away' : o.name.toLowerCase()
+    return row(ev, b, { id: `t${++seq}`, market_type, selection: o.name, selection_type, odds_decimal: o.price, line: o.point ?? null })
+  })))
+}
+
 const counts = {}
 let failing = false
 let failingInjuries = false
@@ -109,7 +125,7 @@ const scoreboard = () => ({ events: EVENTS.map((e) => ({
 })) })
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
-  const path = url.pathname.replace('/v4/sports/basketball_nba', '')
+  const path = url.pathname.replace('/api/v1', '')
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json', 'x-requests-remaining': '400', 'x-requests-last': '1' }); res.end(JSON.stringify(body)) }
   if (path === '/__stats') return send(200, counts)
   if (path === '/__fail') { failing = url.searchParams.get('on') === '1'; return send(200, { failing }) }
@@ -131,18 +147,23 @@ const server = createServer((req, res) => {
   if (path === '/__failinjuries') { failingInjuries = url.searchParams.get('on') === '1'; return send(200, { failingInjuries }) }
   if (path === '/__reset') { for (const k of Object.keys(counts)) delete counts[k]; return send(200, {}) }
   if (failing) return send(500, { message: 'boom: internal provider detail that must never reach a browser' })
-  const key = path.replace(/\/events\/[^/]+\/odds/, '/events/:id/odds')
-  counts[key] = (counts[key] ?? 0) + 1
-  if (url.searchParams.get('apiKey') == null) return send(401, { message: 'missing key' })
-  if (path === '/events') return send(200, EVENTS.map((e) => ({ id: e.id, sport_key: 'basketball_nba', commence_time: iso(e.at), home_team: e.home, away_team: e.away })))
-  if (path === '/odds') return send(200, EVENTS.map(teamOdds))
-  const m = path.match(/^\/events\/([^/]+)\/odds$/)
-  const ev = m && EVENTS.find((e) => e.id === m[1])
-  if (ev) return send(200, eventOdds(ev))
-  send(404, { message: 'not found', path })
+  if (path !== '/odds') return send(404, { message: 'not found', path })
+  if (!req.headers['x-api-key']) return send(401, { error: { code: 'unauthorized' } })
+  const markets = (url.searchParams.get('markets') ?? url.searchParams.get('market') ?? '').split(',')
+  const books = (url.searchParams.get('sportsbooks') ?? '').split(',').filter(Boolean)
+  const eventId = url.searchParams.get('event_id')
+  const props = markets.some((m) => m.startsWith('player_'))
+  counts[props ? '/events/:id/odds' : '/odds'] = (counts[props ? '/events/:id/odds' : '/odds'] ?? 0) + 1
+  const ev = eventId ? EVENTS.find((e) => e.id === eventId) : null
+  if (eventId && !ev) return send(200, { data: [], pagination: { has_more: false } })
+  const keep = (r) => !books.length || books.includes(r.sportsbook)
+  const all = (props ? (ev ? [eventOdds(ev)] : EVENTS.map(eventOdds)) : EVENTS.map(teamOdds)).flatMap((x) => (props ? propRows({ ...x, commence_time: x.commence_time }) : teamRows(x))).filter(keep)
+  const limit = Math.min(Number(url.searchParams.get('limit') ?? 200) || 200, 200), at = Number(url.searchParams.get('cursor') ?? 0) || 0
+  const data = all.slice(at, at + limit)
+  return send(200, { data, pagination: { limit, count: data.length, has_more: at + limit < all.length, next_cursor: at + limit < all.length ? String(at + limit) : undefined }, updated_at: iso(Date.now()) })
 })
 
 if (process.argv[1]?.endsWith('fake_odds_server.mjs')) {
-  server.listen(PORT, '127.0.0.1', () => console.log(`fake Odds API on http://127.0.0.1:${PORT}`))
+  server.listen(PORT, '127.0.0.1', () => console.log(`fake SharpAPI on http://127.0.0.1:${PORT}`))
 }
 export { server }

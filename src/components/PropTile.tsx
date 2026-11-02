@@ -9,7 +9,6 @@ import { h2hRows, type H2HState } from '../lib/h2hView'
 import Headshot from './Headshot'
 import EvidenceBadge from './EvidenceBadge'
 import { Term } from './MetricGuide'
-import { SlipButton } from './PickTable'
 import { PickSpark } from './PickSpark'
 import DefensiveMatchup from './DefensiveMatchup'
 import ScheduleFatigue from './ScheduleFatigue'
@@ -32,7 +31,6 @@ function Side({ label, p, lead, missing }: { label: string; p: Pick | null; lead
       </div>
       <div className="flex items-center gap-2">
         <span className="text-lg font-semibold tabular-nums text-neutral-50">{p ? p.price.toFixed(2) : '–'}</span>
-        {p && <SlipButton pick={p} />}
       </div>
     </div>
   )

@@ -30,8 +30,8 @@ describe('ingest/sync.py', () => {
 })
 
 describe('the sync script itself', () => {
-  it('is valid Python and grades the minds, the suggestions and the bets the user placed', () => {
-    const out = execFileSync(python, ['-c', "import ast,sys; src=open('ingest/sync.py',encoding='utf8').read(); ast.parse(src); print(all(f in src for f in ('grade.sql','grade_minds.sql','grade_mybets.sql')))"], { cwd: new URL('..', import.meta.url).pathname.replace(/^\/(\w):/, '$1:'), encoding: 'utf8' })
+  it('is valid Python and grades the suggested picks', () => {
+    const out = execFileSync(python, ['-c', "import ast,sys; src=open('ingest/sync.py',encoding='utf8').read(); ast.parse(src); print(all(f in src for f in ('grade.sql',)))"], { cwd: new URL('..', import.meta.url).pathname.replace(/^\/(\w):/, '$1:'), encoding: 'utf8' })
     assert.equal(out.trim(), 'True')
   })
 })

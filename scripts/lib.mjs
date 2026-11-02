@@ -1,4 +1,4 @@
-// Small helpers shared by the local scripts (run.mjs, capture_odds.mjs). Reads secrets from the environment or .dev.vars; talks to D1 through wrangler.
+// Small helpers shared by the local scripts (capture_odds.mjs). Reads secrets from the environment or .dev.vars; talks to D1 through wrangler.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -12,7 +12,7 @@ export function secret(name) {
 }
 
 export function d1Query(sql, remote) {
-  mkdirSync(path.join(ROOT, 'minds', 'out'), { recursive: true })
+  mkdirSync(path.join(ROOT, 'scripts', 'out'), { recursive: true })
   const f = path.join(ROOT, 'minds', 'out', 'query.sql')
   writeFileSync(f, sql)
   const out = execFileSync('npx', ['wrangler', 'd1', 'execute', 'ubet', remote ? '--remote' : '--local', '--json', '--file', f], { cwd: ROOT, shell: true, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
@@ -20,7 +20,7 @@ export function d1Query(sql, remote) {
 }
 
 export function d1Exec(lines, remote, name = 'exec.sql') {
-  mkdirSync(path.join(ROOT, 'minds', 'out'), { recursive: true })
+  mkdirSync(path.join(ROOT, 'scripts', 'out'), { recursive: true })
   const f = path.join(ROOT, 'minds', 'out', name)
   writeFileSync(f, lines.join('\n'))
   execFileSync('npx', ['wrangler', 'd1', 'execute', 'ubet', remote ? '--remote' : '--local', '--file', f], { cwd: ROOT, shell: true, stdio: 'inherit' })

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { STAT_LABEL, api } from '../lib/format'
-import MyBets from './MyBets'
+import TrackRecord from './TrackRecord'
 
 interface Row {
   player: string; stat: string; side: 'over' | 'under'; line: number; price: number
@@ -11,7 +11,6 @@ interface Res { data: Row[]; summary: { won: number | null; lost: number | null;
 const OUTCOME = { 1: 'Won', 0: 'Lost', 2: 'Push' } as const
 
 export default function Results({ refreshKey }: { refreshKey: number }) {
-  const [mode, setMode] = useState<'mine' | 'suggested'>('mine')
   const [res, setRes] = useState<Res | null>(null)
   const [error, setError] = useState('')
 
@@ -19,22 +18,13 @@ export default function Results({ refreshKey }: { refreshKey: number }) {
     api<Res>('/results').then(setRes).catch((e) => setError(e.message))
   }, [refreshKey])
 
-  const tabs = (
-    <div role="group" aria-label="Results" className="flex w-fit rounded-lg bg-neutral-900 p-0.5 text-sm">
-      {([['mine', 'My bets'], ['suggested', 'Suggested picks']] as const).map(([k, label]) => (
-        <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k}
-          className={`rounded-md px-3 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500 ${mode === k ? 'bg-neutral-700 text-neutral-50' : 'text-neutral-400 hover:text-neutral-200'}`}>{label}</button>
-      ))}
-    </div>
-  )
-  if (mode === 'mine') return <div className="space-y-3">{tabs}<MyBets refreshKey={refreshKey} /></div>
-  if (error) return <div className="space-y-3">{tabs}<p className="text-sm text-neutral-500">{error}</p></div>
-  if (!res) return <div className="space-y-3">{tabs}<p className="text-sm text-neutral-500">Loading…</p></div>
+  if (error) return <p className="text-sm text-neutral-500">{error}</p>
+  if (!res) return <p className="text-sm text-neutral-500">Loading…</p>
 
   const s = res.summary
   return (
-    <div className="space-y-3">
-      {tabs}
+    <div className="space-y-4">
+      <TrackRecord refreshKey={refreshKey} />
       <div className="grid grid-cols-4 gap-px overflow-hidden rounded-lg bg-neutral-800 text-center">
         {([['Won', s?.won], ['Lost', s?.lost], ['Push', s?.pushed], ['Units', s?.units == null ? 0 : Number(s.units.toFixed(1))]] as const).map(([label, n]) => (
           <div key={label} className="bg-neutral-900 py-4">

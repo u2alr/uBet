@@ -2,19 +2,17 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import { normName, type PicksMeta } from '../../shared/picks.ts'
 import type { Conference, StandingRow } from '../../shared/standings.ts'
 import { STAT_LABEL, api } from '../lib/format'
-import { combine, type Pick } from '../lib/picks'
+import type { Pick } from '../lib/picks'
 import { SORTS, capPerTeam, evRank, evText, favorite, groupConsecutive, shortName, normAbbr, opponentOf, sortCards, toCards, type Card, type SortKey } from '../lib/propsBoard'
 import { teamByName } from '../lib/teams'
 import type { H2H, H2HState } from '../lib/h2hView'
 import { gameReasons, lean, type GameLeanRow } from '../../shared/games.ts'
-import { useSlip } from '../lib/slipContext'
 import GamesRail, { type RailGame } from './GamesRail'
 import LiveBox from './LiveBox'
 import MetricGuide from './MetricGuide'
 import Notices from './Notices'
 import PropList from './PropList'
 import PropTile from './PropTile'
-import SlipDock from './SlipDock'
 import ReasonList from './ReasonList'
 import TeamChip from './TeamChip'
 import TopPicks from './TopPicks'
@@ -35,7 +33,7 @@ interface Section { game: string; date: string; cards: Card[]; info: GameInfo | 
 const VIEW_KEY = 'ubet.props.view'
 const readView = (): View => { try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'cards' } catch { return 'cards' } }
 
-export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { refreshKey: number; onOpenPlayer: (id: number) => void; onOpenSlip: () => void }) {
+export default function PropsBoard({ refreshKey, onOpenPlayer }: { refreshKey: number; onOpenPlayer: (id: number) => void }) {
   const [picks, setPicks] = useState<Pick[] | null>(null)
   const [configured, setConfigured] = useState(true)
   const [meta, setMeta] = useState<PicksMeta | null>(null)
@@ -152,8 +150,6 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
     requestAnimationFrame(() => document.getElementById(sectionId(game))?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }
   const rail: RailGame[] = sections.map((g) => ({ game: g.game, time: g.info ? new Date(g.info.date).toLocaleTimeString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : null, state: g.info?.state ?? null, props: g.cards.length }))
-  const slip = useSlip()
-  const slipCount = slip.legs.length
 
   const ctl = 'rounded-lg bg-neutral-900 px-3 py-1.5 text-sm text-neutral-200 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500'
   return (
@@ -214,7 +210,7 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
 
         {error && <p className="text-sm text-neutral-500">{error}</p>}
         {picks === null ? <Empty>Loading…</Empty> : !configured ? (
-          <Empty>Add an <code className="text-neutral-300">ODDS_API_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to pull live lines.</Empty>
+          <Empty>Add an <code className="text-neutral-300">SHARPAPI_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to pull live lines.</Empty>
         ) : sections.length === 0 ? (
           <Empty>No props match these filters. Lines appear once books post them, for players you have synced.</Empty>
         ) : (
@@ -241,18 +237,9 @@ export default function PropsBoard({ refreshKey, onOpenPlayer, onOpenSlip }: { r
         </div>
 
         <div className="hidden xl:sticky xl:top-36 xl:flex xl:max-h-[calc(100vh-10rem)] xl:flex-col xl:gap-4 xl:overflow-y-auto">
-          {/* With legs on the slip it goes first, so it never sits below the fold; empty, it is a small box under the picks. */}
-          <div className="order-2"><TopPicks cards={matching} onOpenPlayer={onOpenPlayer} layout="column" /></div>
-          <div className={slipCount > 0 ? 'order-1' : 'order-3'}><SlipDock onOpenSlip={onOpenSlip} /></div>
+          <TopPicks cards={matching} onOpenPlayer={onOpenPlayer} layout="column" />
         </div>
       </div>
-
-      {slipCount > 0 && (
-        <button onClick={onOpenSlip} className="fixed inset-x-3 bottom-3 z-30 flex items-center justify-between rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-medium text-neutral-950 shadow-lg xl:hidden">
-          <span>Slip · {slipCount} {slipCount === 1 ? 'leg' : 'legs'}</span>
-          <span className="tabular-nums">{combine(slip.legs).odds.toFixed(2)}x · Review</span>
-        </button>
-      )}
     </div>
   )
 }

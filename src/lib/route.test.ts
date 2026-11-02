@@ -8,8 +8,6 @@ test('every kind of route survives a format then parse', () => {
     { tab: 'Today', gameId: '401909834', playerId: null },
     { tab: 'Players', gameId: null, playerId: 1631114 },
     { tab: 'Players', gameId: null, playerId: null },
-    { tab: 'Minds', gameId: null, playerId: null },
-    { tab: 'Slip', gameId: null, playerId: null },
     { tab: 'Props', gameId: null, playerId: null },
     { tab: 'Standings', gameId: null, playerId: null },
     { tab: 'Cheatsheet', gameId: null, playerId: null },
@@ -29,12 +27,13 @@ test('an empty, unknown or hand-edited hash lands on the home page instead of fa
 })
 
 test('tab names are case-insensitive, and extra segments are ignored', () => {
-  assert.equal(parseRoute('#/minds').tab, 'Minds')
+  assert.equal(parseRoute('#/results').tab, 'Results')
   assert.equal(parseRoute('#/PLAYERS/7').playerId, 7)
-  assert.equal(parseRoute('#/Minds/whatever').tab, 'Minds')
+  assert.equal(parseRoute('#/Results/whatever').tab, 'Results')
+  assert.deepEqual(parseRoute('#/Minds'), HOME, 'a retired tab lands on the home page')
 })
 
 test('ids are only carried by the tab that uses them', () => {
-  assert.equal(formatRoute({ tab: 'Minds', gameId: 'x', playerId: 5 }), '#/Minds')
+  assert.equal(formatRoute({ tab: 'Results', gameId: 'x', playerId: 5 }), '#/Results')
   assert.equal(formatRoute({ tab: 'Today', playerId: 5 }), '#/Today')
 })

@@ -19,63 +19,6 @@ export const likelyPicks = (all: Pick[]) =>
 export const longshotPicks = (all: Pick[]) =>
   all.filter((p) => p.ev > -0.05 && p.price >= 2.2).sort((a, b) => b.price - a.price).slice(0, 12)
 
-// ---- parlays ----
-
-export interface Parlay {
-  name: string
-  blurb: string
-  legs: Pick[]
-}
-
-/**
- * Combined parlay figures, ASSUMING the legs are independent. They are not: legs from the same game, or the same player,
- * move together, and nothing here knows by how much. Treat these as rough, not as an accurate combined probability.
- *  odds  payout multiple if every leg wins
- *  prob  chance that no leg loses (a leg that ties on a whole-number line is refunded and drops out)
- *  ev    expected profit per 1 staked: the product of each leg's expected multiplier, minus 1
- */
-export function combine(legs: Pick[]) {
-  const push = (l: Pick) => l.push ?? 0 // legs saved in a browser before this field existed have none
-  const odds = legs.reduce((a, l) => a * l.price, 1)
-  const prob = legs.reduce((a, l) => a * ((1 - push(l)) * l.prob + push(l)), 1)
-  const ev = legs.reduce((a, l) => a * ((1 - push(l)) * l.prob * l.price + push(l)), 1) - 1
-  return { odds, prob, ev }
-}
-
-/** One leg per player, and one per game when possible (legs from the same game are correlated). */
-function take(list: Pick[], n: number): Pick[] {
-  const out: Pick[] = []
-  const players = new Set<number>()
-  const games = new Set<string>()
-  for (const strict of [true, false]) {
-    for (const p of list) {
-      if (out.length >= n) break
-      if (players.has(p.playerId) || out.includes(p)) continue
-      if (strict && games.has(p.game)) continue
-      out.push(p)
-      players.add(p.playerId)
-      games.add(p.game)
-    }
-  }
-  return out
-}
-
-export function suggestParlays(all: Pick[]): Parlay[] {
-  const result: Parlay[] = []
-  const safe = take(likelyPicks(all), 3)
-  if (safe.length === 3)
-    result.push({ name: 'Likely legs', blurb: 'Three of the likeliest legs, from different games. Likely is not the same as good value: check the expected value of each.', legs: safe })
-
-  const balanced = take(valuePicks(all).filter((p) => p.prob >= 0.5), 4)
-  if (balanced.length >= 3)
-    result.push({ name: 'Value', blurb: 'The best expected-profit legs that are still better than a coin flip.', legs: balanced })
-
-  const long = take(longshotPicks(all), 3)
-  if (long.length === 3)
-    result.push({ name: 'Longshot', blurb: 'Big payout, low chance. Small stake only.', legs: long })
-  return result
-}
-
 // ---- grouping ----
 
 export interface TeamGroup { team: string; picks: Pick[] }

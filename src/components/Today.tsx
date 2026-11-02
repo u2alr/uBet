@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { PicksMeta } from '../../shared/picks.ts'
 import { api } from '../lib/format'
-import { likelyPicks, longshotPicks, suggestParlays, valuePicks, type Pick } from '../lib/picks'
+import { likelyPicks, longshotPicks, valuePicks, type Pick } from '../lib/picks'
 import Notices from './Notices'
-import Parlays from './Parlays'
 import PickTable from './PickTable'
 
 interface Game {
@@ -19,8 +18,8 @@ const timeLabel = (iso: string) => new Date(iso).toLocaleTimeString(undefined, {
 const VIEWS = ['Value', 'Most likely', 'Longshots'] as const
 type View = (typeof VIEWS)[number]
 
-export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip }: {
-  refreshKey: number; onOpenPlayer: (id: number) => void; onOpenGame: (id: string) => void; onOpenSlip: () => void
+export default function Today({ refreshKey, onOpenPlayer, onOpenGame }: {
+  refreshKey: number; onOpenPlayer: (id: number) => void; onOpenGame: (id: string) => void
 }) {
   const [games, setGames] = useState<Game[] | null>(null)
   const [picks, setPicks] = useState<Pick[] | null>(null)
@@ -104,7 +103,7 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip
         </p>
         <Notices meta={meta} />
         {picks === null ? <Muted>Loading…</Muted> : !configured ? (
-          <Muted>Add an <code className="text-neutral-300">ODDS_API_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to pull live lines.</Muted>
+          <Muted>Add an <code className="text-neutral-300">SHARPAPI_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to pull live lines.</Muted>
         ) : (
           <PickTable
             picks={view === 'Value' ? valuePicks(picks) : view === 'Most likely' ? likelyPicks(picks) : longshotPicks(picks)}
@@ -113,13 +112,6 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame, onOpenSlip
           />
         )}
       </section>
-
-      {configured && picks && picks.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-xs uppercase tracking-widest text-neutral-500">Suggested parlays</h2>
-          <Parlays parlays={suggestParlays(picks)} onOpenSlip={onOpenSlip} />
-        </section>
-      )}
     </div>
   )
 }

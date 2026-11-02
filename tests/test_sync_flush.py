@@ -61,8 +61,7 @@ class SyncStamp(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(any("'last_sync'" in f for f in flushed))
 
-    def test_the_module_compiles_and_grades_minds_too(self):
-        self.assertIn("mind_bets", sync.GRADE_SQL)
+    def test_the_module_compiles_and_grades_predictions(self):
         self.assertIn("predictions", sync.GRADE_SQL)
 
 

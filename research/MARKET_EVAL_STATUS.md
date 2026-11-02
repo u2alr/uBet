@@ -14,7 +14,7 @@ No hypothesis in `PREREG_MARKET.md` or `PREREG_KALSHI.md` has been tested, and n
 ## What now collects sportsbook prices prospectively (new)
 - Every odds snapshot the website or the Minds runner retrieves is recorded in `odds_runs` / `odds_quotes` (migration 0018, `shared/oddsArchive.ts`): book, price, line, side,
   retrieval time, the quote's own time and where it came from, freshness, availability, main-line flag. Only changes are stored; disappearances are recorded.
-- `node minds/capture_odds.mjs` takes pre-event snapshots for games starting in 10 to 60 minutes (credit-capped, reserve 100, stops on HTTP 429). The last observation before a
+- `node scripts/capture_odds.mjs` takes pre-event snapshots for games starting in 10 to 60 minutes (credit-capped, reserve 100, stops on HTTP 429). The last observation before a
   documented cutoff is a **closing proxy**, never a true closing line (`closingProxy` always returns `isTrueClosingLine: false`).
 - `GET /api/odds-archive[?event=ID]` shows coverage and each market's first observed price and closing proxy, with the reason when there is none.
 - `research/archive_to_snapshots.py` converts the archive into the snapshot files `market_eval.py` already reads (open about 180 and close about 20 minutes before tip, nearest prior

@@ -16,10 +16,10 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run test:db",
     "check:config": "node --no-warnings scripts/check_config.mjs",
     "test:research": "python research/tests/run_all.py",
-    "test:db": "node --no-warnings --test tests/grade.test.mjs tests/grade_minds.test.mjs tests/grade_mybets.test.mjs",
+    "test:db": "node --no-warnings --test tests/grade.test.mjs",
     "test:ingest": "node --no-warnings --test tests/ingest.test.mjs",
     "grade": "ingest\\.venv\\Scripts\\python ingest\\sync.py --grade-only",
-    "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs tests/integration/fallback_v3.test.mjs tests/integration/minds_games.test.mjs tests/integration/my_bets.test.mjs tests/integration/odds_budget.test.mjs tests/integration/odds_monthly_cap.test.mjs tests/integration/picks_payload.test.mjs tests/integration/ops.test.mjs tests/integration/injuries_roles.test.mjs tests/integration/injuries_down.test.mjs tests/integration/splits.test.mjs",
+    "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs tests/integration/fallback_v3.test.mjs tests/integration/odds_budget.test.mjs tests/integration/picks_payload.test.mjs tests/integration/ops.test.mjs tests/integration/injuries_roles.test.mjs tests/integration/injuries_down.test.mjs tests/integration/splits.test.mjs",
     "test:mutation": "node --no-warnings tests/mutation_check.mjs",
     "check:data": "node --no-warnings ingest/check_data.mjs"
   },

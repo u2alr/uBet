@@ -1,8 +1,8 @@
 // ONE authoritative probability and expected-return calculation for everything the app shows.
 //
 // The numbers come from the canonical candidate record (record.ts): calibrated model probability, no-vig market probability from the independent
-// books, the executable price, expected return through the canonical payoff (payoff.ts), and a conservative lower bound. Minds uses the same
-// records; the Props board, Today, Slip and the player page now show the same numbers for the same market snapshot and model version.
+// books, the executable price, expected return through the canonical payoff (payoff.ts), and a conservative lower bound. The Props board,
+// Today and the player page show the same numbers for the same market snapshot and model version.
 //
 // What this module does NOT do: make a number more convincing. Where the engine cannot compute honestly (no fresh boosted projection, no
 // calibration for the statistic, no corroborated executable price) the pick keeps its older simple-blend numbers, labelled `basis: 'legacy'`.

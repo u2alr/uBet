@@ -1,5 +1,5 @@
 // Pull fresh box scores for just the players with a game coming up (what the Props board and Cheat sheet use). Much faster than --all-active.
-//   node minds/sync_upcoming.mjs [skipFirstN]   (needs `npm run dev:api` or `npm run dev` for the /api list; writes the local database)
+//   node scripts/sync_upcoming.mjs [skipFirstN]   (needs `npm run dev:api` or `npm run dev` for the /api list; writes the local database)
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'

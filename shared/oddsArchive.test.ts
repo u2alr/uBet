@@ -14,13 +14,13 @@ const ev = (outcomes: { book: string; side: 'Over' | 'Under'; price: number; poi
       name: o.side, description: o.name ?? 'Jaylen Brown', price: o.price, point: o.point ?? 24.5, updated: o.updated, updatedSource: o.updated ? ('quote' as const) : undefined, main: o.main })) }] })),
   }
 }
-const quotes = (e: OddsEvent) => flatten(e, 'theoddsapi').quotes
+const quotes = (e: OddsEvent) => flatten(e, 'sharpapi').quotes
 const priorOf = (qs: ObservedQuote[]) => new Map<string, Prior>(qs.map((q) => [marketKey(q), { price: q.price, marketStatus: 'open' as const, main: q.main }]))
 
 describe('what is recorded from one response', () => {
   it('flattens valid Over/Under prices, keeps timestamps and where they came from, and skips junk', () => {
     const e = ev([{ book: 'DraftKings', side: 'Over', price: 1.9, updated: '2026-10-26T19:50:00Z' }, { book: 'DraftKings', side: 'Under', price: 1.9 }, { book: 'FanDuel', side: 'Over', price: 0.8 }])
-    const { quotes: qs, skipped } = flatten(e, 'theoddsapi')
+    const { quotes: qs, skipped } = flatten(e, 'sharpapi')
     assert.equal(qs.length, 2); assert.equal(skipped, 1)
     assert.deepEqual(qs.map((q) => q.timestampSource).sort(), ['quote', 'unknown'])
     assert.equal(qs[0].eventStart, START)
@@ -55,10 +55,10 @@ describe('what is recorded from one response', () => {
     assert.equal(p.disagreements, 1); assert.equal(p.rows[0].priceOrNull, 1.9)
   })
   it('two providers for the same book are stored separately, never merged', () => {
-    const a = flatten(ev([{ book: 'DraftKings', side: 'Over', price: 1.9 }]), 'theoddsapi').quotes
+    const a = flatten(ev([{ book: 'DraftKings', side: 'Over', price: 1.9 }]), 'sharpapi').quotes
     const b = flatten(ev([{ book: 'DraftKings', side: 'Over', price: 1.95 }]), 'oddsblaze').quotes
     const p = planArchive(new Map(), [...a, ...b], T0)
-    assert.equal(p.written, 2); assert.deepEqual(new Set(p.rows.map((r) => r.source)), new Set(['theoddsapi', 'oddsblaze']))
+    assert.equal(p.written, 2); assert.deepEqual(new Set(p.rows.map((r) => r.source)), new Set(['sharpapi', 'oddsblaze']))
   })
   it('stale and untimed quotes are flagged when seen, not trusted and not dropped', () => {
     const e = ev([{ book: 'DraftKings', side: 'Over', price: 1.9, updated: '2026-10-26T15:00:00Z' }, { book: 'FanDuel', side: 'Over', price: 1.9, updated: '2026-10-26T19:55:00Z' }, { book: 'Caesars', side: 'Over', price: 1.9 }])
@@ -98,7 +98,7 @@ describe('SQL for scripts', () => {
   it('escapes every value and writes the run once', () => {
     const e = ev([{ book: "O'Brien's Book", side: 'Over', price: 1.9, name: "De'Aaron Fox" }])
     const plan = planArchive(new Map(), quotes(e), T0)
-    const sql = runSql({ source: 'theoddsapi', kind: 'daily', eventId: 'e1', eventStart: START, capturedAt: T0, status: 'ok', plan })
+    const sql = runSql({ source: 'sharpapi', kind: 'daily', eventId: 'e1', eventStart: START, capturedAt: T0, status: 'ok', plan })
     assert.equal(sql.length, 2)
     assert.match(sql[1], /'De''Aaron Fox'/); assert.match(sql[1], /'O''Brien''s Book'/)
     assert.ok(!/DROP|;\s*DELETE/i.test(sql.join('\n')))
@@ -110,7 +110,7 @@ describe('reading the latest state back', () => {
     const { priorFromRows } = await import('./oddsArchive.ts')
     const e = ev([{ book: 'DraftKings', side: 'Over', price: 1.9, main: true }])
     const qs = quotes(e)
-    const prior = priorFromRows('e1', [{ playerName: 'Jaylen Brown', stat: 'pts', line: 24.5, side: 'over', book: 'DraftKings', source: 'theoddsapi', price: 1.9, marketStatus: 'open', main: 1 }])
+    const prior = priorFromRows('e1', [{ playerName: 'Jaylen Brown', stat: 'pts', line: 24.5, side: 'over', book: 'DraftKings', source: 'sharpapi', price: 1.9, marketStatus: 'open', main: 1 }])
     assert.equal(planArchive(prior, qs, T0).written, 0)
     assert.equal(planArchive(new Map(), qs, T0).written, 1)
   })

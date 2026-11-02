@@ -3,7 +3,6 @@ import { evText, hitRate, projectionState, type Card } from '../lib/propsBoard'
 import { InjuryTag } from './Availability'
 import Headshot from './Headshot'
 import { Term } from './MetricGuide'
-import { SlipButton } from './PickTable'
 
 /** The same props as a compact table, for scanning many at once. One row per card, showing the lead side; every number matches the card view. */
 export default function PropList({ cards, onOpenPlayer }: { cards: Card[]; onOpenPlayer: (id: number) => void }) {
@@ -20,7 +19,6 @@ export default function PropList({ cards, onOpenPlayer }: { cards: Card[]; onOpe
             <th scope="col" className="px-2 text-right font-normal"><Term k="model" /></th>
             <th scope="col" className="px-2 text-right font-normal"><Term k="market" /></th>
             <th scope="col" className="px-2 text-right font-normal"><Term k="hit" /></th>
-            <th scope="col" className="py-2 pr-4 text-right font-normal"><span className="sr-only">Add to slip</span></th>
           </tr>
         </thead>
         <tbody>
@@ -43,7 +41,6 @@ export default function PropList({ cards, onOpenPlayer }: { cards: Card[]; onOpe
                 <td className="px-2 text-right text-neutral-500">{pct(p.modelProb)}</td>
                 <td className="px-2 text-right text-neutral-500">{pct(p.marketProb)}</td>
                 <td className="px-2 text-right text-neutral-500">{hr < 0 ? '–' : `${landed}/${decided}`}</td>
-                <td className="py-1 pr-4 text-right"><SlipButton pick={p} /></td>
               </tr>
             )
           })}

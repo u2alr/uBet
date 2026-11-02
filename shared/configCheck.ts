@@ -35,9 +35,9 @@ export function checkConfig(i: ConfigInput, opts: { production?: boolean } = {})
   else f('ok', 'migrations', `${nums.length} sequential migrations (latest ${String(nums[nums.length - 1]).padStart(4, '0')}); apply them to every database before deploying`)
 
   const has = (n: string) => i.devVarsSet.includes(n)
-  f(has('ODDS_API_KEY') ? 'ok' : 'warn', 'odds provider key', has('ODDS_API_KEY') ? 'ODDS_API_KEY is set (value not shown)' : 'ODDS_API_KEY is empty: the props board will say odds are not configured')
+  f(has('SHARPAPI_KEY') ? 'ok' : 'warn', 'odds provider key', has('SHARPAPI_KEY') ? 'SHARPAPI_KEY is set (value not shown)' : 'SHARPAPI_KEY is empty: the props board will say odds are not configured')
   f(has('CAPTURE_TOKEN') ? 'ok' : opts.production ? 'fail' : 'warn', 'access token',
-    has('CAPTURE_TOKEN') ? 'CAPTURE_TOKEN is set: writes, personal bets and credit-spending refreshes require it' : 'CAPTURE_TOKEN is not set: writes, personal bets and refreshes work only from localhost. Set it as a secret on a deployed copy (wrangler pages secret put CAPTURE_TOKEN).')
+    has('CAPTURE_TOKEN') ? 'CAPTURE_TOKEN is set: writes, personal bets and refreshes that use the odds provider require it' : 'CAPTURE_TOKEN is not set: writes, personal bets and refreshes work only from localhost. Set it as a secret on a deployed copy (wrangler pages secret put CAPTURE_TOKEN).')
 
   if (!/^\.dev\.vars\s*$/m.test(i.gitignore)) f('fail', 'secrets file', '.dev.vars is not in .gitignore')
   else f('ok', 'secrets file', '.dev.vars is gitignored')

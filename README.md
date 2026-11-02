@@ -1,7 +1,7 @@
 # uBet
 
 NBA stats and prop-bet research tool: a props board grouped by game (points, rebounds, assists, threes, PRA) with head-to-head history, per-player game logs and charts,
-upcoming games with live scores, league standings, the injury report per game, suggested bets (value / safest / riskiest), parlays, a bet slip, and the "minds": a deterministic, pre-registered, fail-closed bet-approval pipeline (`minds/README.md`). Personal project, informational only.
+upcoming games with live scores, league standings, the injury report per game, suggested bets (value / safest / riskiest), all driven by stored box scores, odds snapshots and graded history. Personal project, informational only.
 Sportsbooks are efficient, so treat every suggestion as a lead to check, not a guarantee.
 
 ## Stack
@@ -9,7 +9,7 @@ Sportsbooks are efficient, so treat every suggestion as a lead to check, not a g
 - **Frontend:** React, Vite, TypeScript, Tailwind, Recharts
 - **API:** Hono on Cloudflare Pages Functions (`functions/api`), D1 (SQLite) for data
 - **Data:** box scores via `nba_api` (`ingest/sync.py`, run locally), schedule from ESPN's public
-  endpoints, odds from [The Odds API](https://the-odds-api.com)
+  endpoints, odds from [SharpAPI](https://sharpapi.io) (game odds first, then player props)
 - **Model:** boosted projections (`research/project.py`) with a negative-binomial tail, blended with the market's fair price; `shared/baseline.ts` is the fallback
 - **Audits:** `AUDIT_ENGINE.md` (engine), `AUDIT_SCORECARD.md` (scores and UI), `node research/ui_audit.mjs` (headless-Edge UI checks)
 
@@ -17,7 +17,7 @@ Sportsbooks are efficient, so treat every suggestion as a lead to check, not a g
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars        # add your ODDS_API_KEY (free tier is ~500 credits/month)
+cp .dev.vars.example .dev.vars        # add your SHARPAPI_KEY (the free plan is enough)
 npm run db:migrate                    # create the local D1 tables
 
 python -m venv ingest/.venv
@@ -55,8 +55,7 @@ ingest/.venv/Scripts/python research/project.py              # boosted projectio
 - Picks use the boosted model's projection with a negative-binomial tail when `projections` has a row, and
   fall back to the weighted-average model otherwise (`model` on each pick says which).
 - **No sportsbook edge has been shown.** Historical lines are needed for that: `research/backfill_odds.py`
-  (paid Odds API plan; `--dry-run` prices a run) then `research/market_eval.py`. Raw live odds are also stored
-  in `odds_raw`, and `/api/capture` snapshots games about to start.
+  (an older script that needs The Odds API's paid historical plan, no longer part of the app) then `research/market_eval.py`. `/api/capture` snapshots games about to start into the odds archive.
 - `research/tests/` also verifies the Python port of the app model and the negative-binomial maths against
   the TypeScript in `shared/baseline.ts`.
 
@@ -75,14 +74,13 @@ Environment variables (set in `.dev.vars` locally, as Pages secrets when deploye
 
 | Name | Purpose |
 |---|---|
-| `ODDS_API_KEY` | The Odds API key |
-| `CAPTURE_TOKEN` | If set, routes that spend credits or write (`/api/capture`, `?fresh=1`, `POST /api/predictions`) need this in the `x-capture-token` header. If unset they only work from localhost. **Set it before deploying.** |
+| `SHARPAPI_KEY` | SharpAPI key (the only odds provider) |
+| `CAPTURE_TOKEN` | If set, routes that use the odds provider's request allowance or write (`/api/capture`, `?fresh=1`, `POST /api/predictions`) need this in the `x-capture-token` header. If unset they only work from localhost. **Set it before deploying.** |
 | `FALLBACK_MODEL` | `v3` switches the fallback model to the negative-binomial baseline (default `v2`; see `AUDIT.md` finding 14) |
-| `ODDS_REGIONS`, `ODDS_MARKETS`, `ODDS_HOURS`, `ODDS_BOOKS` | what to fetch (each region/market costs credits) |
-| `ODDS_MAX_EVENTS` | games whose props are pulled per refresh (default 3, at most 15; one credit per market per game) |
-| `ODDS_MONTHLY_CREDITS` | credits the app may spend per UTC month before it stops fetching odds (default 450 of the free plan's ~500). The count is kept in D1 and shown at `/api/status` as `oddsCredits`. |
+| `ODDS_HOURS`, `ODDS_BOOKS` | how far ahead to look (hours) and which SharpAPI books to read (default `draftkings,fanduel`) |
+| `ODDS_MAX_EVENTS` | games whose player props are pulled per refresh (default 3, at most 15; about 3 of SharpAPI's 12 free requests a minute per game). Game odds cover every game regardless. |
 
-`CAPTURE_TOKEN` also protects personal data (`GET/POST/DELETE /api/my-bets`). On a deployed copy, enter it once under Results > My bets; it is kept in that browser only.
+`CAPTURE_TOKEN` protects every write to the database.
 
 ```bash
 npm run check               # typecheck, lint, unit and db tests
@@ -97,16 +95,16 @@ npm run grade               # grade logged picks against stored box scores (also
 **CI** (`.github/workflows/ci.yml`) runs types, lint, unit tests, in-memory database tests and the build, plus the Python research suite and the ingest tests. It uses no secrets, no live API and no paid data.
 `test:integration` is not in CI because it needs a local database holding real synced box scores; run it before merging.
 
-**Odds archive.** Every odds snapshot the website or the Minds runner retrieves is stored point-in-time (`odds_runs`, `odds_quotes`, migration 0018): price, line, book, when we saw it, whether it was fresh. `node minds/capture_odds.mjs` adds
-pre-event snapshots (credit-capped). The last observation before a documented cutoff is a *closing proxy*, never a true closing line. `GET /api/odds-archive` shows coverage; `research/archive_to_snapshots.py` feeds it to the pre-registered market evaluation.
+**Odds archive.** Every odds snapshot the website retrieves is stored point-in-time (`odds_runs`, `odds_quotes`, migration 0018): price, line, book, when we saw it, whether it was fresh. `node scripts/capture_odds.mjs` adds
+pre-event snapshots (paced to the free plan's 12 requests a minute). The last observation before a documented cutoff is a *closing proxy*, never a true closing line. `GET /api/odds-archive` shows coverage; `research/archive_to_snapshots.py` feeds it to the pre-registered market evaluation.
 No market-beating result exists: see `research/MARKET_EVAL_STATUS.md`.
 
-**One calculation.** The probability and expected value on every screen come from `shared/engine/authority.ts`, the same records Minds decides on. A pick the engine cannot price shows the older simple blend marked as unvalidated (a tilde and "unvalidated").
+**One calculation.** The probability and expected value on every screen come from `shared/engine/authority.ts`. A pick the engine cannot price shows the older simple blend marked as unvalidated (a tilde and "unvalidated").
 **Defensive matchups.** Prop details and the Matchups tab show the estimated defenders (never a confirmed assignment), team defence and offence traits, and the sample behind each (`shared/defense.ts`, `GET /api/defense-context`, `research/DEFENSE.md`). The pre-registered ablation found team-level defence helps slightly (research-only, not used in predictions) and the individual-defender and likely-matchup estimates did not pass (`research/RESULTS_DEFENSE.md`).
 
 **Game-winner view.** Each upcoming game shows a model chance beside the market's, and a "lean" only when they pick different teams by at least 7 points. The model is home advantage + a margin-aware Elo + **which rotation players the injury report lists Out** (the absence feature was validated on the players who actually sat out, rebuilt from box scores, so that is a best case; late scratches and Questionable players are not seen, and a player who changed team over the summer can be wrongly counted out in a team's first one or two games). The rotation reaches back across seasons, so a player who has been out since game one is still seen as out. It improved on the plain Elo baseline on both development seasons and held on the final one, but it has no historical sportsbook test; model, market and the injury report it read are logged side by side from now on (`research/RESULTS_GAMES.md`, `research/PREREG_GAMES.md`).
 
-**Team bets.** Moneyline legs on the Props page and in the slip (ATL + GSW + MIN + LAL), priced from the market; ESPN's free DraftKings line keeps them working without Odds API credits. They cannot be logged for grading yet.
+
 
 **Schedule & fatigue.** A prop's details show rest, congestion, estimated travel and workload as facts (`shared/schedule.ts`, `GET /api/schedule-context`), with what is unknown listed. They change no prediction: the pre-registered ablation found no group worth using (`research/RESULTS_HUMAN_FACTORS.md`, how-to in `research/HUMAN_FACTORS.md`).
 

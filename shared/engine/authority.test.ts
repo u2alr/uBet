@@ -1,16 +1,14 @@
-// Run: npm test. One authoritative calculation: the numbers a screen shows must be the numbers Minds decides on.
+// Run: npm test. One authoritative calculation: every screen shows the numbers the engine computes.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { applyAuthority } from './authority.ts'
 import { makeConfig } from './config.ts'
 import { binaryExpectedReturn } from './payoff.ts'
 import { NOW, identityArtifact, mkPick, resetFixtureCounter, withMarket } from './fixtures.ts'
-import { attachOpponent, decide } from '../minds.ts'
 import type { Pick } from '../picks.ts'
 
 const config = makeConfig(), calibration = identityArtifact()
 const ctx = { now: NOW, config, calibration, injuryChecked: true }
-const opp = { DET: { pts: 1.08 } }
 
 const slate = (): Pick[] => {
   resetFixtureCounter()
@@ -23,29 +21,7 @@ const slate = (): Pick[] => {
   ]
 }
 
-describe('screens and Minds read the same records', () => {
-  it('for the same snapshot, the Props-board numbers equal the numbers the Chief decides on, field by field', () => {
-    const picks = slate()
-    const screen = applyAuthority(attachOpponent(picks, opp), ctx)
-    const minds = decide(attachOpponent(picks, opp), { now: NOW, config, calibration, injuryChecked: true })
-    assert.equal(screen.length, picks.length)
-    const byKey = new Map(minds.candidates.map((r) => [`${r.identity.eventId}|${r.identity.playerId}|${r.market.stat}|${r.market.line}|${r.market.side}`, r]))
-    let compared = 0
-    for (const p of screen) {
-      const r = byKey.get(`${p.eventId}|${p.playerId}|${p.stat}|${p.line}|${p.side}`)
-      if (!r) continue
-      compared++
-      assert.equal(p.auth!.probability.decision, r.probability.decision)
-      assert.equal(p.auth!.probability.conservative, r.probability.conservative)
-      assert.equal(p.auth!.probability.marketFair, r.probability.marketFair)
-      assert.equal(p.auth!.ev.raw, r.ev.raw)
-      assert.equal(p.auth!.ev.conservative, r.ev.conservative)
-      assert.equal(p.auth!.price.executable, r.price.price)
-      assert.equal(p.auth!.status, r.status)
-      if (p.basis === 'authoritative') { assert.equal(p.prob, r.probability.decision); assert.equal(p.ev, r.ev.raw) }
-    }
-    assert.ok(compared >= 3)
-  })
+describe('screens read the engine records', () => {
   it('expected value is the canonical payoff at the executable price, not a second formula', () => {
     for (const p of applyAuthority(slate(), ctx).filter((x) => x.basis === 'authoritative')) {
       assert.ok(Math.abs(p.ev - binaryExpectedReturn(p.prob, p.push, p.auth!.price.executable!)) < 1e-12)

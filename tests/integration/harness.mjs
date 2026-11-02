@@ -1,5 +1,5 @@
-// Runs the REAL Worker (wrangler pages dev) against a fake Odds API and a throwaway copy of the local
-// database, so integration tests and probes can never spend credits or touch your real prediction log.
+// Runs the REAL Worker (wrangler pages dev) against a fake SharpAPI and a throwaway copy of the local
+// database, so integration tests and probes can never use the real provider's request allowance or touch your real prediction log.
 import { spawn, execSync } from 'node:child_process'
 import { cpSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
@@ -49,9 +49,9 @@ export function openScratch() {
 
 /**
  * Settings the tests depend on. wrangler also reads the developer's .dev.vars, so anything the tests rely on is pinned here: a developer who changes
- * their own ODDS_HOURS or ODDS_REGIONS must not change what the suite sees. A test can still override any of these through `extraBindings`.
+ * their own ODDS_HOURS or ODDS_BOOKS must not change what the suite sees. A test can still override any of these through `extraBindings`.
  */
-const HERMETIC = [['ODDS_MAX_EVENTS', '8'], ['ODDS_HOURS', '40'], ['ODDS_REGIONS', 'us']]
+const HERMETIC = [['ODDS_MAX_EVENTS', '8'], ['ODDS_HOURS', '40']]
 
 export async function start({ extraBindings = [], seed } = {}) {
   freshState()
@@ -61,7 +61,7 @@ export async function start({ extraBindings = [], seed } = {}) {
   }
   await new Promise((r) => fake.listen(FAKE_PORT, '127.0.0.1', r))
   const args = ['wrangler', 'pages', 'dev', '--port', String(APP_PORT), '--persist-to', TEST_STATE,
-    '--binding', `ODDS_BASE_URL=${FAKE}/v4/sports/basketball_nba`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'ODDS_API_KEY=test-key-not-real', ...HERMETIC.filter(([k]) => !extraBindings.some((b) => b.startsWith(`${k}=`))).flatMap(([k, v]) => ['--binding', `${k}=${v}`]), ...extraBindings.flatMap((b) => ['--binding', b])]
+    '--binding', `SHARPAPI_BASE_URL=${FAKE}/api/v1`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'SHARPAPI_KEY=test-key-not-real', ...HERMETIC.filter(([k]) => !extraBindings.some((b) => b.startsWith(`${k}=`))).flatMap(([k, v]) => ['--binding', `${k}=${v}`]), ...extraBindings.flatMap((b) => ['--binding', b])]
   const child = spawn('npx', args, { cwd: ROOT, shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   child.stdout.on('data', (b) => { log += b })

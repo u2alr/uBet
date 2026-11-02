@@ -8,7 +8,7 @@
 import type { OddsEvent } from './picks.ts'
 import { MARKET_STAT } from './picks.ts'
 
-export type ArchiveSource = 'theoddsapi' | 'oddsblaze'
+export type ArchiveSource = 'sharpapi' | 'theoddsapi' | 'oddsblaze'  // the last two are kept for rows archived before SharpAPI
 export type RunKind = 'board' | 'daily' | 'pre_event'
 export type Freshness = 'fresh' | 'stale' | 'unknown'
 

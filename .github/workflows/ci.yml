@@ -26,7 +26,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
-      - run: npm run test:db          # in-memory SQLite: grading SQL for suggestions, the minds and your own bets
+      - run: npm run test:db          # in-memory SQLite: grading SQL for suggested picks
       - run: npm run check:config     # secret scan and migration numbering; placeholder ids only warn outside production
       - run: npm run build
 

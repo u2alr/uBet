@@ -14,9 +14,9 @@ const child = spawn(EDGE, ['--headless=new', '--remote-debugging-port=9335', '--
 let t; for (let i = 0; i < 60; i++) { try { t = await (await fetch('http://127.0.0.1:9335/json')).json(); if (t.length) break } catch { /* wait */ } await sleep(250) }
 const ws = new WebSocket(t.find((x) => x.type === 'page').webSocketDebuggerUrl); await new Promise((r) => (ws.onopen = r))
 let id = 0; const pend = new Map(); const events = []
-// If minds/out/picks_fixture.json exists (made by `DUMP_PICKS=... node minds/run.mjs --dry --cache`), /api/picks is answered from it,
+// If research/out/picks_fixture.json exists, /api/picks is answered from it,
 // so the props board can be audited with data while the odds provider is unavailable.
-const FIXTURE = path.join(OUT, '..', '..', 'minds', 'out', 'picks_fixture.json')
+const FIXTURE = path.join(OUT, '..', '..', 'research', 'out', 'picks_fixture.json')
 const fixture = existsSync(FIXTURE) ? readFileSync(FIXTURE).toString('base64') : null
 ws.onmessage = (m) => {
   const d = JSON.parse(m.data)
@@ -50,7 +50,7 @@ const CHECKS = `(() => {
   return { culprits, smallExamples, buttons: buttons.length, unlabeled, inputs: inputs.length, unlabeledInputs, imgsNoAlt, smallTargets: small, tinyTextNodes: tiny, overflowX, nodes: document.querySelectorAll('*').length, headings: heading.slice(0, 80), h1: document.querySelectorAll('h1').length, lang: document.documentElement.lang, title: document.title, landmarks: ['header','nav','main','footer'].filter((t) => document.querySelector(t)).join(',') }
 })()`
 
-const TABS = ['Props', 'Cheatsheet', 'Today', 'Standings', 'Slip', 'Minds', 'Results', 'Players']
+const TABS = ['Props', 'Cheatsheet', 'Today', 'Standings', 'Results', 'Players']
 const VIEWPORTS = [['desktop', 1440, 900, false], ['mobile', 390, 844, true]]
 const report = { when: new Date().toISOString(), pages: [] }
 for (const [vp, w, h, mobile] of VIEWPORTS) {

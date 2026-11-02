@@ -1,7 +1,6 @@
-ODDS_API_KEY=your_key_from_the-odds-api.com
-# Comma-separated regions, each one multiplies credit use: us, us2, uk, eu, au
-ODDS_REGIONS=us
-# Games to pull player props for per refresh. Each game costs one credit per market (4 markets = 4 credits), so keep this small on the free tier.
+# Your SharpAPI key from https://sharpapi.io (the free plan is enough: DraftKings and FanDuel, 12 requests a minute, quotes delayed 60 seconds).
+SHARPAPI_KEY=your_key_from_sharpapi.io
+# Games to pull player props for per refresh. Each game takes about 3 of the free plan's 12 requests a minute. Game odds (moneyline, spread, total) cover every game regardless.
 ODDS_MAX_EVENTS=3
-# Credits the app may spend per month (UTC) before it stops fetching odds. The free plan is about 500; the default leaves a margin.
-ODDS_MONTHLY_CREDITS=450
+# Optional: comma-separated SharpAPI sportsbook ids. Default draftkings,fanduel, which are the free plan's two books.
+# ODDS_BOOKS=draftkings,fanduel

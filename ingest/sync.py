@@ -27,10 +27,6 @@ MARK_SYNCED = "INSERT OR REPLACE INTO meta (key,value) VALUES ('last_sync', date
 CLEAN_SQL = "DELETE FROM player_games WHERE minutes <= 0 OR minutes > 70;"
 GRADE_SQL = (
     (Path(__file__).resolve().parent / "grade.sql").read_text(encoding="utf-8")
-    + "\n"
-    + (Path(__file__).resolve().parent / "grade_minds.sql").read_text(encoding="utf-8")
-    + "\n"
-    + (Path(__file__).resolve().parent / "grade_mybets.sql").read_text(encoding="utf-8")
 )
 MIN_GAMES = 10  # below this, always include the previous season
 

@@ -4,7 +4,7 @@ import { checkConfig, worst, type ConfigInput } from './configCheck.ts'
 
 const good = (): ConfigInput => ({
   wranglerToml: 'name = "ubet"\n[[d1_databases]]\ndatabase_id = "3f2a9b1c-1111-4222-8333-444455556666"\n',
-  devVarsSet: ['ODDS_API_KEY', 'CAPTURE_TOKEN'], migrationFiles: ['0001_init.sql', '0002_x.sql', '0003_y.sql'], gitignore: 'node_modules\n.dev.vars\n', tracked: [{ path: 'a.ts', text: 'const x = 1' }],
+  devVarsSet: ['SHARPAPI_KEY', 'CAPTURE_TOKEN'], migrationFiles: ['0001_init.sql', '0002_x.sql', '0003_y.sql'], gitignore: 'node_modules\n.dev.vars\n', tracked: [{ path: 'a.ts', text: 'const x = 1' }],
 })
 const by = (fs: ReturnType<typeof checkConfig>, check: string) => fs.find((f) => f.check === check)!
 
@@ -38,7 +38,7 @@ test('migration numbering must be sequential and unique', () => {
 test('a secret-looking assignment in a tracked file fails, is located by file and line, and its value is never in the output', () => {
   const i = good()
   const secret = 'abcdef0123456789abcdef0123456789'
-  i.tracked.push({ path: 'src/oops.ts', text: `const a = 1\nconst ODDS_API_KEY = "${secret}"\n` }, { path: '.dev.vars.example', text: `ODDS_API_KEY=${secret}` })
+  i.tracked.push({ path: 'src/oops.ts', text: `const a = 1\nconst SHARPAPI_KEY = "${secret}"\n` }, { path: '.dev.vars.example', text: `SHARPAPI_KEY=${secret}` })
   const fs = checkConfig(i)
   const f = by(fs, 'committed secrets')
   assert.equal(f.level, 'fail'); assert.match(f.detail, /src\/oops\.ts:2/)

@@ -8,7 +8,6 @@ export const STAT_LABEL: Record<string, string> = {
 // An optional access token for personal routes on a deployed copy. It lives in this browser only and is sent as a header; on localhost it is not needed.
 const TOKEN_KEY = 'ubet-access-token'
 export const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) ?? '' } catch { return '' } }
-export const setToken = (t: string) => { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY) } catch { /* private mode */ } }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken()

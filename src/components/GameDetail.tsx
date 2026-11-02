@@ -8,7 +8,6 @@ import type { PicksMeta } from '../../shared/picks.ts'
 import { pickKey, type Pick } from '../lib/picks'
 import Notices from './Notices'
 import EvidenceBadge from './EvidenceBadge'
-import { SlipButton } from './PickTable'
 
 interface TeamPlayer {
   id: number; name: string; games: number; min: number; pts: number; reb: number; ast: number; fg3m: number
@@ -74,7 +73,7 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
         <h3 className="mb-3 text-xs uppercase tracking-widest text-neutral-500">Suggested bets</h3>
         {d.configured && <Notices meta={d.meta ?? null} />}
         {!d.configured ? (
-          <Note>Add an <code className="text-neutral-300">ODDS_API_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to see lines and picks.</Note>
+          <Note>Add an <code className="text-neutral-300">SHARPAPI_KEY</code> to <code className="text-neutral-300">.dev.vars</code> to see lines and picks.</Note>
         ) : d.picks.length === 0 ? (
           <Note>No prop lines for this game yet, or none of its players are synced.</Note>
         ) : (
@@ -99,7 +98,6 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                   <span className="flex items-center gap-2">
                     <EvidenceBadge p={p} />
                     <span className={`text-sm tabular-nums ${p.basis === 'authoritative' ? 'text-neutral-100' : 'text-neutral-500'}`} title={p.basis === 'authoritative' ? undefined : 'Simple blend, not validated'}>{p.basis === 'authoritative' ? '' : '≈ '}{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
-                    <SlipButton pick={p} />
                   </span>
                 </div>
                 <div className="text-sm text-neutral-400">
@@ -150,7 +148,6 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
                   <span className="flex items-center gap-2">
                     <EvidenceBadge p={p} />
                     <span className={`text-sm tabular-nums ${p.basis === 'authoritative' ? 'text-neutral-100' : 'text-neutral-500'}`} title={p.basis === 'authoritative' ? undefined : 'Simple blend, not validated'}>{p.basis === 'authoritative' ? '' : '≈ '}{p.ev > 0 ? '+' : ''}{(p.ev * 100).toFixed(1)}% EV</span>
-                    <SlipButton pick={p} />
                   </span>
                 </div>
                 <div className="text-sm text-neutral-400">

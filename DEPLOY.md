@@ -14,19 +14,18 @@ copy only stays current while you push fresh data to it from here.
    npx wrangler d1 migrations apply ubet --remote
    ```
 3. Set the secrets in the Pages project (Settings > Variables and Secrets), as secrets, never in the repository:
-   - `ODDS_API_KEY`: your key from the-odds-api.com.
-   - `CAPTURE_TOKEN`: a long random string. Without it, writes and credit-spending refreshes only work from localhost, so nothing could ever update the deployed copy.
-   - Optional: `ODDS_MONTHLY_CREDITS` (default 450), `ODDS_MAX_EVENTS` (default 3, at most 15), `ODDS_HOURS`.
+   - `SHARPAPI_KEY`: your key from sharpapi.io.
+   - `CAPTURE_TOKEN`: a long random string. Without it, writes and provider-using refreshes only work from localhost, so nothing could ever update the deployed copy.
+   - Optional: `ODDS_MAX_EVENTS` (default 3, at most 15), `ODDS_HOURS`, `ODDS_BOOKS`.
 4. Check the configuration. With `--production` a placeholder database id or a missing `CAPTURE_TOKEN` fails instead of warning:
    ```bash
    npm run check:config -- --production
    ```
 5. Put Cloudflare Access (Zero Trust, free for a few users) in front of the site if it is only for you. The site itself is public otherwise.
 
-## Credits
+## Request limits
 
-Every odds request goes through one gate that adds its cost to a monthly counter in D1 before it is sent, and refuses it when the month is spent. A page load
-cannot spend past `ODDS_MONTHLY_CREDITS`. `GET /api/status` shows `oddsCredits: { month, used, limit, remaining }`.
+SharpAPI's free plan allows 12 requests a minute. Game odds for the whole slate take one or two requests and are cached 10 minutes; each game's player props take about three and are cached 10 minutes. Props load one game at a time and, if the limit is hit, the board shows the games it got and says the rest are missing. Game odds never depend on props.
 
 ## Keeping a deployed copy current
 

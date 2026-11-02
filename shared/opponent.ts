@@ -1,5 +1,7 @@
 // Opponent tendency: how much of each stat a team has allowed over its last 20 games relative to the league. One definition, used by the
-// Worker and by minds/run.mjs, so a matchup review gives the same answer in both places.
+// Worker, so every screen gives the same matchup answer.
+import { TEAM_NAMES, type Pick } from './picks.ts'
+
 export const OPP_STATS = ['pts', 'reb', 'ast', 'fg3m', 'pra'] as const
 export type OppStat = (typeof OPP_STATS)[number]
 
@@ -16,4 +18,15 @@ export type AllowedRow = { team: string } & Record<OppStat, number>
 export function buildOppTable(rows: AllowedRow[]): Record<string, Record<string, number>> {
   const league = Object.fromEntries(OPP_STATS.map((s) => [s, rows.reduce((a, r) => a + r[s], 0) / (rows.length || 1)]))
   return Object.fromEntries(rows.map((r) => [r.team, Object.fromEntries(OPP_STATS.map((s) => [s, league[s] ? r[s] / league[s] : 1]))]))
+}
+
+/** Fills each pick's `oppFactor` from the opponent table (null when the opponent or stat has no row). */
+export function attachOpponent<P extends Pick>(picks: P[], table: Record<string, Record<string, number>>): P[] {
+  const byName = new Map(Object.entries(TEAM_NAMES).map(([abbr, name]) => [name, abbr]))
+  return picks.map((p) => {
+    const [away, home] = p.game.split(' @ ')
+    const oppName = p.teamName === away ? home : p.teamName === home ? away : null
+    const opp = oppName ? byName.get(oppName) : undefined
+    return { ...p, oppFactor: opp ? table[opp]?.[p.stat] ?? null : null }
+  })
 }

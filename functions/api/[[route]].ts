@@ -1,19 +1,17 @@
 import { Hono, type Context } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 import { LIMITS, STATS, hitRate, predict, predictV3, type GameType, type Stat } from '../../shared/baseline.ts'
-import { checkBudget, creditCost, monthKey, monthlyLimit } from '../../shared/oddsBudget.ts'
 import { enrichPicks, listAbsences, parseInjuries, roleFromMinutes, type Injury, type Role } from '../../shared/injuries.ts'
-import { MINDS_VERSION } from '../../shared/minds.ts'
 import { parseStandings } from '../../shared/standings.ts'
 import { parseLiveBox } from '../../shared/liveBox.ts'
 import { parseSportsDbEvents } from '../../shared/sportsdb.ts'
-import { parseEspnOdds } from '../../shared/espnOdds.ts'
+import { SHARP_BASE, SHARP_BOOKS, SHARP_PROP_MARKETS, SHARP_TEAM_MARKETS, normalizeSharpGames, normalizeSharpProps, type GameOddsEvent, type SharpQuote } from '../../shared/sharpapi.ts'
 import { teamByName } from '../../src/lib/teams.ts'
 import { applyAuthority } from '../../shared/engine/authority.ts'
 import { CALIBRATION } from '../../shared/engine/artifact.ts'
 import { DEFAULT_ENGINE_CONFIG } from '../../shared/engine/config.ts'
-import { OPP_ALLOWED_SQL, buildOppTable, type AllowedRow } from '../../shared/opponent.ts'
-import { attachOpponent } from '../../shared/minds.ts'
+import { trackRecord, type GradedPrediction } from '../../shared/trackRecord.ts'
+import { OPP_ALLOWED_SQL, attachOpponent, buildOppTable, type AllowedRow } from '../../shared/opponent.ts'
 import { boardPayload, slim } from '../../shared/boardPayload.ts'
 import { TEAM_IDS, abbrOfTeamId, normAbbr } from '../../shared/teamCodes.ts'
 import { evaluateHealth } from '../../shared/health.ts'
@@ -22,30 +20,26 @@ import humanFactorsStatus from '../../shared/humanFactors.status.json' with { ty
 import defenseStatus from '../../shared/defense.status.json' with { type: 'json' }
 import gamesStatus from '../../shared/games.status.json' with { type: 'json' }
 import { PRIOR_SQL, closingProxy, firstObserved, flatten, planArchive, priorFromRows, runSql, type PriorRow } from '../../shared/oddsArchive.ts'
-import { myBetTotals, parseMyBet, type MyBetRow } from '../../shared/mybets.ts'
-import { MULTIPLE_TESTING_NOTE, breakdown, calibrationBins, type Graded } from '../../shared/metrics.ts'
 import { MAX_PLAYERS_PER_QUERY, chunk, groupMeetings, parsePairs, type H2HRow } from '../../shared/h2h.ts'
 import { assessOddsAge, buildPicks, etDate, normName, sameMatchup, scoreboardDates, teamKey, type HistoryRow, type OddsEvent, type Pick, type PicksMeta, type ProjectionRow } from '../../shared/picks.ts'
 
 type Bindings = {
   DB: D1Database
-  ODDS_API_KEY?: string
+  /** SharpAPI key (https://sharpapi.io): the one odds provider. */
+  SHARPAPI_KEY?: string
   /** If set, privileged routes need this in the x-capture-token header; if not, they only work from localhost. */
   CAPTURE_TOKEN?: string
   /** Only for tests: point the Worker at fake providers (tests/integration). */
-  ODDS_BASE_URL?: string
+  SHARPAPI_BASE_URL?: string
   ESPN_BASE_URL?: string
   SPORTSDB_BASE_URL?: string
   /** 'v3' switches the fallback model to the negative-binomial baseline (see shared/baseline.ts). Default 'v2'. */
   FALLBACK_MODEL?: string
-  ODDS_REGIONS?: string
-  ODDS_MARKETS?: string
-  /** Games to pull props for per refresh (default 3). */
+  /** Games to pull props for per refresh (default 3). The free plan allows 12 requests a minute and a game takes about 3. */
   ODDS_MAX_EVENTS?: string
   ODDS_HOURS?: string
+  /** Comma-separated SharpAPI sportsbook ids to read. Default: draftkings,fanduel (the free plan's two). */
   ODDS_BOOKS?: string
-  /** Credits the app may spend per calendar month (UTC) before it stops fetching odds. Default 450 of the free plan's ~500. */
-  ODDS_MONTHLY_CREDITS?: string
 }
 type Env = { Bindings: Bindings }
 type Ctx = Context<Env>
@@ -105,11 +99,14 @@ const GAME_TYPES = ['regular', 'playoffs', 'preseason']
 
 // ---------- provider access ----------
 
-const ODDS_DEFAULT = 'https://api.the-odds-api.com/v4/sports/basketball_nba'
-// The free plan is ~500 credits/month; one event costs (markets x regions) credits, so cache hard.
-const ODDS_TTL = 8 * 60 * 60 // seconds
-/** Games whose props are pulled per refresh. Every game costs one credit per market, so the default is small; raise ODDS_MAX_EVENTS to see more. */
+// SharpAPI free plan: 12 requests a minute, 200 rows a page, quotes delayed 60 seconds. One game's props are about 3 pages, so cache.
+const PROPS_TTL = 10 * 60 // seconds
+const GAMES_TTL = 10 * 60
+/** Games whose props are pulled per refresh. Raise ODDS_MAX_EVENTS to see more; each game costs about 3 of the free plan's 12 requests a minute. */
 const DEFAULT_MAX_EVENTS = 3
+const MAX_PAGES = 8
+
+const sharpBooks = (env: Bindings) => (env.ODDS_BOOKS ? env.ODDS_BOOKS.split(',').map((b) => b.trim()).filter(Boolean) : SHARP_BOOKS)
 
 // ESPN team abbreviations that differ from NBA.com's (what ingest/sync.py stores).
 const nbaAbbr = normAbbr
@@ -133,58 +130,53 @@ async function cachedMeta<T>(key: string, ttl: number, load: () => Promise<T>, f
 const cachedJson = async <T>(key: string, ttl: number, load: () => Promise<T>, fresh = false) => (await cachedMeta(key, ttl, load, fresh)).data
 
 /**
- * Reserve `cost` credits from this month's budget before spending them. One statement does the check and the add, so parallel requests cannot all see the same
- * room and overspend together. Returns false (and spends nothing) when the month does not have room.
+ * Every row SharpAPI has for these filters, following its cursor. NBA, pre-game only. The key goes in a header and is never stored or logged.
+ * A 429 means the free plan's 12 requests a minute are spent: say so and let the caller show what it has.
  */
-async function reserveCredits(env: Bindings, cost: number): Promise<boolean> {
-  if (cost === 0) return true
-  const limit = monthlyLimit(env.ODDS_MONTHLY_CREDITS)
-  if (cost > limit) return false
-  const row = await env.DB.prepare(
-    `INSERT INTO meta (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + ? AS TEXT) WHERE CAST(value AS INTEGER) + ? <= ?
-     RETURNING value`,
-  ).bind(`odds_credits_${monthKey(Date.now())}`, String(cost), cost, cost, limit).first<{ value: string }>()
-  return row !== null
+async function sharpRows(env: Bindings, params: Record<string, string>): Promise<SharpQuote[]> {
+  const rows: SharpQuote[] = []
+  let cursor: string | undefined
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const qs = new URLSearchParams({ league: 'nba', is_live: 'false', limit: '200', ...params, ...(cursor ? { cursor } : {}) })
+    const res = await fetch(`${env.SHARPAPI_BASE_URL ?? SHARP_BASE}/odds?${qs}`, { headers: { 'X-API-Key': env.SHARPAPI_KEY! } })
+    if (res.status === 429) throw new UpstreamError('SharpAPI rate limit reached (12 requests a minute on the free plan); try again in a minute')
+    if (!res.ok) throw new UpstreamError(`SharpAPI ${res.status}`)
+    const body = (await res.json()) as { data?: SharpQuote[]; pagination?: { has_more?: boolean; next_cursor?: string } }
+    rows.push(...(body.data ?? []))
+    cursor = body.pagination?.has_more ? body.pagination.next_cursor : undefined
+    if (!cursor) break
+  }
+  return rows
 }
 
-const refundCredits = (env: Bindings, cost: number) =>
-  cost === 0 ? Promise.resolve() : env.DB.prepare('UPDATE meta SET value = CAST(MAX(CAST(value AS INTEGER) - ?, 0) AS TEXT) WHERE key = ?').bind(cost, `odds_credits_${monthKey(Date.now())}`).run().then(() => {}, () => {})
+/** Every upcoming game with its moneyline, spread and total (one to two requests for the whole slate). Also the list of games to pull props for. */
+const loadSharpGames = (env: Bindings, fresh = false) =>
+  cachedJson<GameOddsEvent[]>(`sharp-games-${sharpBooks(env).join('+')}`, GAMES_TTL, async () =>
+    normalizeSharpGames(await sharpRows(env, { markets: SHARP_TEAM_MARKETS, is_main_line: 'true', sportsbooks: sharpBooks(env).join(',') }), sharpBooks(env)), fresh)
 
-async function oddsFetch<T>(env: Bindings, path: string, params: Record<string, string> = {}): Promise<T> {
-  const cost = creditCost(path, params)
-  if (!(await reserveCredits(env, cost).catch(() => false)))
-    throw new UpstreamError(`Monthly odds credit budget reached (${monthlyLimit(env.ODDS_MONTHLY_CREDITS)} credits); fetching resumes next month, or raise ODDS_MONTHLY_CREDITS`)
-  const qs = new URLSearchParams({ apiKey: env.ODDS_API_KEY!, ...params })
-  const res = await fetch(`${env.ODDS_BASE_URL ?? ODDS_DEFAULT}${path}?${qs}`).catch(async (e) => { await refundCredits(env, cost); throw e })
-  if (!res.ok) { await refundCredits(env, cost); throw new UpstreamError(`The Odds API ${res.status}`) }
-  const body = await res.text()
-  // Keep every odds response exactly as received (the API key is never stored) so closing lines can be
-  // reconstructed later. A storage failure must never break the request.
-  if (path.includes('/odds'))
-    await env.DB.prepare('INSERT INTO odds_raw (path, params, body) VALUES (?,?,?)')
-      .bind(path, JSON.stringify(params), body).run().catch(() => {})
-  return JSON.parse(body)
-}
+/** One game's player props from SharpAPI, main lines only, as the pick builder's event shape. Cached with its retrieval time. */
+const loadEventProps = (env: Bindings, g: { id: string; commence_time: string; home_team: string; away_team: string }, fresh = false) =>
+  cachedMeta<OddsEvent>(`sharp-props-${g.id}-${sharpBooks(env).join('+')}`, PROPS_TTL, async () => {
+    const rows = await sharpRows(env, { event_id: g.id, markets: SHARP_PROP_MARKETS, is_main_line: 'true', sportsbooks: sharpBooks(env).join(',') })
+    return normalizeSharpProps(rows, sharpBooks(env)).events[0] ?? { id: g.id, commence_time: g.commence_time, home_team: g.home_team, away_team: g.away_team, bookmakers: [] }
+  }, fresh)
 
 // ---------- odds capture (for closing-line analysis) ----------
 
 // Fetches fresh prop and team odds for games starting within `hours` and stores the raw responses.
 app.get('/capture', async (c) => {
   if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
-  if (!c.env.ODDS_API_KEY) return c.json({ error: 'ODDS_API_KEY not set' }, 400)
+  if (!c.env.SHARPAPI_KEY) return c.json({ error: 'SHARPAPI_KEY not set' }, 400)
 
   const asked = Number(c.req.query('hours') ?? 3)
   const hours = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 12) : 3
-  const events = await oddsFetch<any[]>(c.env, '/events')
-  const soon = events.filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + hours * 3600_000)
-  const regions = c.env.ODDS_REGIONS ?? 'us'
-  const markets = c.env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists,player_points_rebounds_assists'
-  for (const e of soon)
-    await oddsFetch(c.env, `/events/${e.id}/odds`, { regions, markets, oddsFormat: 'decimal' })
-  if (soon.length) await loadTeamOdds(c.env, true)
-  const credits = soon.length * markets.split(',').length * regions.split(',').length + (soon.length ? 3 : 0)
-  return c.json({ games: soon.length, approxCreditsSpent: credits })
+  const games = await loadSharpGames(c.env, true)
+  const soon = games.filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + hours * 3600_000).slice(0, 6)
+  for (const e of soon) {
+    const ev = await loadEventProps(c.env, e, true)
+    await archiveSnapshot(c.env, ev.data, ev.fetchedAt)
+  }
+  return c.json({ games: soon.length })
 })
 
 // ---------- status ----------
@@ -195,10 +187,8 @@ app.get('/status', async (c) => {
   const counts = await c.env.DB.prepare(
     'SELECT (SELECT COUNT(*) FROM players) AS players, (SELECT MAX(date) FROM games) AS newestGame',
   ).first<{ players: number; newestGame: string | null }>()
-  const spent = await c.env.DB.prepare('SELECT value FROM meta WHERE key = ?').bind(`odds_credits_${monthKey(Date.now())}`).first<{ value: string }>().catch(() => null)
-  const odds = checkBudget(Number(spent?.value ?? 0), 0, monthlyLimit(c.env.ODDS_MONTHLY_CREDITS))
   // D1's datetime('now') is UTC without a zone marker.
-  return c.json({ lastSync: last ? `${last.value.replace(' ', 'T')}Z` : null, ...counts, oddsCredits: { month: monthKey(Date.now()), used: odds.used, limit: odds.limit, remaining: odds.remaining } })
+  return c.json({ lastSync: last ? `${last.value.replace(' ', 'T')}Z` : null, ...counts })
 })
 
 // ---------- players & stats ----------
@@ -371,25 +361,22 @@ async function espnScoreboard(env: Bindings, dates: string[]): Promise<any[]> {
         state: e.status.type.state as 'pre' | 'in' | 'post',
         home: { abbr: side('home').team.abbreviation, name: side('home').team.displayName, score: side('home').score },
         away: { abbr: side('away').team.abbreviation, name: side('away').team.displayName, score: side('away').score },
-        espnOdds: parseEspnOdds(comp),   // free, one book: keeps the market favourite and team bets working when The Odds API has no credits
       }
     })
   }
 }
 
 app.get('/games', async (c) => {
-  // ?fresh=1 skips the cache (the Refresh button) but is honoured only for privileged callers (it spends credits).
+  // ?fresh=1 skips the cache (the Refresh button) but is honoured only for privileged callers (it spends the provider's request allowance).
   const fresh = wantsFresh(c)
   const [games, odds] = await Promise.all([loadGames(c.env, fresh), loadTeamOdds(c.env, fresh).catch((e) => {
     console.error('team odds unavailable', e instanceof Error ? e.message : String(e))
     return null
   })])
-  // Team odds: the multi-book consensus when The Odds API answered, otherwise the single book ESPN's scoreboard carries (labelled, never mixed).
-  const fromEspn = (g: any) => (g.espnOdds ? { spread: g.espnOdds.spread, total: g.espnOdds.total, homeWinProb: g.espnOdds.homeWinProb, bestMoneyline: { home: g.espnOdds.home, away: g.espnOdds.away }, source: g.espnOdds.book as string } : null)
   return c.json({
-    data: games.map(({ espnOdds: _e, ...g }: any) => {
-      const multi = odds?.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)?.summary
-      return { ...g, odds: multi ? { ...multi, source: 'average of several books' } : fromEspn({ espnOdds: _e }) }
+    data: games.map((g: any) => {
+      const summary = odds?.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)?.summary
+      return { ...g, odds: summary ? { ...summary, source: 'SharpAPI books' } : null }
     }),
     // Say so when the odds could not be loaded, instead of silently showing games with no odds.
     meta: { oddsAvailable: odds !== null, freshRequested: c.req.query('fresh') === '1', freshHonored: fresh },
@@ -456,14 +443,10 @@ function parseGameOdds(ev: any): GameOdds {
   }
 }
 
-// One call covers every game, so team odds are cheap (markets x regions credits in total).
+// One request covers every game, so team odds are cheap.
 async function loadTeamOdds(env: Bindings, fresh = false): Promise<Map<string, GameOdds>> {
-  if (!env.ODDS_API_KEY) return new Map()
-  const params: Record<string, string> = {
-    regions: env.ODDS_REGIONS ?? 'us', markets: 'h2h,spreads,totals', oddsFormat: 'decimal',
-  }
-  if (env.ODDS_BOOKS) params.bookmakers = env.ODDS_BOOKS
-  const events = await cachedJson<any[]>(`team-odds-${params.regions}-${env.ODDS_BOOKS ?? ''}`, 30 * 60, () => oddsFetch(env, '/odds', params), fresh)
+  if (!env.SHARPAPI_KEY) return new Map()
+  const events = await loadSharpGames(env, fresh)
   return new Map(events.map((e) => [`${teamKey(e.away_team)}@${teamKey(e.home_team)}`, parseGameOdds(e)]))
 }
 
@@ -490,12 +473,12 @@ async function archiveSnapshot(env: Bindings, ev: OddsEvent, fetchedAt: number |
   if (!fetchedAt || !ev?.id) return                       // an entry cached by an older version has no known retrieval time: nothing honest to record
   try {
     const capturedAt = new Date(fetchedAt).toISOString()
-    const seen = await env.DB.prepare("SELECT 1 AS x FROM odds_runs WHERE source = 'theoddsapi' AND event_id = ? AND captured_at = ?").bind(ev.id, capturedAt).first()
+    const seen = await env.DB.prepare("SELECT 1 AS x FROM odds_runs WHERE source = 'sharpapi' AND event_id = ? AND captured_at = ?").bind(ev.id, capturedAt).first()
     if (seen) return
-    const { quotes, skipped } = flatten(ev, 'theoddsapi')
+    const { quotes, skipped } = flatten(ev, 'sharpapi')
     const prior = priorFromRows(ev.id, (await env.DB.prepare(PRIOR_SQL).bind(ev.id, ev.id).all<PriorRow>()).results)
     const plan = planArchive(prior, quotes, capturedAt, { complete: true, skipped })
-    const sql = runSql({ source: 'theoddsapi', kind: 'board', eventId: ev.id, eventStart: ev.commence_time, capturedAt, status: 'ok', plan })
+    const sql = runSql({ source: 'sharpapi', kind: 'board', eventId: ev.id, eventStart: ev.commence_time, capturedAt, status: 'ok', plan })
     for (let i = 0; i < sql.length; i += 50) await env.DB.batch(sql.slice(i, i + 50).map((s) => env.DB.prepare(s)))
   } catch (e) {
     console.error('odds archive failed', e instanceof Error ? e.message : String(e))
@@ -590,7 +573,7 @@ app.get('/health', async (c) => {
   const tables = (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>().catch(() => ({ results: [] as { name: string }[] }))).results.map((r) => r.name)
   const one = async (sql: string) => (await db.prepare(sql).first<{ v: string | null }>().catch(() => null))?.v ?? null
   const report = evaluateHealth({
-    oddsKeySet: !!c.env.ODDS_API_KEY, captureTokenSet: !!c.env.CAPTURE_TOKEN, tables,
+    oddsKeySet: !!c.env.SHARPAPI_KEY, captureTokenSet: !!c.env.CAPTURE_TOKEN, tables,
     lastSync: await one("SELECT value AS v FROM meta WHERE key = 'last_sync'"), newestGame: await one('SELECT MAX(date) AS v FROM games'),
     newestProjection: tables.includes('projections') ? await one('SELECT MAX(created_at) AS v FROM projections') : null, now: Date.now(),
   })
@@ -623,34 +606,32 @@ app.get('/odds-archive', async (c) => {
   return c.json({ data: { ...t, byKind, event: eventId, eventStart: start, markets } })
 })
 
-// ---------- picks (The Odds API + model) ----------
+// ---------- picks (SharpAPI odds + model) ----------
 
 async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: boolean; picks: Pick[]; meta: PicksMeta }> {
   const now = Date.now()
   const meta: PicksMeta = { generatedAt: new Date(now).toISOString(), oddsAsOf: null, warnings: [] }
-  if (!env.ODDS_API_KEY) return { configured: false, picks: [], meta }
+  if (!env.SHARPAPI_KEY) return { configured: false, picks: [], meta }
 
-  // Odds are optional: if the provider is out of credits or down, the rest of the app (scores, standings, injuries, stats) still works.
-  let fetched: Cached<OddsEvent>[]
+  // Odds are optional: if the provider is rate limited or down, the rest of the app (scores, standings, injuries, stats) still works.
+  const fetched: Cached<OddsEvent>[] = []
+  let failed = 0
   try {
-    const events = await cachedJson<any[]>('odds-events', 30 * 60, () => oddsFetch(env, '/events'), fresh)
-    const upcoming = events
+    const games = await loadSharpGames(env, fresh)
+    const upcoming = games
       .filter((e) => Date.parse(e.commence_time) < now + Number(env.ODDS_HOURS ?? 40) * 3600_000 && Date.parse(e.commence_time) > now)
       .slice(0, Math.max(1, Math.min(15, Number(env.ODDS_MAX_EVENTS) || DEFAULT_MAX_EVENTS)))
-    const regions = env.ODDS_REGIONS ?? 'us'
-    const markets = env.ODDS_MARKETS ?? 'player_points,player_rebounds,player_assists,player_points_rebounds_assists'
-    fetched = await Promise.all(
-      upcoming.map((e) =>
-        cachedMeta<OddsEvent>(`odds-${e.id}-${regions}-${markets}`, ODDS_TTL, () =>
-          oddsFetch(env, `/events/${e.id}/odds`, { regions, markets, oddsFormat: 'decimal' }),
-        fresh),
-      ),
-    )
+    // One game at a time: the provider limits requests a minute, and a game that fails must not hide the others.
+    for (const g of upcoming) {
+      try { fetched.push(await loadEventProps(env, g, fresh)) } catch (e) { failed++; console.error('props unavailable', e instanceof Error ? e.message : String(e)) }
+    }
+    if (upcoming.length && !fetched.length) throw new UpstreamError('no game could be loaded')
   } catch (e) {
     console.error('odds unavailable', e instanceof Error ? e.message : String(e))
-    meta.warnings.push({ code: 'odds_unavailable', message: 'Sportsbook lines are unavailable right now (provider error or out of credits). Scores, standings, injuries and player stats still work; props return when odds do.' })
+    meta.warnings.push({ code: 'odds_unavailable', message: 'Sportsbook lines are unavailable right now (provider error or rate limit). Scores, standings, injuries and player stats still work; props return when odds do.' })
     return { configured: true, picks: [], meta }
   }
+  if (failed) meta.warnings.push({ code: 'odds_partial', message: `${failed} game${failed === 1 ? '' : 's'} could not be loaded (the provider's request limit, most likely), so ${failed === 1 ? 'its' : 'their'} props are missing. Refresh in a minute.` })
 
   // Point-in-time archive: each retrieved snapshot is recorded once (the run row makes a repeat a no-op), best effort, never allowed to break the page.
   await Promise.all(fetched.map((f) => archiveSnapshot(env, f.data, f.fetchedAt)))
@@ -834,37 +815,18 @@ app.get('/results', async (c) => {
   return c.json({ data: results, summary })
 })
 
-const LEG_STATS = ['pts', 'reb', 'ast', 'fg3m', 'stl', 'blk', 'pra']
-async function recentBefore(db: D1Database, legs: { playerId: number; stat: string; gameDate: string }[]): Promise<number[][]> {
-  const ids = [...new Set(legs.map((l) => l.playerId).filter((n) => Number.isInteger(n)))]
-  if (!ids.length) return legs.map(() => [])
-  const newest = legs.reduce((m, l) => (l.gameDate > m ? l.gameDate : m), '')
-  const { results } = await db.prepare(
-    `SELECT pg.player_id AS playerId, g.date, pg.pts, pg.reb, pg.ast, pg.fg3m, pg.stl, pg.blk
-     FROM player_games pg JOIN games g ON g.id = pg.game_id
-     WHERE pg.player_id IN (${ids.join(',')}) AND g.game_type = 'regular' AND g.date < ? AND g.date >= date(?, '-400 days')
-     ORDER BY g.date DESC`,
-  ).bind(newest, newest).all<Record<string, number | string>>()
-  const byPlayer = new Map<number, Record<string, number | string>[]>()
-  for (const r of results) (byPlayer.get(r.playerId as number) ?? byPlayer.set(r.playerId as number, []).get(r.playerId as number)!).push(r)
-  return legs.map((l) => {
-    if (!LEG_STATS.includes(l.stat)) return []
-    return (byPlayer.get(l.playerId) ?? []).filter((r) => (r.date as string) < l.gameDate).slice(0, 10).map((r) => r[l.stat] as number).reverse()
-  })
-}
-
-// The minds' frozen cards and their record. Pure read; cards are written by minds/run.mjs, graded by ingest/sync.py.
-// ?version=minds-v1 shows an archived rule set; the default is the current one. Versions never mix in one record.
-const AGG = `COUNT(*) AS bets,
-  SUM(b.status IN ('won','lost','push')) AS settled, SUM(b.status = 'won') AS won, SUM(b.status = 'lost') AS lost,
-  SUM(b.status = 'open') AS open, COALESCE(SUM(b.profit), 0) AS units,
-  AVG(CASE WHEN b.status IN ('won','lost') THEN b.prob END) AS statedProb,
-  AVG(CASE WHEN b.status IN ('won','lost') THEN b.p_cons END) AS consProb,
-  AVG(CASE WHEN b.status IN ('won','lost') THEN (b.status = 'won') END) AS actualRate,
-  AVG(CASE WHEN b.status IN ('won','lost') THEN b.ev END) AS statedEv,
-  SUM(CASE WHEN b.status IN ('won','lost','push') THEN b.stake END) AS staked,
-  AVG(b.odds) AS avgOdds, AVG(b.ev) AS avgEv, AVG(b.ev_cons) AS avgEvCons, SUM(b.kind = 'combo') AS combos, SUM(b.kind = 'single') AS singles,
-  COUNT(DISTINCT b.day) AS days, MAX(b.profit) AS bestWin, MIN(b.profit) AS worstLoss`
+// The measured record of the suggested props: ROI and hit rate with intervals, calibration, and the model scored against the market on the same bets.
+app.get('/results/report', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT stat, side, price, hit, p_over AS pOver, model_prob AS modelProb, market_prob AS marketProb, basis
+     FROM predictions WHERE hit IN (0, 1, 2) AND price > 1 AND side IS NOT NULL ORDER BY game_date DESC LIMIT 20000`,
+  ).all<{ stat: string; side: 'over' | 'under'; price: number; hit: 0 | 1 | 2; pOver: number; modelProb: number | null; marketProb: number | null; basis: string }>()
+  const rows: GradedPrediction[] = results.map((r) => ({
+    stat: r.stat, side: r.side, price: r.price, hit: r.hit, prob: r.side === 'over' ? r.pOver : 1 - r.pOver,
+    modelProb: r.modelProb, marketProb: r.marketProb, basis: r.basis ?? 'legacy',
+  }))
+  return c.json({ data: trackRecord(rows) })
+})
 
 // Cheat sheet data: every player with a projection for a game today or later, with their last 10 played games. The streak logic itself runs in
 // the browser (src/lib/cheatSheet.ts). Players listed Out are left out. Games are real games only: preseason and zero-minute rows are skipped.
@@ -938,142 +900,6 @@ app.get('/standings', async (c) => {
     console.error('standings unavailable', e instanceof Error ? e.message : String(e))
     return c.json({ error: 'Standings are unavailable right now.' }, 502)
   }
-})
-
-// Evaluation report for one rule set: ROI, units, yield, Brier, log loss, calibration bins, with sample sizes and intervals, by tier,
-// statistic, odds band and stated-probability range. Pure read. CLV is null because no closing odds are stored.
-app.get('/minds/report', async (c) => {
-  const asked = c.req.query('version')
-  if (asked !== undefined && !/^minds-v\d{1,3}$/.test(asked)) return c.json({ error: 'bad version' }, 400)
-  const version = asked ?? MINDS_VERSION
-  const { results } = await c.env.DB.prepare(
-    `SELECT b.id, b.day, b.tier, b.mind, b.kind, b.odds, b.prob, b.status, b.stake,
-            (SELECT l.stat FROM mind_legs l WHERE l.bet_id = b.id ORDER BY l.idx LIMIT 1) AS stat
-     FROM mind_bets b WHERE b.version = ? AND b.status IN ('won','lost','push','void')`,
-  ).bind(version).all<{ id: number; day: string; tier: string; mind: string; kind: string; odds: number; prob: number; status: Graded['result']; stake: number; stat: string | null }>()
-  const rows = results.map((r) => ({ ...r, result: r.status, stake: r.stake ?? 1 }))
-  const odds = (g: { odds: number }) => (g.odds < 1.7 ? '<1.70' : g.odds < 2.1 ? '1.70-2.09' : '2.10+')
-  const prob = (g: { prob: number }) => (g.prob < 0.5 ? '<50%' : g.prob < 0.6 ? '50-59%' : '60%+')
-  const days = new Set(rows.map((r) => r.day)).size
-  const singles = rows.filter((r) => r.kind === 'single')
-  return c.json({ data: {
-    version, settled: rows.length, days,
-    byTier: breakdown(rows, (r) => r.tier), byMind: breakdown(rows, (r) => r.mind),
-    byStat: breakdown(singles, (r) => r.stat ?? '?'), byOdds: breakdown(singles, odds), byProbability: breakdown(singles, prob),
-    calibration: Object.fromEntries(['strict', 'lean', 'volume'].map((t) => [t, calibrationBins(singles.filter((r) => r.tier === t))])),
-    clv: null as number | null,
-    notes: [MULTIPLE_TESTING_NOTE, 'Closing line value is not computed: closing odds are not stored.', `The sample covers ${days} day${days === 1 ? '' : 's'}; bets on the same day are correlated, so the intervals understate the real uncertainty.`],
-  } })
-})
-
-// The minds' frozen decisions and their record. Pure read; written by minds/run.mjs, graded by ingest/sync.py.
-// ?version=minds-v1 shows an archived rule set; the default is the current one. Versions never mix in one record.
-app.get('/minds', async (c) => {
-  const db = c.env.DB
-  const asked = c.req.query('version')
-  if (asked !== undefined && !/^minds-v\d{1,3}$/.test(asked)) return c.json({ error: 'bad version' }, 400)
-  const version = asked ?? MINDS_VERSION
-  const versions = (await db.prepare(
-    `SELECT version, COUNT(*) AS bets, SUM(status IN ('won','lost','push')) AS settled, MIN(day) AS since FROM mind_bets GROUP BY version ORDER BY version DESC`,
-  ).all()).results as { version: string; bets: number; settled: number; since: string | null }[]
-  if (!versions.some((v) => v.version === MINDS_VERSION)) versions.unshift({ version: MINDS_VERSION, bets: 0, settled: 0, since: null })
-  const bets = (await db.prepare(
-    `SELECT id, day, mind, version, kind, odds, prob, ev, status, profit, proposed_by AS proposedBy, p_cons AS pCons, ev_cons AS evCons, rationale, research, tier, stake
-     FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000`,
-  ).bind(version).all()).results
-  const legs = bets.length ? (await db.prepare(
-    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, prob, p_cons AS pCons,
-            model_prob AS modelProb, market_prob AS marketProb, actual, result, event_id AS eventId, tip_off AS tipOff, home_team AS homeTeam, away_team AS awayTeam,
-            matchup_score AS matchupScore, skeptic_flags AS skepticFlags,
-            (SELECT team FROM players WHERE id = mind_legs.player_id) AS team
-     FROM mind_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM mind_bets WHERE version = ? ORDER BY day DESC, id DESC LIMIT 3000)) ORDER BY bet_id, idx`,
-  ).bind(version).all()).results : []
-  // Each leg's last 10 regular-season games BEFORE its game date (what was known when the bet was made), oldest first.
-  const recent = await recentBefore(db, legs as { playerId: number; stat: string; gameDate: string }[])
-  legs.forEach((l, i) => { l.recent = recent[i] })
-
-  // A bet proposed by several personalities counts for each of them; "chief" is the real portfolio (every staked bet once).
-  const personalities = (await db.prepare(
-    `SELECT m.mind AS mind, ${AGG} FROM mind_bets b
-     JOIN (SELECT 'sam' AS mind UNION ALL SELECT 'val' UNION ALL SELECT 'lou' UNION ALL SELECT 'cat' UNION ALL SELECT 'control') m
-       ON (',' || COALESCE(b.proposed_by, b.mind) || ',') LIKE ('%,' || m.mind || ',%')
-     WHERE b.version = ? AND b.tier = 'strict' GROUP BY m.mind`,
-  ).bind(version).all()).results
-  const tierRow = async (mind: string, tier: string) => (await db.prepare(`SELECT ? AS mind, ${AGG} FROM mind_bets b WHERE b.version = ? AND b.tier = ? HAVING COUNT(*) > 0`).bind(mind, version, tier).all()).results
-  const summary = [...(await tierRow('chief', 'strict')), ...(await tierRow('lean', 'lean')), ...personalities, ...(await tierRow('volume', 'volume')), ...(await tierRow('research', 'research'))]
-  const curve = (await db.prepare(
-    `SELECT 'chief' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND tier = 'strict' GROUP BY day
-     UNION ALL SELECT 'lean' AS mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND tier = 'lean' GROUP BY day
-     UNION ALL SELECT mind, day, SUM(profit) AS units FROM mind_bets WHERE profit IS NOT NULL AND version = ? AND proposed_by IS NULL GROUP BY mind, day
-     ORDER BY day`,
-  ).bind(version, version, version).all()).results
-
-  // The Chief's record of what it turned down: counts by reason, and what those would have done (graded like bets).
-  const days = (await db.prepare(`SELECT substr(key, length(?) + 1) AS day FROM meta WHERE key LIKE ? ORDER BY key DESC LIMIT 30`).bind(`minds_ran:${version}:`, `minds_ran:${version}:%`).all().catch(() => ({ results: [] }))).results
-  const audit = (await db.prepare(
-    `SELECT reason, COUNT(*) AS n, SUM(result IS NOT NULL) AS graded, SUM(result = 'won') AS won, SUM(result = 'lost') AS lost,
-            COALESCE(SUM(CASE result WHEN 'won' THEN price - 1 WHEN 'lost' THEN -1 ELSE 0 END), 0) AS units
-     FROM mind_rejections WHERE version = ? GROUP BY reason ORDER BY n DESC`,
-  ).bind(version).all()).results
-  const rejections = (await db.prepare(
-    `SELECT id, day, proposed_by AS proposedBy, player_id AS playerId, player, stat, side, line, price, game, tip_off AS tipOff, reason, detail,
-            p_cons AS pCons, ev_cons AS evCons, result, actual
-     FROM mind_rejections WHERE version = ? ORDER BY day DESC, ev_cons DESC LIMIT 400`,
-  ).bind(version).all()).results
-
-  // Calibration by statistic and price band, over settled singles in the staked portfolio.
-  const calibration = (await db.prepare(
-    `SELECT b.tier AS tier, l.stat AS stat, CASE WHEN l.price < 1.7 THEN '<1.70' WHEN l.price < 2.1 THEN '1.70-2.09' ELSE '2.10+' END AS band,
-            COUNT(*) AS n, AVG(l.prob) AS said, AVG(l.p_cons) AS cons, AVG(b.status = 'won') AS got
-     FROM mind_legs l JOIN mind_bets b ON b.id = l.bet_id
-     WHERE b.version = ? AND b.kind = 'single' AND b.tier IN ('strict','lean','volume') AND b.status IN ('won','lost') GROUP BY b.tier, l.stat, band ORDER BY b.tier, l.stat, band`,
-  ).bind(version).all()).results
-  return c.json({ data: { bets, legs, summary, curve, version, versions, current: MINDS_VERSION, minBets: 200, minDays: 20, ranDays: days.map((d) => d.day), audit, rejections, calibration } })
-})
-
-// ---------- the user's own bets ----------
-// Bets placed for real, logged from the Slip and graded by ingest/grade_mybets.sql. Writing is privileged like the other writes.
-app.post('/my-bets', async (c) => {
-  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
-  let body: unknown
-  try { body = await c.req.json() } catch { return c.json({ error: 'body must be JSON' }, 400) }
-  const parsed = parseMyBet(body)
-  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
-  const { stake, note, legs } = parsed.bet
-  const res = await c.env.DB.prepare('INSERT INTO my_bets (stake, note) VALUES (?, ?)').bind(stake, note).run()
-  const id = res.meta.last_row_id
-  try {
-    await c.env.DB.batch(legs.map((l, i) => c.env.DB.prepare(
-      'INSERT INTO my_bet_legs (bet_id, idx, player_id, player, stat, side, line, price, book, game_date) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    ).bind(id, i, l.playerId, l.player, l.stat, l.side, l.line, l.price, l.book, l.gameDate)))
-  } catch (e) {
-    await c.env.DB.prepare('DELETE FROM my_bets WHERE id = ?').bind(id).run()     // never leave a bet with no legs
-    console.error('my-bets legs failed', e instanceof Error ? e.message : String(e))
-    return c.json({ error: 'could not save the bet' }, 500)
-  }
-  return c.json({ ok: true, id })
-})
-
-// Personal data: reads need the same access as writes (localhost, or the CAPTURE_TOKEN header), so a deployed copy never shows anyone's bets to a stranger.
-app.get('/my-bets', async (c) => {
-  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
-  const bets = (await c.env.DB.prepare(
-    'SELECT id, placed_at AS placedAt, stake, note, status, settled_odds AS settledOdds, profit FROM my_bets ORDER BY id DESC LIMIT 500',
-  ).all<MyBetRow & { id: number }>()).results
-  const legs = bets.length ? (await c.env.DB.prepare(
-    `SELECT bet_id AS betId, idx, player_id AS playerId, player, stat, side, line, price, book, game_date AS gameDate, actual, result
-     FROM my_bet_legs WHERE bet_id IN (SELECT id FROM (SELECT id FROM my_bets ORDER BY id DESC LIMIT 500)) ORDER BY bet_id, idx`,
-  ).all()).results : []
-  return c.json({ data: { bets, legs, totals: myBetTotals(bets) } })
-})
-
-app.delete('/my-bets/:id', async (c) => {
-  if (!privileged(c)) return c.json({ error: 'Forbidden' }, 403)
-  const id = parseId(c.req.param('id'))
-  if (id === null) return c.json({ error: 'bad id' }, 400)
-  await c.env.DB.prepare('DELETE FROM my_bet_legs WHERE bet_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM my_bets WHERE id = ?').bind(id).run()
-  return c.json({ ok: true })
 })
 
 // Manual prediction logging from the player page. Writes to the database, so it is not public.

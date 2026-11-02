@@ -2,7 +2,6 @@ import { STAT_LABEL } from '../lib/format'
 import { evText, opponentOf, topPicks, type Card } from '../lib/propsBoard'
 import { InjuryTag } from './Availability'
 import Headshot from './Headshot'
-import { SlipButton } from './PickTable'
 
 /** A pinned strip of the slate's best props, above the per-game sections. Renders nothing when no prop qualifies. */
 /** `strip` scrolls sideways above the games; `column` stacks the picks in a side panel. */
@@ -39,7 +38,6 @@ export default function TopPicks({ cards, onOpenPlayer, layout = 'strip' }: { ca
                   {p.side === 'over' ? 'Over' : 'Under'} <span className="font-medium text-neutral-50">{p.line}</span> {STAT_LABEL[p.stat]}
                   <span className="ml-2 tabular-nums text-neutral-400">{p.price.toFixed(2)} <span className="text-xs text-neutral-600">{p.book}</span></span>
                 </span>
-                <SlipButton pick={p} />
               </div>
             </li>
           )

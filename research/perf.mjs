@@ -58,10 +58,10 @@ async function profile(label, setup, action, ms = 2500) {
   for (const [k, v] of top) console.log(String(v.toFixed(0)).padStart(6), k)
 }
 if (process.env.PROFILE) {
-  await profile('Minds tab', 'void 0', tab('Minds'))
+  await profile('Results tab', 'void 0', tab('Results'))
   await profile('open player', tab('Players'), openPlayer)
 } else {
-  await animate('Minds tab open', 'void 0', tab('Minds'), 2500)
+  await animate('Results tab open', 'void 0', tab('Results'), 2500)
   await animate('open player card', tab('Players'), openPlayer.replace('(async', 'void (async'), 3000)
   await animate('Players tab fade', 'void 0', tab('Players'))
 }

@@ -6,7 +6,6 @@ import { PROP_VIEWS, isSingle, viewValue, type PropViewKey } from '../lib/propVi
 import type { GameRow } from '../lib/stats'
 import { logoUrl, teamByName, teamId } from '../lib/teams'
 import AnimatedNumber from './AnimatedNumber'
-import { SlipButton } from './PickTable'
 
 type Kind = 'regular' | 'playoffs' | 'preseason' | 'all'
 const KINDS: [Kind, string][] = [['regular', 'Regular'], ['playoffs', 'Playoffs'], ['preseason', 'Preseason'], ['all', 'All']]
@@ -115,7 +114,6 @@ export default function PropCard({ playerId, picks, stat, line, kind, onStat, on
           <span className="text-xs text-neutral-400">{meta.long}</span>
           {over && <span className="text-xs tabular-nums text-neutral-300" title={`${over.book}`}>O <span style={{ color: HIT }}>{over.price.toFixed(2)}</span></span>}
           {under && <span className="text-xs tabular-nums text-neutral-300" title={`${under.book}`}>U <span style={{ color: MISS }}>{under.price.toFixed(2)}</span></span>}
-          {(over ?? under) && <SlipButton pick={(over ?? under)!} />}
           {isSingle(view) && !here.length && hasLine && bookLines(view).length > 0 && <span className="text-[11px] text-neutral-600">no book at this line</span>}
           {!isSingle(view) && <span className="text-[11px] text-neutral-600">no book prices for combos</span>}
         </div>

@@ -9,7 +9,7 @@ import {
   type GameType, type Stat,
 } from './baseline.ts'
 
-// ---------- raw inputs, shaped like The Odds API / the database ----------
+// ---------- raw inputs, shaped like the odds provider's events (see shared/sharpapi.ts) / the database ----------
 
 export interface OddsOutcome {
   name: string; description?: string; price: number; point?: number
@@ -82,10 +82,10 @@ export function scoreboardDates(now: number, days = 3): string[] {
   return Array.from({ length: days }, (_, i) => new Date(Date.UTC(y, m - 1, d + i)).toISOString().slice(0, 10).replace(/-/g, ''))
 }
 
-/** The Odds API says "Los Angeles Clippers"; ESPN says "LA Clippers". Compare teams through this. */
+/** SharpAPI says "Los Angeles Clippers"; ESPN says "LA Clippers". Compare teams through this. */
 export const teamKey = (n: string) => n.replace(/^Los Angeles /, 'LA ').toLowerCase()
 
-/** Is `game` ("Away @ Home", as the pick builder writes it from the Odds API) the ESPN game between these teams? */
+/** Is `game` ("Away @ Home", as the pick builder writes it from the odds feed) the ESPN game between these teams? */
 export const sameMatchup = (game: string, awayName: string, homeName: string) => {
   const [away, home] = game.split(' @ ')
   return away !== undefined && home !== undefined && teamKey(away) === teamKey(awayName) && teamKey(home) === teamKey(homeName)

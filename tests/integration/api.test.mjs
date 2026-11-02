@@ -77,6 +77,15 @@ describe('reads do not write, and writes are guarded and validated', () => {
     try { assert.equal(d.prepare("SELECT hit FROM predictions WHERE model = 'seed'").get().hit, null) } finally { d.close() }
   })
 
+  it('GET /results/report reads without writing and reports empty figures while nothing is graded', async () => {
+    const { status, body } = await api('/results/report')
+    assert.equal(status, 200)
+    assert.equal(body.data.overall.settled, 0)
+    assert.equal(body.data.brier.n, 0)
+    const d = openScratch()
+    try { assert.equal(d.prepare("SELECT hit FROM predictions WHERE model = 'seed'").get().hit, null) } finally { d.close() }
+  })
+
   it('POST /predictions without the token is forbidden and adds nothing', async () => {
     const before = rowCount()
     const body = JSON.stringify({ playerId: curryId, stat: 'pts', line: 20.5, predicted: 25, pOver: 0.6, model: 'x' })
@@ -214,10 +223,9 @@ describe('provider failures', () => {
       const r = await api('/games?fresh=1', { headers: priv })
       assert.equal(r.status, 200)
       assert.equal(r.body.meta.oddsAvailable, false)
-      const g = r.body.data[0]
-      assert.equal(g.odds.source, 'Draft Kings', 'with The Odds API down the single free book is used and labelled')
-      assert.deepEqual(g.odds.bestMoneyline, { home: 1 + 100 / 180, away: 2.5 })
-      assert.equal(g.odds.spread, -4.5)
+      assert.ok(r.body.data.length > 0, 'the games themselves still load')
+      assert.ok(r.body.data.every((g) => g.odds === null), 'no odds are invented when the provider is down')
+      assert.ok(!JSON.stringify(r.body).includes('boom'))
     } finally { await setUpstreamFailing(false) }
   })
 })

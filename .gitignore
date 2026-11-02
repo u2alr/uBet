@@ -30,5 +30,5 @@ research/data/
 research/out/
 __pycache__/
 *.pyc
-minds/out/
+scripts/out/
 ingest/.auto_state.json
