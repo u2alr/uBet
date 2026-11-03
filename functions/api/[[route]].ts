@@ -10,7 +10,8 @@ import adaptationStatus from '../../shared/adaptation.status.json' with { type: 
 import { review, type ReviewRow } from '../../shared/seasonReview.ts'
 import teamFormStatus from '../../shared/teamForm.status.json' with { type: 'json' }
 import { teamForm, type TeamResult } from '../../shared/teamForm.ts'
-import { teamBet } from '../../shared/teamBets.ts'
+import { modelIsFresh, teamBet } from '../../shared/teamBets.ts'
+import { consensusProb, fairProb } from '../../shared/devig.ts'
 import { ownLine } from '../../shared/ownLines.ts'
 import { assembleGames, assembleProps, type StoredRow } from '../../shared/oddsSnapshot.ts'
 import { SHARP_BASE, SHARP_BOOKS, SHARP_PROP_MARKETS, SHARP_TEAM_MARKETS, normalizeSharpGames, normalizeSharpProps, type GameOddsEvent, type SharpQuote } from '../../shared/sharpapi.ts'
@@ -467,14 +468,14 @@ function parseGameOdds(ev: any): GameOdds {
     books.push(o)
   }
   const ml = books.filter((b) => b.moneyline).map((b) => b.moneyline!)
-  // Remove the bookmaker's margin by normalising the two implied probabilities.
-  const probs = ml.map((m) => 1 / m.home / (1 / m.home + 1 / m.away))
+  // Remove each bookmaker's margin with the power method, then combine the books by median (one far-off book is dropped).
+  const probs = ml.map((m) => fairProb(m.home, m.away, 'power')).filter((p): p is number => p != null)
   return {
     books,
     summary: {
       spread: median(books.filter((b) => b.spread).map((b) => b.spread!.point)),
       total: median(books.filter((b) => b.total).map((b) => b.total!.point)),
-      homeWinProb: probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : null,
+      homeWinProb: consensusProb(probs)?.prob ?? null,
       bestMoneyline: ml.length ? { home: Math.max(...ml.map((m) => m.home)), away: Math.max(...ml.map((m) => m.away)) } : null,
     },
   }
@@ -508,8 +509,10 @@ app.get('/team-bets', async (c) => {
   const rows = games.filter((g: any) => g.state !== 'post').map((g: any) => {
     const ge = odds?.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)
     const m = model.get(`${etDate(g.date)}|${normAbbr(g.home.abbr)}|${normAbbr(g.away.abbr)}`)
-    const bet = teamBet({ home: g.home.abbr, away: g.away.abbr, books: ge?.books ?? [], modelHomeProb: m ? m.model_home_prob : null, modelMargin: m?.pred_margin ?? null })
-    return { id: g.id, date: g.date, state: g.state as string, status: g.status as string, home: { abbr: g.home.abbr, name: g.home.name, score: g.home.score }, away: { abbr: g.away.abbr, name: g.away.name, score: g.away.score }, bet, books: ge?.books ?? [], form: teamForm(normAbbr(g.home.abbr), normAbbr(g.away.abbr), results, etDate(g.date)), model: m ?? null, modelAsOf: m?.as_of ?? null }
+    // A model snapshot that is too old is not blended in: the price alone is a better guide than a stale model.
+    const modelFresh = !!m && modelIsFresh(m.as_of, Date.now())
+    const bet = teamBet({ home: g.home.abbr, away: g.away.abbr, books: ge?.books ?? [], modelHomeProb: modelFresh ? m!.model_home_prob : null, modelMargin: modelFresh ? m!.pred_margin ?? null : null })
+    return { id: g.id, date: g.date, state: g.state as string, status: g.status as string, home: { abbr: g.home.abbr, name: g.home.name, score: g.home.score }, away: { abbr: g.away.abbr, name: g.away.name, score: g.away.score }, bet, books: ge?.books ?? [], form: teamForm(normAbbr(g.home.abbr), normAbbr(g.away.abbr), results, etDate(g.date)), model: m ?? null, modelAsOf: m?.as_of ?? null, modelStale: !!m && !modelFresh }
   })
   const best = rows.filter((r) => r.state === 'pre' && r.bet.best).map((r) => ({ gameId: r.id, ...r.bet.best! })).sort((a, b) => b.ev - a.ev).slice(0, 10)
   return c.json({ data: { games: rows, best }, meta: { teamForm: teamFormStatus, oddsAvailable: odds !== null && odds.size > 0, modelGames: rows.filter((r) => r.modelAsOf).length,

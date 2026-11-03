@@ -12,7 +12,7 @@ import TeamChip from './TeamChip'
 interface Row {
   id: string; date: string; state: 'pre' | 'in' | 'post'; status: string
   home: { abbr: string; name: string; score: string }; away: { abbr: string; name: string; score: string }
-  bet: TeamBet; books: BookLine[]; form: TeamForm; model: GameLeanRow | null; modelAsOf: string | null
+  bet: TeamBet; books: BookLine[]; form: TeamForm; model: GameLeanRow | null; modelAsOf: string | null; modelStale?: boolean
 }
 interface FormStatus { commonOpponentLean: { games: number; picksWinner: number; homeTeamWon: number }; commonOpponentLeanGap2: { picksWinner: number; games: number } }
 interface ModelStatus { version: string; logLoss: number; accuracy: number; testGames: number; testSeason: string; baselineLogLoss: number; baselineName?: string }
@@ -70,6 +70,9 @@ function Side({ r, side, picked, absent }: { r: Row; side: 'home' | 'away'; pick
         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs tabular-nums text-neutral-500">
           <span>market {pct(bet.marketProb)}</span>
           <span>model {bet.modelProb == null ? '–' : pct(bet.modelProb)}</span>
+          {bet.priceCapped && <span className="text-amber-300" title="One book's price was far above the others, so the next-best price is used">price capped</span>}
+          {r.modelStale && <span className="text-amber-300" title="The model snapshot is more than a day and a half old, so only the market is used">model stale: market only</span>}
+          {!r.bet.market.corroborated && <span className="text-amber-300" title="Only one book priced this game, so the price and chance are not cross-checked">1 book only</span>}
           {r.books.filter((b) => b.moneyline).map((b) => <span key={b.key}>{b.title} {b.moneyline![side].toFixed(2)}</span>)}
         </div>
       )}

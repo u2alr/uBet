@@ -5,6 +5,10 @@
 // injuries or lineups. So the chance used here is a blend that leans on the market, and every expected-profit figure is a rough guide, not a verdict.
 // Spreads and totals are shown as market lines only (we have no validated model of margin or scoring); our fair spread is a conversion of our win chance, not a separate model.
 import { blendProb, expectedValue, MODEL_WEIGHT } from './baseline.ts'
+import { consensusProb, fairProb, median } from './devig.ts'
+
+/** A best price this far above the runner-up looks stale or mistyped, so the runner-up is used instead (same rule as the props engine). */
+export const STALE_PRICE_RATIO = 1.15
 
 export interface BookLine {
   key: string
@@ -28,9 +32,11 @@ export interface TeamBetInput {
 export interface MoneylineBet {
   side: 'home' | 'away'
   team: string
-  /** Best decimal price across the books, and the book offering it. */
+  /** Best decimal price across the books, and the book offering it (a price far above every other book's is replaced by the runner-up's). */
   price: number
   book: string
+  /** True when the best price was capped because it looked stale. */
+  priceCapped: boolean
   marketProb: number
   /** Our chance: the model blended with the market. Equal to the market's when there is no model. */
   prob: number
@@ -44,9 +50,9 @@ export interface MoneylineBet {
 export interface TeamBet {
   home: string
   away: string
-  market: { spread: number | null; total: number | null; spreadBook: string | null; homeProb: number | null; books: number }
+  market: { spread: number | null; total: number | null; spreadBook: string | null; homeProb: number | null; books: number; booksUsed: number; booksDropped: number; /** True when at least two books priced the moneyline, so the chance and the price are cross-checked. */ corroborated: boolean }
   moneyline: { home: MoneylineBet; away: MoneylineBet } | null
-  /** The better of the two moneyline bets by expected profit, or null when neither is positive. */
+  /** The better of the two moneyline bets by expected profit, or null when neither is positive or fewer than two books priced the game. */
   best: MoneylineBet | null
   ours: { fairMoneyline: { home: number; away: number }; spread: number | null; homeProb: number } | null
 }
@@ -69,7 +75,6 @@ export function normInv(p: number): number {
 const DEFAULT_MARGIN_SD = 12
 const halfPoint = (x: number) => Math.round(x * 2) / 2
 const round = (x: number, d = 3) => Math.round(x * 10 ** d) / 10 ** d
-const median = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : null)
 
 /**
  * The home team's line that matches a home win chance. The spread of the margin comes from the market itself (its own spread and win chance imply one), so our
@@ -87,13 +92,15 @@ export function fairSpread(homeProb: number, marketSpread: number | null, market
 
 export function teamBet(i: TeamBetInput): TeamBet {
   const withMl = i.books.filter((b) => b.moneyline)
-  // Each book's margin is removed on its own, then the books are averaged: one book's overround must not leak into another's chance.
-  const probs = withMl.map((b) => (1 / b.moneyline!.home) / (1 / b.moneyline!.home + 1 / b.moneyline!.away))
-  const marketHome = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : null
+  // Each book's margin is removed on its own with the power method (proportional removal under-prices favourites), then the books are combined by their median,
+  // dropping one that sits far from the rest: one stale or mistyped book must not move the market's chance.
+  const probs = withMl.map((b) => fairProb(b.moneyline!.home, b.moneyline!.away, 'power')).filter((p): p is number => p != null)
+  const cons = consensusProb(probs)
+  const marketHome = cons ? cons.prob : null
   const spreadBooks = i.books.filter((b) => b.spread)
   const spread = median(spreadBooks.map((b) => b.spread!.point))
   const total = median(i.books.filter((b) => b.total).map((b) => b.total!.point))
-  const market = { spread, total, spreadBook: spreadBooks[0]?.title ?? null, homeProb: marketHome == null ? null : round(marketHome), books: i.books.length }
+  const market = { spread, total, spreadBook: spreadBooks[0]?.title ?? null, homeProb: marketHome == null ? null : round(marketHome), books: i.books.length, booksUsed: cons?.used ?? 0, booksDropped: cons?.dropped ?? 0, corroborated: (cons?.used ?? 0) >= 2 }
   if (marketHome == null) {
     // No book has priced the game. A model number still stands on its own (it is calibrated on past games), but there is no price to take and so no expected profit.
     if (i.modelHomeProb == null) return { home: i.home, away: i.away, market, moneyline: null, best: null, ours: null }
@@ -105,13 +112,18 @@ export function teamBet(i: TeamBetInput): TeamBet {
   }
 
   const homeProb = i.modelHomeProb == null ? marketHome : blendProb(i.modelHomeProb, marketHome, MODEL_WEIGHT)
-  const best = (side: 'home' | 'away') => withMl.reduce((m, b) => (b.moneyline![side] > m.price ? { price: b.moneyline![side], book: b.title } : m), { price: 0, book: '' })
+  const best = (side: 'home' | 'away') => {
+    const quotes = withMl.map((b) => ({ price: b.moneyline![side], book: b.title })).filter((q) => Number.isFinite(q.price) && q.price > 1).sort((a, b) => b.price - a.price)
+    if (!quotes.length) return { price: 0, book: '', capped: false }
+    if (quotes.length >= 2 && quotes[0].price > quotes[1].price * STALE_PRICE_RATIO) return { ...quotes[1], capped: true }
+    return { ...quotes[0], capped: false }
+  }
   const mk = (side: 'home' | 'away'): MoneylineBet => {
     const p = side === 'home' ? homeProb : 1 - homeProb
     const mp = side === 'home' ? marketHome : 1 - marketHome
     const b = best(side)
     return {
-      side, team: side === 'home' ? i.home : i.away, price: b.price, book: b.book, marketProb: round(mp), prob: round(p),
+      side, team: side === 'home' ? i.home : i.away, price: b.price, book: b.book, priceCapped: b.capped, marketProb: round(mp), prob: round(p),
       modelProb: i.modelHomeProb == null ? null : round(side === 'home' ? i.modelHomeProb : 1 - i.modelHomeProb),
       edge: round(p - mp), ev: round(expectedValue(p, 0, b.price)),
     }
@@ -119,7 +131,23 @@ export function teamBet(i: TeamBetInput): TeamBet {
   const home = mk('home'), away = mk('away')
   const top = home.ev >= away.ev ? home : away
   return {
-    home: i.home, away: i.away, market, moneyline: { home, away }, best: top.ev > 0 ? top : null,
+    home: i.home, away: i.away, market, moneyline: { home, away }, best: top.ev > 0 && market.corroborated ? top : null,   // a single book cannot be cross-checked, so it never earns a recommendation
+   
     ours: { fairMoneyline: { home: round(1 / homeProb, 2), away: round(1 / (1 - homeProb), 2) }, spread: i.modelMargin != null ? halfPoint(-i.modelMargin) : fairSpread(homeProb, spread, marketHome), homeProb: round(homeProb) },
   }
+}
+
+/** A game-model snapshot older than this is not trusted: the injury list and form it read have moved on. The market alone is used instead. */
+export const MAX_MODEL_AGE_HOURS = 36
+
+/** Hours between a snapshot's `as_of` stamp and `nowMs`, or null when the stamp is missing or unreadable (treated as stale by the caller). */
+export function modelAgeHours(asOf: string | null | undefined, nowMs: number): number | null {
+  if (!asOf) return null
+  const t = Date.parse(asOf.includes('T') || asOf.endsWith('Z') ? asOf : asOf.replace(' ', 'T') + 'Z')
+  return Number.isFinite(t) ? Math.max(0, (nowMs - t) / 3_600_000) : null
+}
+
+export function modelIsFresh(asOf: string | null | undefined, nowMs: number, maxHours = MAX_MODEL_AGE_HOURS): boolean {
+  const age = modelAgeHours(asOf, nowMs)
+  return age != null && age <= maxHours
 }

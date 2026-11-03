@@ -33,6 +33,12 @@ export function freshState() {
     } finally { db.close() }
   }
   rmSync(join(TEST_STATE, 'v3', 'cache'), { recursive: true, force: true })  // never inherit cached upstream responses
+  // These tests exercise the join between the fake odds and real synced box scores. An empty database (a fresh clone after db:migrate only) cannot run them: say so plainly.
+  const check = openScratch()
+  try {
+    const n = check.prepare('SELECT COUNT(*) AS n FROM player_games').get().n
+    if (n === 0) throw new Error('The local database has no synced box scores (player_games is empty). Run ingest/sync.py first; these integration tests need real synced players such as Cade Cunningham and Victor Wembanyama.')
+  } finally { check.close() }
 }
 
 /** Open the scratch copy of the app database (the file that holds the `predictions` table). */
@@ -62,18 +68,28 @@ export async function start({ extraBindings = [], seed } = {}) {
   await new Promise((r) => fake.listen(FAKE_PORT, '127.0.0.1', r))
   const args = ['wrangler', 'pages', 'dev', '--port', String(APP_PORT), '--persist-to', TEST_STATE,
     '--binding', `SHARPAPI_BASE_URL=${FAKE}/api/v1`, '--binding', `ESPN_BASE_URL=${FAKE}`, '--binding', 'SHARPAPI_KEY=test-key-not-real', ...HERMETIC.filter(([k]) => !extraBindings.some((b) => b.startsWith(`${k}=`))).flatMap(([k, v]) => ['--binding', `${k}=${v}`]), ...extraBindings.flatMap((b) => ['--binding', b])]
-  const child = spawn('npx', args, { cwd: ROOT, shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  const win = process.platform === 'win32'
+  // On POSIX the server gets its own process group so the whole tree (npx, wrangler, workerd) can be stopped; taskkill does that on Windows.
+  const child = spawn('npx', args, { cwd: ROOT, shell: true, detached: !win, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   child.stdout.on('data', (b) => { log += b })
   child.stderr.on('data', (b) => { log += b })
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 180; i++) {   // wrangler can spend ~30 s trying to reach Cloudflare for request metadata on a restricted network
     try { if ((await fetch(`${APP}/api/status`)).status < 500) break } catch {}
-    if (i === 89) throw new Error('Worker did not start:\n' + log.slice(-1500))
+    if (i === 179) throw new Error('Worker did not start:\n' + log.slice(-1500))
     await sleep(1000)
   }
   const stop = async () => {
-    try { execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: 'ignore' }) } catch {}
+    try {
+      if (win) execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: 'ignore' })
+      else process.kill(-child.pid, 'SIGKILL')
+    } catch {}
     await new Promise((r) => fake.close(r))
+    // Do not return until the port is free, so the next test file can bind it.
+    for (let i = 0; i < 30; i++) {
+      try { await fetch(`${APP}/api/status`) } catch { break }
+      await sleep(500)
+    }
   }
   return { stop, log: () => log }
 }
