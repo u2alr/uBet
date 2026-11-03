@@ -68,6 +68,10 @@ def main():
     _, rating, last_season = G._elo(t, state=True)
     _, srs_models = V.srs_table(t)
     results = pd.DataFrame({"team": t.TEAM_ID, "opp": t.OPP, "date": t.date, "won": (t.PTS > t.opp_pts)})
+    # What the page shows as "common opponents": this season's regular-season games only (not a model input).
+    now_season = t[t.GAME_ID.astype(str).str[:1] == "2"]
+    now_season = now_season[now_season.season == now_season.season.max()]
+    results_now = pd.DataFrame({"team": now_season.TEAM_ID, "opp": now_season.OPP, "date": now_season.date, "won": (now_season.PTS > now_season.opp_pts)})
     last_game = t.groupby("TEAM_ID").date.max()
     season_now = int(t.season.max())
     for team in list(rating):                                   # a team whose last game was in an earlier season carries over before its first game of the new one
@@ -94,7 +98,7 @@ def main():
     up = pd.DataFrame(up)
     ab = G.team_absences(pl.assign(GS=V.game_score(pl)), upcoming=up[["GAME_ID", "TEAM_ID", "date"]], out_ids=out_ids, cross_season=True).set_index(["GAME_ID", "TEAM_ID"])
     pairs = pd.DataFrame([{"GAME_ID": int(f"{prefix}97{k:03d}"), "date": pd.Timestamp(g["date"]), "home_id": abbr_to_id[g["home"]], "away_id": abbr_to_id[g["away"]]} for k, g in enumerate(games)])
-    co = V.common_opponent(results, pairs).set_index("GAME_ID")
+    co = V.common_opponent(results_now, pairs).set_index("GAME_ID")
     rest = lambda team, day: float(min((day - last_game[team]).days, H.MAX_GAP_DAYS))   # noqa: E731 (rest days as human_factors defines them: the gap since the previous game, capped)
 
     rows, log = [], []
@@ -117,7 +121,7 @@ def main():
         fh, fa = form.get(h, {}), form.get(aw, {})
         names_of = lambda s: "; ".join(f"{label.get(int(i), i)} ({avg_min.get(int(i), 0):.0f} min)" for i in str(s).split(",") if i)   # noqa: E731
         rows.append((g["date"], g["home"], g["away"], float(p[0]), rating[h], rating[aw], fh.get("net10"), fa.get("net10"), fh.get("off20"), fh.get("def20"), fa.get("off20"), fa.get("def20"), now,
-                     names_of(hv.ab_ids), names_of(av.ab_ids), MODEL_VERSION, float(p1[0]), float(cur[60][0][h]), float(cur[60][0][aw]), float(srs[60] + cur[60][1]), float(co.loc[gid, "co_diff"])))
+                     names_of(hv.ab_ids), names_of(av.ab_ids), MODEL_VERSION, float(p1[0]), float(cur[60][0][h]), float(cur[60][0][aw]), float(srs[60] + cur[60][1]), float(co.loc[gid, "co_diff"]) if co.loc[gid, "co_n"] >= 3 else None))   # a tally off one or two games says nothing
         log.append((g["date"], g["home"], g["away"], now, float(p[0]), g.get("market_home_prob"), g.get("market_book"), MODEL_VERSION, float(p1[0])))
     team_names = {n: ab_ for ab_, n in zip(tm.TEAM_ABBREVIATION, tm.TEAM_NAME)}
     inj = [(now, next((k for k, v in team_names.items() if v == r["team"]), r["team"]), r["player"], r["status"], r["note"]) for r in report if r["player"]]

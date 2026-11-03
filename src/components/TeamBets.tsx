@@ -90,8 +90,8 @@ function Form({ r }: { r: Row }) {
   return (
     <div className="grid gap-2 lg:grid-cols-2">
       <div className="rounded-xl bg-neutral-950/50 px-3 py-2.5">
-        <h3 className="mb-1.5 text-xs font-medium text-neutral-300">Head to head</h3>
-        {f.meetings.length === 0 ? <p className="text-xs text-neutral-500">No meeting between these teams in the last 13 months of stored games.</p> : (
+        <h3 className="mb-1.5 text-xs font-medium text-neutral-300">Head to head <span className="font-normal text-neutral-600">· this season</span></h3>
+        {f.meetings.length === 0 ? <p className="text-xs text-neutral-500">These teams have not met yet this season.</p> : (
           <>
             <p className="mb-1 text-xs text-neutral-400">{f.a} {f.aWins}–{f.bWins} {f.b} in {f.meetings.length} meeting{f.meetings.length === 1 ? '' : 's'}</p>
             <ul className="space-y-0.5 text-xs text-neutral-500">
@@ -101,8 +101,8 @@ function Form({ r }: { r: Row }) {
         )}
       </div>
       <div className="rounded-xl bg-neutral-950/50 px-3 py-2.5">
-        <h3 className="mb-1.5 text-xs font-medium text-neutral-300">Common opponents</h3>
-        {f.common.length === 0 ? <p className="text-xs text-neutral-500">These teams have not played the same opponent recently.</p> : (
+        <h3 className="mb-1.5 text-xs font-medium text-neutral-300">Common opponents <span className="font-normal text-neutral-600">· this season</span></h3>
+        {f.common.length === 0 ? <p className="text-xs text-neutral-500">These teams have not played a common opponent yet this season.</p> : (
           <>
             <p className="mb-1 text-xs text-neutral-400">
               {lname ? <>Favours <b className="font-medium text-emerald-400">{lname}</b>: better results against {Math.max(f.tally.a, f.tally.b)} of {f.common.length} shared opponents</> : <>Level: {f.tally.a} each way across {f.common.length} shared opponents</>}
@@ -113,7 +113,7 @@ function Form({ r }: { r: Row }) {
                 return <li key={c.opp}><b className={`font-medium ${c.verdict === 'even' ? 'text-neutral-400' : 'text-neutral-300'}`}>{c.opp}</b>: {f.a} {x(c.a)}, {f.b} {x(c.b)}{c.verdict !== 'even' && <span className="text-emerald-400"> → {c.verdict === 'a' ? f.a : f.b}</span>}</li>
               })}
             </ul>
-            <p className="mt-1.5 text-xs text-neutral-600">Context, not part of our chance. Weak on its own (one game each, rosters change).</p>
+            <p className="mt-1.5 text-xs text-neutral-600">Context, not part of our chance. Weak on its own (one game each, and early in the season there are few).</p>
           </>
         )}
       </div>
@@ -176,7 +176,7 @@ function Game({ r, absent, open, onToggle, onOpenGame, status }: { r: Row; absen
               {mine.map((a) => <span key={a.id} className={`rounded-full px-2.5 py-0.5 ${a.status === 'out' ? 'bg-red-500/15 text-red-300' : 'bg-neutral-800 text-neutral-300'}`}>{a.team} {a.name.split(' ').slice(-1)[0]} · {a.status}</span>)}
             </p>
           )}
-          {status && <p className="text-xs text-neutral-600">Over {status.commonOpponentLean.games.toLocaleString()} past games the common-opponent lean picked the winner {pct(status.commonOpponentLean.picksWinner)} of the time (always picking the home team: {pct(status.commonOpponentLean.homeTeamWon)}); with a gap of two or more opponents, {pct(status.commonOpponentLeanGap2.picksWinner)}.</p>}
+          {status && <p className="text-xs text-neutral-600">Over {status.commonOpponentLean.games.toLocaleString()} past games (judged with only that season's earlier games) the common-opponent lean picked the winner {pct(status.commonOpponentLean.picksWinner)} of the time (always picking the home team: {pct(status.commonOpponentLean.homeTeamWon)}); with a gap of two or more opponents, {pct(status.commonOpponentLeanGap2.picksWinner)}.</p>}
         </div>
       )}
     </article>

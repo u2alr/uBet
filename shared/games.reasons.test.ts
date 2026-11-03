@@ -42,11 +42,11 @@ test('games-v2 adds opponent-adjusted ratings, an expected margin and common opp
   const v2 = { model_version: 'games-v2', srs_home: 5.2, srs_away: -1.4, pred_margin: 8.1, co_diff: 0.6 }
   const rs = gameReasons(row(0.72, v2), null)
   const k = kinds(rs)
-  assert.equal(k['Opponent-adjusted rating'], 'for'); assert.equal(k['Common opponents'], 'for'); assert.equal(k['Expected margin'], 'context')
+  assert.equal(k['Opponent-adjusted rating'], 'for'); assert.equal(k['Common opponents'], 'context', 'shown, never counted as support'); assert.equal(k['Expected margin'], 'context')
   assert.match(rs.find((r) => r.label === 'Expected margin')!.text, /GSW to win by about 8\.1 points/)
   const road = kinds(gameReasons(row(0.4, { ...v2, srs_home: -2, srs_away: 4, pred_margin: -2.5, co_diff: -0.5 }), null))
   assert.equal(road['Opponent-adjusted rating'], 'for', 'the road favourite is the better-rated team')
-  assert.equal(road['Common opponents'], 'for')
+  assert.equal(road['Common opponents'], 'context')
   const v1 = kinds(gameReasons(row(0.72), null))
   assert.equal(v1['Opponent-adjusted rating'], undefined); assert.equal(v1['Common opponents'], undefined)
 })

@@ -494,10 +494,10 @@ app.get('/team-bets', async (c) => {
     loadTeamOdds(c.env, fresh).catch((e) => { console.error('team odds unavailable', e instanceof Error ? e.message : String(e)); return null }),
     c.env.DB.prepare(`SELECT date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of, absent_home, absent_away, model_version, model_v1_prob, srs_home, srs_away, pred_margin, co_diff
        FROM game_lean WHERE date >= date('now', '-1 day')`).all<GameLeanRow>().then((r) => r.results).catch(() => [] as GameLeanRow[]),
-    // Every team's results over the last ~13 months (win or loss only: the stored box scores are not complete enough for margins). One query serves every game.
+    // Every team's results THIS SEASON, regular season only (last season, the playoffs and the preseason are left out; win or loss only, since the stored box scores are not complete enough for margins). One query serves every game.
     cachedJson<TeamResult[]>('team-results', 10 * 60, async () => (await c.env.DB.prepare(
       `SELECT g.date AS date, pg.team_id AS teamId, pg.opp AS opp, pg.is_home AS home, MAX(pg.won) AS won
-       FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE g.game_type != 'preseason' AND g.date >= date('now', '-400 days') AND pg.opp IS NOT NULL
+       FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE g.game_type = 'regular' AND g.season = (SELECT MAX(season) FROM games WHERE game_type = 'regular') AND pg.opp IS NOT NULL
        GROUP BY g.id, pg.team_id`).all<{ date: string; teamId: number; opp: string; home: number; won: number }>()).results
       .flatMap((r) => { const team = abbrOfTeamId(r.teamId); return team ? [{ date: r.date, team, opp: normAbbr(r.opp), home: !!r.home, won: !!r.won }] : [] }), fresh)
       .catch(() => [] as TeamResult[]),

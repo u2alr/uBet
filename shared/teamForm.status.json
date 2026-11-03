@@ -1,10 +1,20 @@
 {
-  "version": "teamform-v1",
+  "version": "teamform-v2",
   "addedToWinChance": false,
-  "note": "Shown as context next to the win chance; not an input to it. Checked on past games only (research/teamform_backtest.mjs), not against sportsbook prices.",
+  "note": "Shown as context next to the win chance; not an input to it. Uses only this season's regular-season games (research/teamform_backtest.mjs), checked on past games, not against sportsbook prices.",
   "checkedOn": "2026-11-03",
-  "gamesJudged": 1125,
-  "commonOpponentLean": { "games": 1015, "picksWinner": 0.642, "homeTeamWon": 0.556 },
-  "commonOpponentLeanGap2": { "games": 837, "picksWinner": 0.671 },
-  "headToHeadRepeat": { "games": 912, "picksWinner": 0.587 }
+  "gamesJudged": 1179,
+  "commonOpponentLean": {
+    "games": 1013,
+    "picksWinner": 0.655,
+    "homeTeamWon": 0.548
+  },
+  "commonOpponentLeanGap2": {
+    "games": 783,
+    "picksWinner": 0.686
+  },
+  "headToHeadRepeat": {
+    "games": 800,
+    "picksWinner": 0.583
+  }
 }

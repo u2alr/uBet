@@ -49,8 +49,8 @@ F = folds["F"]["models"]
 status = {
     "version": "games-v2" if rule["adopt_v2"] else "games-v1",
     "evaluated": True,
-    "model": "elo+ratings+talent+commonopp+rest (logistic)" if rule["adopt_v2"] else "baseline+AVAIL3",
-    "groupsKept": ["ELO", "ADJUSTED_RATINGS", "TALENT_AVAILABILITY", "COMMON_OPPONENTS", "REST"] if rule["adopt_v2"] else ["AVAIL3"],
+    "model": "elo+ratings+talent+rest (logistic)" if rule["adopt_v2"] else "baseline+AVAIL3",
+    "groupsKept": ["ELO", "ADJUSTED_RATINGS", "TALENT_AVAILABILITY", "REST"] if rule["adopt_v2"] else ["AVAIL3"],
     "logLoss": round(F[rule["candidate"] if rule["adopt_v2"] else "v1"]["logloss"], 4),
     "brier": round(F[rule["candidate"] if rule["adopt_v2"] else "v1"]["brier"], 4),
     "calibrationSlope": round(F[rule["candidate"] if rule["adopt_v2"] else "v1"]["cal_slope"], 3),
@@ -61,7 +61,7 @@ status = {
     "baselineName": "games-v1 (Elo + availability)",
     "pooledImprovementOverV1": {"dlogloss": round(rule["pooled_dlogloss_vs_v1"], 4), "ciLo": round(rule["ci_lo"], 4), "ciHi": round(rule["ci_hi"], 4)},
     "summary": ("Home advantage, a margin-aware Elo, ratings adjusted for the strength of every opponent (so results like 'A beat C, B lost to C' are used together), "
-                "the talent of any rotation player the injury report lists as Out, a common-opponent tally, and rest. It was tested with the players who actually sat out, "
+                "the talent of any rotation player the injury report lists as Out, and rest. It was tested with the players who actually sat out, "
                 "so that is a best case: late scratches, Questionable players and lineup news are not seen. Its advantage over the earlier model is in the probabilities, not in more correct picks. "
                 "It has not been tested against sportsbook lines."),
     "evidence": "research/RESULTS_GAMES_V2.md",

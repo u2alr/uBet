@@ -1,4 +1,4 @@
-// Team head-to-head and common-opponent evidence for one game, from past results. Pure: no network, no database, no clock.
+// Team head-to-head and common-opponent evidence for one game, from past results. The app feeds it THIS SEASON's regular-season results only. Pure: no network, no database, no clock.
 // "ATL beat the Lakers and MEM lost to the Lakers" is a common-opponent comparison: weak evidence on its own (rosters change, venues differ, one game is noisy),
 // so it is shown as facts with a tally and is NOT part of the win chance. Results are win or loss only: the stored box scores are not complete enough for margins.
 

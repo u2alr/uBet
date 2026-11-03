@@ -148,5 +148,6 @@ def build_v2(base: pd.DataFrame, teams: pd.DataFrame, players: pd.DataFrame) -> 
 
 V2_NEW = ["srs30", "srs60", "srs120", "ab_gs", "co_diff"]
 SCHEDULE = ["rest_diff", "b2b_home", "b2b_away"]
-LIN_V2 = G.BASE + ["srs30", "srs60", "srs120"] + G.GROUPS["AVAIL3"] + ["ab_gs", "co_diff"] + SCHEDULE
+# co_diff is still built (the page shows it, this season only) but is NOT a model input: an ablation found it adds nothing (PREREG_GAMES_V2.md, last addendum).
+LIN_V2 = G.BASE + ["srs30", "srs60", "srs120"] + G.GROUPS["AVAIL3"] + ["ab_gs"] + SCHEDULE
 GBM_V2 = LIN_V2 + ["net_l10", "net_l20", "off_l20", "def_l20", "pace_l20"]

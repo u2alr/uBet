@@ -13,7 +13,7 @@ export interface GameLeanRow {
   as_of: string
   /** Rotation players the injury report lists Out, "Name (avg minutes)" separated by semicolons; empty when none (or when the team has no rotation yet this season). */
   absent_home?: string | null; absent_away?: string | null
-  /** games-v2 (PREREG_GAMES_V2.md): which model made `model_home_prob`, the v1 number beside it, opponent-adjusted margin ratings (points per game against an average team), the predicted home margin, and the common-opponent tally. */
+  /** games-v2 (PREREG_GAMES_V2.md): which model made `model_home_prob`, the v1 number beside it, opponent-adjusted margin ratings (points per game against an average team), the predicted home margin, and this season's common-opponent tally (display only). */
   model_version?: string | null; model_v1_prob?: number | null; srs_home?: number | null; srs_away?: number | null; pred_margin?: number | null; co_diff?: number | null
 }
 
@@ -122,7 +122,7 @@ export function gameReasons(r: GameLeanRow, marketHomeProb: number | null, uncer
     add('context', 'Beyond Elo', `Elo with home court alone gives ${fav} ${pct0(favPlain)}; the model says ${pct0(l.modelProb)}, ${l.modelProb > favPlain ? 'higher' : 'lower'}, because it also reads the injury report and was fitted on past seasons.`)
   }
 
-  // games-v2 inputs (PREREG_GAMES_V2.md): ratings adjusted for who each team has played, and the common-opponent tally.
+  // games-v2 inputs (PREREG_GAMES_V2.md): ratings adjusted for who each team has played. The common-opponent tally is shown too, as context.
   if (r.model_version === 'games-v2' && r.srs_home != null && r.srs_away != null) {
     const mine = homeFav ? r.srs_home : r.srs_away, theirs = homeFav ? r.srs_away : r.srs_home
     const d = mine - theirs
@@ -136,7 +136,8 @@ export function gameReasons(r: GameLeanRow, marketHomeProb: number | null, uncer
   }
   if (r.model_version === 'games-v2' && r.co_diff != null && Math.abs(r.co_diff) >= CO_GAP) {
     const forHome = r.co_diff > 0
-    add((forHome === homeFav) ? 'for' : 'against', 'Common opponents', `Against opponents both teams have played, ${forHome ? r.home : r.away} has the better recent results (a tally of ${Math.round(Math.abs(r.co_diff) * 100)}% of the shared opponents that differ).`)
+    // Context only: an ablation found it adds nothing to the model (PREREG_GAMES_V2.md), so it is shown but never counted as support.
+    add('context', 'Common opponents', `Against opponents both teams have played this season, ${forHome ? r.home : r.away} has the better results (${Math.round(Math.abs(r.co_diff) * 100)}% of the shared opponents that differ). Not part of the model's number.`)
   }
 
   // The market.
