@@ -78,7 +78,7 @@ Environment variables (set in `.dev.vars` locally, as Pages secrets when deploye
 | `CAPTURE_TOKEN` | If set, routes that use the odds provider's request allowance or write (`/api/capture`, `?fresh=1`, `POST /api/predictions`) need this in the `x-capture-token` header. If unset they only work from localhost. **Set it before deploying.** |
 | `FALLBACK_MODEL` | `v3` switches the fallback model to the negative-binomial baseline (default `v2`; see `AUDIT.md` finding 14) |
 | `ODDS_HOURS`, `ODDS_BOOKS` | how far ahead to look (hours) and which SharpAPI books to read (default `draftkings,fanduel`) |
-| `ODDS_MAX_EVENTS` | games whose player props are pulled per refresh (default 3, at most 15; about 3 of SharpAPI's 12 free requests a minute per game). Game odds cover every game regardless. |
+| `ODDS_MAX_EVENTS` | games whose player props the odds sync stores per run (default 8, at most 15; about 3 of SharpAPI's 12 free requests a minute per game). Game odds cover every game regardless. |
 
 `CAPTURE_TOKEN` protects every write to the database.
 
@@ -111,3 +111,12 @@ No market-beating result exists: see `research/MARKET_EVAL_STATUS.md`.
 `GET /api/health` reports configuration and data freshness without secrets.
 
 `AUDIT.md` lists what was found, what was fixed, what is unproven and what is blocked on data.
+
+**Odds are synced, not fetched per page.** `node scripts/sync_odds.mjs` (`npm run sync:odds`; `npm run dev:sync` runs it every 10 minutes on its own) pulls SharpAPI's game odds and then player props into the `odds_snapshot` table, paced to the free plan's 12 requests a minute. The site only reads that table, so page loads never touch the provider and `/api/status` shows how old the stored odds are (`odds`). Add `--remote` to fill the deployed database. Before the first sync the Worker asks the provider itself, once and cached, so a fresh install still shows odds.
+
+**Our own lines.** `GET /api/lines` prices a line and fair odds for every player we project (`?player=`, `?stat=`, `?date=`), straight from the model's distribution (`shared/ownLines.ts`), with no sportsbook and no provider. They are fair prices with no margin, so they say what the model thinks a bet is worth; they are not an offer anyone will take, and they are only as current as the last `ingest/sync.py` run (`meta.stale` says when they are not).
+
+**Team bets first.** The home page (`#/Teams`, `GET /api/team-bets`) lists every game with the market's spread, total and best moneyline on each side, the market's chance with the margin removed, our chance (the game model blended with the market, as props do), expected profit, and our own fair moneyline and spread. Spreads and totals are market lines only: there is no validated model of margin or scoring, and our spread is a conversion of our win chance. The game model has not been tested against sportsbook prices, so expected profit carries a tilde and is a rough guide. `research/game_snapshot.py` refreshes the model numbers (the sync does it).
+
+**Game model (games-v2).** Our chance in each game comes from a model that stands on its own: no odds are needed to produce it. It is a logistic model on a margin-aware Elo, ratings adjusted for the strength of every opponent (a ridge regression over all past results, so "A beat C, B lost to C" chains are used together), the talent of rotation players the injury report lists as Out, a common-opponent tally and rest (`research/game_features_v2.py`). It was chosen by a pre-registered experiment (`research/PREREG_GAMES_V2.md`, results in `research/RESULTS_GAMES_V2.md`): on four seasons it never saw it beat the previous model in log loss by 0.0046 (95% interval 0.0021 to 0.0071), mostly in better probabilities rather than more correct picks, and the boosted-tree variant did not help. It has not been tested against sportsbook prices (none exist for past games), cannot see late injury news, and the live comparison with the previous model accumulates in `game_lean_log`. `research/game_snapshot.py` scores upcoming games (the sync runs it); `research/pull_history.py` fetches the extra seasons it trains on. Rerun the evaluation with `ingest/.venv/Scripts/python research/game_eval_v2.py` and `research/game_report_v2.py`.
+

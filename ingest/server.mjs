@@ -45,13 +45,27 @@ function run(args, label, file = script) {
   })
 }
 
+// The odds sync is a Node script (SharpAPI is reachable from anywhere, unlike NBA.com): it stores game odds first, then player props, paced to the free plan.
+function runNode(file, args, label) {
+  return new Promise((resolve) => {
+    state.label = label
+    const child = spawn(process.execPath, ['--no-warnings', file, ...args], { cwd: root })
+    let tail = ''
+    for (const out of [child.stdout, child.stderr]) out.on('data', (b) => { tail = (tail + b.toString()).slice(-1500) })
+    child.on('error', (e) => { state.error = e.message; resolve(false) })
+    child.on('close', (code) => { if (code !== 0) state.error = tail.split(String.fromCharCode(10)).filter(Boolean).slice(-2).join(' | ') || `exit ${code}`; resolve(code === 0) })
+  })
+}
+
 async function startSync(mode, player) {
   state.running = true
   state.error = ''
   state.done = 0
   state.total = 0
   try {
-    if (mode === 'games') {
+    if (mode === 'odds') {
+      await runNode(join(root, 'scripts', 'sync_odds.mjs'), [], 'Syncing odds')
+    } else if (mode === 'games') {
       // Re-score the upcoming games from today's injury report. No box-score sync: it reads the data already on disk, so it takes seconds.
       await run([], 'Scoring upcoming games', join(root, 'research', 'game_snapshot.py'))
     } else if (mode === 'player') {
@@ -88,13 +102,14 @@ createServer((req, res) => {
     if (state.running) return json(res, 409, { error: 'A sync is already running', ...state })
     const player = url.searchParams.get('player')
     if (player !== null && !isSafePlayerName(player)) return json(res, 400, { error: 'Bad player name' })
-    startSync(url.searchParams.get('only') === 'games' ? 'games' : player ? 'player' : 'all', player)
+    startSync(url.searchParams.get('only') === 'games' ? 'games' : url.searchParams.get('only') === 'odds' ? 'odds' : player ? 'player' : 'all', player)
     return json(res, 202, { started: true })
   }
   json(res, 404, { error: 'Not found' })
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`uBet sync helper on http://127.0.0.1:${PORT}`)
   // Everything automatic. A check runs every 10 minutes:
+  //   - odds (SharpAPI) into the database: see below
   //   - box scores + projections + grading: at startup, then every AUTO_SYNC_HOURS (default 3)        AUTO_SYNC=0 turns it off
   // The Sync button still works, and nothing runs while a sync is already in progress.
   const hours = Number(process.env.AUTO_SYNC_HOURS) > 0 ? Number(process.env.AUTO_SYNC_HOURS) : 3
@@ -108,7 +123,16 @@ createServer((req, res) => {
       await startSync('all')
     }
   }
-  tick()
-  setInterval(tick, 10 * 60_000)
-  console.log(`automatic: sync every ${hours}h (state in ingest/.auto_state.json)`)
+  // Odds: every ODDS_SYNC_MINUTES (default 10), so stored odds stay about as fresh as the provider's free plan allows.        AUTO_ODDS=0 turns it off
+  const oddsEvery = (Number(process.env.ODDS_SYNC_MINUTES) > 0 ? Number(process.env.ODDS_SYNC_MINUTES) : 10) * 60_000
+  const tickOdds = async () => {
+    if (state.running || process.env.AUTO_ODDS === '0') return
+    if (Date.now() - (saved.oddsAt ?? 0) < oddsEvery) return
+    console.log(`auto-odds ${new Date().toLocaleTimeString()}`)
+    saved.oddsAt = Date.now(); writeFileSync(stateFile, JSON.stringify(saved))
+    await startSync('odds')
+  }
+  tick().then(tickOdds)
+  setInterval(() => tick().then(tickOdds), 5 * 60_000)
+  console.log(`automatic: sync every ${hours}h, odds every ${oddsEvery / 60_000} min (state in ingest/.auto_state.json)`)
 })

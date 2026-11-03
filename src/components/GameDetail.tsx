@@ -5,6 +5,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, ReferenceLine, ResponsiveCo
 import { INK, STAT_COLOR } from '../lib/colors'
 import { STAT_LABEL, api, fmt, pct } from '../lib/format'
 import type { PicksMeta } from '../../shared/picks.ts'
+import { PLAYER_PROPS } from '../lib/features'
 import { pickKey, type Pick } from '../lib/picks'
 import Notices from './Notices'
 import EvidenceBadge from './EvidenceBadge'
@@ -69,6 +70,8 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
 
       <TeamOdds odds={d.odds} configured={d.configured} home={home} away={away} />
 
+      {PLAYER_PROPS && (
+      <>
       <section>
         <h3 className="mb-3 text-xs uppercase tracking-widest text-neutral-500">Suggested bets</h3>
         {d.configured && <Notices meta={d.meta ?? null} />}
@@ -249,6 +252,8 @@ export default function GameDetail({ refreshKey, gameId, onBack, onOpenPlayer }:
           )}
         </section>
       ))}
+      </>
+      )}
     </div>
   )
 }

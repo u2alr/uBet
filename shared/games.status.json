@@ -1,17 +1,27 @@
 {
-  "version": "games-v1",
-  "evaluated": true,
-  "model": "baseline+AVAIL3",
-  "groupsKept": [
-    "AVAIL3"
-  ],
-  "logLoss": 0.5915,
-  "brier": 0.2033,
-  "calibrationSlope": 1.005,
-  "accuracy": 0.682,
-  "testGames": 1225,
-  "testSeason": "2025-26",
-  "baselineLogLoss": 0.5973,
-  "summary": "Home advantage, a margin-aware Elo, and which rotation players the injury report lists as Out. It was tested with the players who actually sat out, so that is a best case: late scratches, Questionable players and lineup news are not seen, and a player who changed team over the summer can be wrongly counted as out in a team's first one or two games of a season. It has not been tested against sportsbook lines.",
-  "evidence": "research/RESULTS_GAMES.md"
+ "version": "games-v2",
+ "evaluated": true,
+ "model": "elo+ratings+talent+commonopp+rest (logistic)",
+ "groupsKept": [
+  "ELO",
+  "ADJUSTED_RATINGS",
+  "TALENT_AVAILABILITY",
+  "COMMON_OPPONENTS",
+  "REST"
+ ],
+ "logLoss": 0.5842,
+ "brier": 0.1999,
+ "calibrationSlope": 1.079,
+ "accuracy": 0.682,
+ "testGames": 1225,
+ "testSeason": "2025-26",
+ "baselineLogLoss": 0.5888,
+ "baselineName": "games-v1 (Elo + availability)",
+ "pooledImprovementOverV1": {
+  "dlogloss": 0.0046,
+  "ciLo": 0.0021,
+  "ciHi": 0.0071
+ },
+ "summary": "Home advantage, a margin-aware Elo, ratings adjusted for the strength of every opponent (so results like 'A beat C, B lost to C' are used together), the talent of any rotation player the injury report lists as Out, a common-opponent tally, and rest. It was tested with the players who actually sat out, so that is a best case: late scratches, Questionable players and lineup news are not seen. Its advantage over the earlier model is in the probabilities, not in more correct picks. It has not been tested against sportsbook lines.",
+ "evidence": "research/RESULTS_GAMES_V2.md"
 }

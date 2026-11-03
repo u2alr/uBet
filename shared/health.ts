@@ -3,7 +3,7 @@ export type HealthStatus = 'ok' | 'degraded' | 'down'
 export interface HealthCheck { name: string; ok: boolean; detail: string }
 
 /** Tables the app reads or writes. If one is missing the migrations were not applied to this database. */
-export const REQUIRED_TABLES = ['meta', 'players', 'games', 'player_games', 'projections', 'predictions', 'odds_runs', 'odds_quotes'] as const
+export const REQUIRED_TABLES = ['meta', 'players', 'games', 'player_games', 'projections', 'predictions', 'odds_runs', 'odds_quotes', 'odds_snapshot'] as const
 
 export interface HealthInput {
   oddsKeySet: boolean

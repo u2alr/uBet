@@ -29,7 +29,7 @@ export function freshState() {
     try {
       const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name))
       if (!tables.has('predictions')) continue
-      db.exec("DELETE FROM predictions; DELETE FROM odds_raw; DELETE FROM meta WHERE key = 'last_pick_log';")
+      db.exec("DELETE FROM predictions; DELETE FROM odds_raw; DELETE FROM odds_snapshot; DELETE FROM meta WHERE key = 'last_pick_log';")
     } finally { db.close() }
   }
   rmSync(join(TEST_STATE, 'v3', 'cache'), { recursive: true, force: true })  // never inherit cached upstream responses

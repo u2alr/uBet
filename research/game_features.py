@@ -106,8 +106,10 @@ def team_absences(players: pd.DataFrame, upcoming: pd.DataFrame | None = None, o
         games = order + extra
         mins = tg.pivot_table(index="GAME_ID", columns="PLAYER_ID", values="MIN", aggfunc="sum").reindex(games)
         pts = tg.pivot_table(index="GAME_ID", columns="PLAYER_ID", values="PTS", aggfunc="sum").reindex(games)
+        gsp = tg.pivot_table(index="GAME_ID", columns="PLAYER_ID", values="GS", aggfunc="sum").reindex(games) if "GS" in tg.columns else None   # talent (v2 only): Hollinger Game Score
         played = mins.notna() & (mins > 0)
         mins, pts = mins.fillna(0.0), pts.fillna(0.0)
+        gsp = gsp.fillna(0.0) if gsp is not None else None
         # The rotation never reaches back across a season boundary: players who left over the summer are not "absent". A game not yet played belongs to the team's latest season
         # unless more than 120 days have passed since its last game (a new season, which has no rotation yet).
         real = tg.groupby("GAME_ID").agg(season=("SEASON_ID", "first"), date=("date", "first")).reindex(order)
@@ -120,6 +122,7 @@ def team_absences(players: pd.DataFrame, upcoming: pd.DataFrame | None = None, o
         c = roll(played.astype(float))
         avgm = roll(mins) / c.where(c > 0)
         avgp = roll(pts) / c.where(c > 0)
+        avgg = roll(gsp) / c.where(c > 0) if gsp is not None else None
         rot = (c >= 3) & (avgm >= 15)
         if cross_season:
             dates = [pd.Timestamp(real.date.loc[g]) for g in order] + [pd.Timestamp(fake[team].set_index("GAME_ID").date.loc[g]) for g in extra]
@@ -148,6 +151,7 @@ def team_absences(players: pd.DataFrame, upcoming: pd.DataFrame | None = None, o
             i = games.index(g)
             ids[i] = ",".join(str(int(pid)) for pid, m in zip(miss.columns, miss_np[i]) if m)
         rows.append(pd.DataFrame({"GAME_ID": games, "TEAM_ID": team, "ab_min": avgm.where(miss).sum(axis=1).values, "ab_pts": avgp.where(miss).sum(axis=1).values,
+                                  "ab_gs": avgg.where(miss).sum(axis=1).values if avgg is not None else 0.0,
                                   "ab_n": miss.sum(axis=1).values, "ab_top": top_abs.astype(float).values, "ab_ids": ids}))
     return pd.concat(rows, ignore_index=True)
 

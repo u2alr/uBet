@@ -8,6 +8,7 @@ test('every kind of route survives a format then parse', () => {
     { tab: 'Today', gameId: '401909834', playerId: null },
     { tab: 'Players', gameId: null, playerId: 1631114 },
     { tab: 'Players', gameId: null, playerId: null },
+    { tab: 'Teams', gameId: null, playerId: null },
     { tab: 'Props', gameId: null, playerId: null },
     { tab: 'Standings', gameId: null, playerId: null },
     { tab: 'Cheatsheet', gameId: null, playerId: null },

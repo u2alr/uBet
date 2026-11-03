@@ -1,0 +1,10 @@
+{
+  "version": "teamform-v1",
+  "addedToWinChance": false,
+  "note": "Shown as context next to the win chance; not an input to it. Checked on past games only (research/teamform_backtest.mjs), not against sportsbook prices.",
+  "checkedOn": "2026-11-03",
+  "gamesJudged": 1125,
+  "commonOpponentLean": { "games": 1015, "picksWinner": 0.642, "homeTeamWon": 0.556 },
+  "commonOpponentLeanGap2": { "games": 837, "picksWinner": 0.671 },
+  "headToHeadRepeat": { "games": 912, "picksWinner": 0.587 }
+}

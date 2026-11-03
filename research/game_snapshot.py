@@ -1,6 +1,7 @@
-"""Computes the model's chance for each upcoming game and writes it to D1 (migrations 0020, 0021) for the app to DISPLAY next to the market's. A rating-based view that READS THE INJURY
-REPORT: players ESPN lists as Out who are in a team's rotation are treated as absent, exactly the quantity the model was validated on (research/PREREG_GAMES.md addendums, AVAIL3).
-Nothing here changes a player-prop probability.
+"""Computes the model's chance for each upcoming game and writes it to D1 (migrations 0020, 0021, 0023) for the app to DISPLAY next to the market's.
+The model is games-v2 (research/PREREG_GAMES_V2.md): a logistic model on a margin-aware Elo, opponent-adjusted ratings, talent-weighted availability, a common-opponent tally and rest.
+It READS THE INJURY REPORT: players ESPN lists as Out who are in a team's rotation are treated as absent, the quantity it was validated on (PREREG_GAMES.md addendums, AVAIL3).
+The v1 number is computed too and stored beside it, so the two can be compared on the live stream. Nothing here changes a player-prop probability.
 
     ingest/.venv/Scripts/python research/game_snapshot.py [--remote] [--days 2] [--dry]
 """
@@ -17,14 +18,15 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
+import game_eval_v2 as E2  # noqa: E402
 import game_features as G  # noqa: E402
+import game_features_v2 as V  # noqa: E402
+import human_factors as H  # noqa: E402
 from defense_snapshot import ET, inserts, upcoming_games  # noqa: E402
-from features import load_raw  # noqa: E402
-from game_eval import fit_predict  # noqa: E402
 from project import norm_name  # noqa: E402
 
 OUT = HERE / "out"
-COLS = G.BASE + G.GROUPS["AVAIL3"]
+MODEL_VERSION = "games-v2"
 
 
 def current_form(t: pd.DataFrame) -> dict[int, dict]:
@@ -58,12 +60,15 @@ def main():
     ap.add_argument("--dry", action="store_true")
     a = ap.parse_args()
 
-    pl, tm = load_raw()
-    miss = pd.read_pickle(OUT / "features.pkl")[["GAME_ID", "TEAM_ID", "miss_prev"]].drop_duplicates(["GAME_ID", "TEAM_ID"])
-    played = G.build_games(tm, miss, pl)
+    pl, tm = E2.load_all()                                       # 2018-19 onward: the extended history the model was validated with
+    miss = pd.DataFrame({"GAME_ID": [], "TEAM_ID": [], "miss_prev": []})
+    played = V.build_v2(G.build_games(tm, miss, pl), tm, pl)
     train = played[played.regular]
     t = G._team_games(tm)
     _, rating, last_season = G._elo(t, state=True)
+    _, srs_models = V.srs_table(t)
+    results = pd.DataFrame({"team": t.TEAM_ID, "opp": t.OPP, "date": t.date, "won": (t.PTS > t.opp_pts)})
+    last_game = t.groupby("TEAM_ID").date.max()
     season_now = int(t.season.max())
     for team in list(rating):                                   # a team whose last game was in an earlier season carries over before its first game of the new one
         if last_season[team] != season_now:
@@ -87,7 +92,10 @@ def main():
         gid = int(f"{prefix}97{k:03d}")                          # a game id in the current season's range that no real game has
         up += [{"GAME_ID": gid, "TEAM_ID": abbr_to_id[g["home"]], "date": pd.Timestamp(g["date"]), "game": k}, {"GAME_ID": gid, "TEAM_ID": abbr_to_id[g["away"]], "date": pd.Timestamp(g["date"]), "game": k}]
     up = pd.DataFrame(up)
-    ab = G.team_absences(pl, upcoming=up[["GAME_ID", "TEAM_ID", "date"]], out_ids=out_ids, cross_season=True).set_index(["GAME_ID", "TEAM_ID"])
+    ab = G.team_absences(pl.assign(GS=V.game_score(pl)), upcoming=up[["GAME_ID", "TEAM_ID", "date"]], out_ids=out_ids, cross_season=True).set_index(["GAME_ID", "TEAM_ID"])
+    pairs = pd.DataFrame([{"GAME_ID": int(f"{prefix}97{k:03d}"), "date": pd.Timestamp(g["date"]), "home_id": abbr_to_id[g["home"]], "away_id": abbr_to_id[g["away"]]} for k, g in enumerate(games)])
+    co = V.common_opponent(results, pairs).set_index("GAME_ID")
+    rest = lambda team, day: float(min((day - last_game[team]).days, H.MAX_GAP_DAYS))   # noqa: E731 (rest days as human_factors defines them: the gap since the previous game, capped)
 
     rows, log = [], []
     now = datetime.now(ET).strftime("%Y-%m-%d %H:%M")
@@ -96,19 +104,26 @@ def main():
         h, aw = abbr_to_id[g["home"]], abbr_to_id[g["away"]]
         gid = int(f"{prefix}97{k:03d}")
         hv, av = ab.loc[(gid, h)], ab.loc[(gid, aw)]
+        day = pd.Timestamp(g["date"])
+        cur = V.current_ratings(srs_models, day)
+        srs = {k: cur[k][0][h] - cur[k][0][aw] for k in V.HALF_LIVES}
+        gap_h, gap_a = (day - last_game[h]).days, (day - last_game[aw]).days
         test = pd.DataFrame({"elo_diff": [rating[h] - rating[aw]], "ab3_min_diff": [hv.ab_min - av.ab_min], "ab3_pts_diff": [hv.ab_pts - av.ab_pts], "ab3_top_home": [hv.ab_top], "ab3_top_away": [av.ab_top],
-                             "ab3_n_home": [hv.ab_n], "ab3_n_away": [av.ab_n]})
-        p, _ = fit_predict(train, test, COLS)
+                             "ab3_n_home": [hv.ab_n], "ab3_n_away": [av.ab_n], "ab_gs": [hv.ab_gs - av.ab_gs], "co_diff": [co.loc[gid, "co_diff"]],
+                             "srs30": [srs[30]], "srs60": [srs[60]], "srs120": [srs[120]], "rest_diff": [rest(h, day) - rest(aw, day)],
+                             "b2b_home": [1.0 if gap_h == 1 else 0.0], "b2b_away": [1.0 if gap_a == 1 else 0.0]})
+        p, _ = E2.fit_logistic(train, test, V.LIN_V2, E2.C_LIN)            # games-v2
+        p1, _ = E2.fit_logistic(train, test, E2.V1)                         # games-v1, kept beside it
         fh, fa = form.get(h, {}), form.get(aw, {})
         names_of = lambda s: "; ".join(f"{label.get(int(i), i)} ({avg_min.get(int(i), 0):.0f} min)" for i in str(s).split(",") if i)   # noqa: E731
         rows.append((g["date"], g["home"], g["away"], float(p[0]), rating[h], rating[aw], fh.get("net10"), fa.get("net10"), fh.get("off20"), fh.get("def20"), fa.get("off20"), fa.get("def20"), now,
-                     names_of(hv.ab_ids), names_of(av.ab_ids)))
-        log.append((g["date"], g["home"], g["away"], now, float(p[0]), g.get("market_home_prob"), g.get("market_book")))
+                     names_of(hv.ab_ids), names_of(av.ab_ids), MODEL_VERSION, float(p1[0]), float(cur[60][0][h]), float(cur[60][0][aw]), float(srs[60] + cur[60][1]), float(co.loc[gid, "co_diff"])))
+        log.append((g["date"], g["home"], g["away"], now, float(p[0]), g.get("market_home_prob"), g.get("market_book"), MODEL_VERSION, float(p1[0])))
     team_names = {n: ab_ for ab_, n in zip(tm.TEAM_ABBREVIATION, tm.TEAM_NAME)}
     inj = [(now, next((k for k, v in team_names.items() if v == r["team"]), r["team"]), r["player"], r["status"], r["note"]) for r in report if r["player"]]
     sql = ["DELETE FROM game_lean;"]
-    sql += inserts("game_lean", ["date", "home", "away", "model_home_prob", "elo_home", "elo_away", "home_net10", "away_net10", "home_off20", "home_def20", "away_off20", "away_def20", "as_of", "absent_home", "absent_away"], rows)
-    sql += [x.replace("INSERT OR REPLACE", "INSERT OR IGNORE") for x in inserts("game_lean_log", ["date", "home", "away", "as_of", "model_home_prob", "market_home_prob", "market_book"], log)]
+    sql += inserts("game_lean", ["date", "home", "away", "model_home_prob", "elo_home", "elo_away", "home_net10", "away_net10", "home_off20", "home_def20", "away_off20", "away_def20", "as_of", "absent_home", "absent_away", "model_version", "model_v1_prob", "srs_home", "srs_away", "pred_margin", "co_diff"], rows)
+    sql += [x.replace("INSERT OR REPLACE", "INSERT OR IGNORE") for x in inserts("game_lean_log", ["date", "home", "away", "as_of", "model_home_prob", "market_home_prob", "market_book", "model_version", "model_v1_prob"], log)]
     sql += [x.replace("INSERT OR REPLACE", "INSERT OR IGNORE") for x in inserts("injury_log", ["as_of", "team", "player", "status", "note"], inj)]
     OUT.mkdir(exist_ok=True)
     f = OUT / "game_lean.sql"

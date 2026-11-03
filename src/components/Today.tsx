@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { PicksMeta } from '../../shared/picks.ts'
 import { api } from '../lib/format'
+import { PLAYER_PROPS } from '../lib/features'
 import { likelyPicks, longshotPicks, valuePicks, type Pick } from '../lib/picks'
 import Notices from './Notices'
 import PickTable from './PickTable'
@@ -32,7 +33,7 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame }: {
   useEffect(() => {
     api<{ data: Game[]; meta?: typeof gamesMeta }>(refreshKey ? '/games?fresh=1' : '/games')
       .then((r) => { setGames(r.data); setGamesMeta(r.meta ?? null) }).catch((e) => setError(e.message))
-    api<{ configured: boolean; data: Pick[]; meta: PicksMeta }>('/picks') // props stay cached on purpose: a fresh pull costs ~24 credits
+    if (PLAYER_PROPS) api<{ configured: boolean; data: Pick[]; meta: PicksMeta }>('/picks') // props stay cached on purpose: a fresh pull costs ~24 credits
       .then((r) => { setConfigured(r.configured); setPicks(r.data); setMeta(r.meta ?? null) })
       .catch((e) => setError(e.message))
   }, [refreshKey])
@@ -84,6 +85,7 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame }: {
         )}
       </section>
 
+      {PLAYER_PROPS && (
       <section>
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-xs uppercase tracking-widest text-neutral-500">Suggested bets</h2>
@@ -112,6 +114,7 @@ export default function Today({ refreshKey, onOpenPlayer, onOpenGame }: {
           />
         )}
       </section>
+      )}
     </div>
   )
 }

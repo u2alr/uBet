@@ -5,6 +5,12 @@ import { enrichPicks, listAbsences, parseInjuries, roleFromMinutes, type Injury,
 import { parseStandings } from '../../shared/standings.ts'
 import { parseLiveBox } from '../../shared/liveBox.ts'
 import { parseSportsDbEvents } from '../../shared/sportsdb.ts'
+import type { GameLeanRow } from '../../shared/games.ts'
+import teamFormStatus from '../../shared/teamForm.status.json' with { type: 'json' }
+import { teamForm, type TeamResult } from '../../shared/teamForm.ts'
+import { teamBet } from '../../shared/teamBets.ts'
+import { ownLine } from '../../shared/ownLines.ts'
+import { assembleGames, assembleProps, type StoredRow } from '../../shared/oddsSnapshot.ts'
 import { SHARP_BASE, SHARP_BOOKS, SHARP_PROP_MARKETS, SHARP_TEAM_MARKETS, normalizeSharpGames, normalizeSharpProps, type GameOddsEvent, type SharpQuote } from '../../shared/sharpapi.ts'
 import { teamByName } from '../../src/lib/teams.ts'
 import { applyAuthority } from '../../shared/engine/authority.ts'
@@ -149,17 +155,43 @@ async function sharpRows(env: Bindings, params: Record<string, string>): Promise
   return rows
 }
 
-/** Every upcoming game with its moneyline, spread and total (one to two requests for the whole slate). Also the list of games to pull props for. */
-const loadSharpGames = (env: Bindings, fresh = false) =>
-  cachedJson<GameOddsEvent[]>(`sharp-games-${sharpBooks(env).join('+')}`, GAMES_TTL, async () =>
-    normalizeSharpGames(await sharpRows(env, { markets: SHARP_TEAM_MARKETS, is_main_line: 'true', sportsbooks: sharpBooks(env).join(',') }), sharpBooks(env)), fresh)
+/**
+ * The odds the site shows come from `odds_snapshot`, filled by the local odds sync (scripts/sync_odds.mjs), so a page load never calls the provider.
+ * Until a first sync has stored anything, the Worker falls back to asking the provider itself (cached), so a fresh install still shows odds.
+ */
+async function readSnapshot(env: Bindings, kind: 'games' | 'props', eventId?: string): Promise<StoredRow[]> {
+  try {
+    const sql = `SELECT event_id, part, commence_time, home_team, away_team, fetched_at, body FROM odds_snapshot WHERE kind = ?${eventId ? ' AND event_id = ?' : ''}`
+    return (await env.DB.prepare(sql).bind(...(eventId ? [kind, eventId] : [kind])).all<StoredRow>()).results
+  } catch { return [] } // the table does not exist until migration 0022 is applied
+}
 
-/** One game's player props from SharpAPI, main lines only, as the pick builder's event shape. Cached with its retrieval time. */
-const loadEventProps = (env: Bindings, g: { id: string; commence_time: string; home_team: string; away_team: string }, fresh = false) =>
-  cachedMeta<OddsEvent>(`sharp-props-${g.id}-${sharpBooks(env).join('+')}`, PROPS_TTL, async () => {
+/** Every upcoming game with its moneyline, spread and total. Stored odds first; the provider (one to two requests for the whole slate) only before any sync. */
+async function loadSharpGames(env: Bindings, fresh = false): Promise<GameOddsEvent[]> {
+  if (!fresh) {
+    const stored = assembleGames(await readSnapshot(env, 'games'))
+    if (stored.length) return stored
+  }
+  return cachedJson<GameOddsEvent[]>(`sharp-games-${sharpBooks(env).join('+')}`, GAMES_TTL, async () =>
+    normalizeSharpGames(await sharpRows(env, { markets: SHARP_TEAM_MARKETS, is_main_line: 'true', sportsbooks: sharpBooks(env).join(',') }), sharpBooks(env)), fresh)
+}
+
+const oddsAreSynced = async (env: Bindings) => !!(await env.DB.prepare("SELECT 1 AS x FROM odds_snapshot LIMIT 1").first().catch(() => null))
+
+/**
+ * One game's player props, main lines only, as the pick builder's event shape, with the time the provider answered.
+ * Once the odds sync has run, only stored props are used (null when a game has none yet): the provider is not called per page view.
+ */
+async function loadEventProps(env: Bindings, g: { id: string; commence_time: string; home_team: string; away_team: string }, fresh = false): Promise<Cached<OddsEvent> | null> {
+  if (!fresh && await oddsAreSynced(env)) {
+    const stored = assembleProps(await readSnapshot(env, 'props', g.id))
+    return stored ? { fetchedAt: stored.fetchedAt, data: stored.event } : null
+  }
+  return cachedMeta<OddsEvent>(`sharp-props-${g.id}-${sharpBooks(env).join('+')}`, PROPS_TTL, async () => {
     const rows = await sharpRows(env, { event_id: g.id, markets: SHARP_PROP_MARKETS, is_main_line: 'true', sportsbooks: sharpBooks(env).join(',') })
     return normalizeSharpProps(rows, sharpBooks(env)).events[0] ?? { id: g.id, commence_time: g.commence_time, home_team: g.home_team, away_team: g.away_team, bookmakers: [] }
   }, fresh)
+}
 
 // ---------- odds capture (for closing-line analysis) ----------
 
@@ -174,7 +206,7 @@ app.get('/capture', async (c) => {
   const soon = games.filter((e) => Date.parse(e.commence_time) > Date.now() && Date.parse(e.commence_time) < Date.now() + hours * 3600_000).slice(0, 6)
   for (const e of soon) {
     const ev = await loadEventProps(c.env, e, true)
-    await archiveSnapshot(c.env, ev.data, ev.fetchedAt)
+    if (ev) await archiveSnapshot(c.env, ev.data, ev.fetchedAt)
   }
   return c.json({ games: soon.length })
 })
@@ -187,8 +219,11 @@ app.get('/status', async (c) => {
   const counts = await c.env.DB.prepare(
     'SELECT (SELECT COUNT(*) FROM players) AS players, (SELECT MAX(date) FROM games) AS newestGame',
   ).first<{ players: number; newestGame: string | null }>()
+  // What the odds sync last stored: the age of the odds the site is showing.
+  const odds = await c.env.DB.prepare("SELECT COUNT(DISTINCT CASE WHEN kind = 'games' THEN event_id END) AS games, COUNT(DISTINCT CASE WHEN kind = 'props' THEN event_id END) AS propGames, MIN(fetched_at) AS oldest, MAX(fetched_at) AS newest FROM odds_snapshot")
+    .first<{ games: number; propGames: number; oldest: number | null; newest: number | null }>().catch(() => null)
   // D1's datetime('now') is UTC without a zone marker.
-  return c.json({ lastSync: last ? `${last.value.replace(' ', 'T')}Z` : null, ...counts })
+  return c.json({ lastSync: last ? `${last.value.replace(' ', 'T')}Z` : null, ...counts, odds })
 })
 
 // ---------- players & stats ----------
@@ -450,6 +485,35 @@ async function loadTeamOdds(env: Bindings, fresh = false): Promise<Map<string, G
   return new Map(events.map((e) => [`${teamKey(e.away_team)}@${teamKey(e.home_team)}`, parseGameOdds(e)]))
 }
 
+// Team bets: every upcoming game with the best price on each side, the market's chance, ours (the game model blended with the market) and the expected profit,
+// plus our own fair moneyline and spread. The odds are the stored ones; no provider call. `best` ranks the sides with positive expected profit.
+app.get('/team-bets', async (c) => {
+  const fresh = wantsFresh(c)
+  const [games, odds, leanRows, results] = await Promise.all([
+    loadGames(c.env, fresh),
+    loadTeamOdds(c.env, fresh).catch((e) => { console.error('team odds unavailable', e instanceof Error ? e.message : String(e)); return null }),
+    c.env.DB.prepare(`SELECT date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of, absent_home, absent_away, model_version, model_v1_prob, srs_home, srs_away, pred_margin, co_diff
+       FROM game_lean WHERE date >= date('now', '-1 day')`).all<GameLeanRow>().then((r) => r.results).catch(() => [] as GameLeanRow[]),
+    // Every team's results over the last ~13 months (win or loss only: the stored box scores are not complete enough for margins). One query serves every game.
+    cachedJson<TeamResult[]>('team-results', 10 * 60, async () => (await c.env.DB.prepare(
+      `SELECT g.date AS date, pg.team_id AS teamId, pg.opp AS opp, pg.is_home AS home, MAX(pg.won) AS won
+       FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE g.game_type != 'preseason' AND g.date >= date('now', '-400 days') AND pg.opp IS NOT NULL
+       GROUP BY g.id, pg.team_id`).all<{ date: string; teamId: number; opp: string; home: number; won: number }>()).results
+      .flatMap((r) => { const team = abbrOfTeamId(r.teamId); return team ? [{ date: r.date, team, opp: normAbbr(r.opp), home: !!r.home, won: !!r.won }] : [] }), fresh)
+      .catch(() => [] as TeamResult[]),
+  ])
+  const model = new Map(leanRows.map((r) => [`${r.date}|${normAbbr(r.home)}|${normAbbr(r.away)}`, r]))
+  const rows = games.filter((g: any) => g.state !== 'post').map((g: any) => {
+    const ge = odds?.get(`${teamKey(g.away.name)}@${teamKey(g.home.name)}`)
+    const m = model.get(`${etDate(g.date)}|${normAbbr(g.home.abbr)}|${normAbbr(g.away.abbr)}`)
+    const bet = teamBet({ home: g.home.abbr, away: g.away.abbr, books: ge?.books ?? [], modelHomeProb: m ? m.model_home_prob : null, modelMargin: m?.pred_margin ?? null })
+    return { id: g.id, date: g.date, state: g.state as string, status: g.status as string, home: { abbr: g.home.abbr, name: g.home.name, score: g.home.score }, away: { abbr: g.away.abbr, name: g.away.name, score: g.away.score }, bet, books: ge?.books ?? [], form: teamForm(normAbbr(g.home.abbr), normAbbr(g.away.abbr), results, etDate(g.date)), model: m ?? null, modelAsOf: m?.as_of ?? null }
+  })
+  const best = rows.filter((r) => r.state === 'pre' && r.bet.best).map((r) => ({ gameId: r.id, ...r.bet.best! })).sort((a, b) => b.ev - a.ev).slice(0, 10)
+  return c.json({ data: { games: rows, best }, meta: { teamForm: teamFormStatus, oddsAvailable: odds !== null && odds.size > 0, modelGames: rows.filter((r) => r.modelAsOf).length,
+    note: 'Our chance is the game model blended with the market; with no price it is the model alone. The model is tested on past games, but it has not been tested against sportsbook prices and cannot see late injury news. Expected profit is a rough guide.', model: gamesStatus } })
+})
+
 // ---------- availability (ESPN's keyless injury list) ----------
 
 /** Player name -> listed status. Keyless, so it costs no credits; null if ESPN is down, which callers say out loud. */
@@ -556,7 +620,7 @@ app.get('/defense-context', async (c) => {
 app.get('/game-lean', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
-      `SELECT date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of, absent_home, absent_away
+      `SELECT date, home, away, model_home_prob, elo_home, elo_away, home_net10, away_net10, home_off20, home_def20, away_off20, away_def20, as_of, absent_home, absent_away, model_version, model_v1_prob, srs_home, srs_away, pred_margin, co_diff
        FROM game_lean WHERE date >= date('now', '-1 day') ORDER BY date, home`,
     ).all()
     c.header('Cache-Control', 'private, max-age=300')
@@ -606,6 +670,34 @@ app.get('/odds-archive', async (c) => {
   return c.json({ data: { ...t, byKind, event: eventId, eventStart: start, markets } })
 })
 
+// Our own lines: a line and fair prices for every player we project, from the model alone. No provider, no sportsbook. Fair prices carry no margin,
+// so they are what the model thinks a bet is worth, not something a book will pay. ?player=name, ?stat=pts|reb|ast|fg3m|pra, ?date=YYYY-MM-DD narrow it.
+app.get('/lines', async (c) => {
+  const q = c.req.query()
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(q.date ?? '') ? q.date : null
+  const stat = ['pts', 'reb', 'ast', 'fg3m', 'pra'].includes(q.stat ?? '') ? q.stat! : null
+  const term = (q.player ?? '').trim().slice(0, 40)
+  const today = etDate(new Date().toISOString())
+  // With nothing projected for today or later (the box-score sync has not run lately) show the newest projected day, and say so.
+  const newest = (await c.env.DB.prepare('SELECT MAX(game_date) AS d FROM projections').first<{ d: string | null }>().catch(() => null))?.d ?? null
+  const from = date ?? (newest && newest < today ? newest : today)
+  const { results } = await c.env.DB.prepare(
+    `SELECT pr.player_id AS id, p.name, p.team, pr.game_date AS gameDate, pr.stat, pr.mean, pr.alpha, pr.model, pr.created_at AS createdAt
+     FROM projections pr JOIN players p ON p.id = pr.player_id
+     WHERE ${date ? 'pr.game_date = ?' : 'pr.game_date >= ?'} AND pr.mean > 0${stat ? ' AND pr.stat = ?' : ''}${term ? " AND p.name LIKE ? ESCAPE '\\'" : ''}
+     ORDER BY pr.game_date, p.name, pr.stat LIMIT 3000`,
+  ).bind(...[from, ...(stat ? [stat] : []), ...(term ? [`%${escapeLike(term)}%`] : [])]).all<{ id: number; name: string; team: string | null; gameDate: string; stat: string; mean: number; alpha: number; model: string; createdAt: string }>()
+  const players = new Map<string, { id: number; name: string; team: string | null; gameDate: string; model: string; asOf: string; lines: NonNullable<ReturnType<typeof ownLine>>[] }>()
+  for (const r of results) {
+    const l = ownLine({ stat: r.stat, mean: r.mean, alpha: r.alpha })
+    if (!l) continue
+    const k = `${r.id}|${r.gameDate}`
+    const e = players.get(k) ?? players.set(k, { id: r.id, name: r.name, team: r.team, gameDate: r.gameDate, model: r.model, asOf: r.createdAt, lines: [] }).get(k)!
+    e.lines.push(l)
+  }
+  return c.json({ data: [...players.values()], meta: { note: 'Fair prices from our own model: no sportsbook margin, not an offer anyone will take.', stale: !date && from < today, projectedThrough: newest } })
+})
+
 // ---------- picks (SharpAPI odds + model) ----------
 
 async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: boolean; picks: Pick[]; meta: PicksMeta }> {
@@ -615,22 +707,30 @@ async function loadPicks(env: Bindings, fresh = false): Promise<{ configured: bo
 
   // Odds are optional: if the provider is rate limited or down, the rest of the app (scores, standings, injuries, stats) still works.
   const fetched: Cached<OddsEvent>[] = []
-  let failed = 0
+  let failed = 0, notSynced = 0
   try {
     const games = await loadSharpGames(env, fresh)
     const upcoming = games
       .filter((e) => Date.parse(e.commence_time) < now + Number(env.ODDS_HOURS ?? 40) * 3600_000 && Date.parse(e.commence_time) > now)
       .slice(0, Math.max(1, Math.min(15, Number(env.ODDS_MAX_EVENTS) || DEFAULT_MAX_EVENTS)))
     // One game at a time: the provider limits requests a minute, and a game that fails must not hide the others.
+    // At the first rate-limit answer the rest are skipped, not tried: each try would be refused too. Games already cached are still served, so a refresh a minute later fills in more.
+    let limited = false
     for (const g of upcoming) {
-      try { fetched.push(await loadEventProps(env, g, fresh)) } catch (e) { failed++; console.error('props unavailable', e instanceof Error ? e.message : String(e)) }
+      if (limited) { failed++; continue }
+      try { const got = await loadEventProps(env, g, fresh); if (got) fetched.push(got); else notSynced++ } catch (e) {
+        failed++
+        limited = e instanceof UpstreamError && e.message.includes('rate limit')
+        console.error('props unavailable', e instanceof Error ? e.message : String(e))
+      }
     }
-    if (upcoming.length && !fetched.length) throw new UpstreamError('no game could be loaded')
+    if (upcoming.length && !fetched.length && failed) throw new UpstreamError('no game could be loaded')
   } catch (e) {
     console.error('odds unavailable', e instanceof Error ? e.message : String(e))
     meta.warnings.push({ code: 'odds_unavailable', message: 'Sportsbook lines are unavailable right now (provider error or rate limit). Scores, standings, injuries and player stats still work; props return when odds do.' })
     return { configured: true, picks: [], meta }
   }
+  if (notSynced) meta.warnings.push({ code: 'odds_not_synced', message: `${notSynced} game${notSynced === 1 ? ' has' : 's have'} no stored player props yet. The odds sync adds more games each run (node scripts/sync_odds.mjs).` })
   if (failed) meta.warnings.push({ code: 'odds_partial', message: `${failed} game${failed === 1 ? '' : 's'} could not be loaded (the provider's request limit, most likely), so ${failed === 1 ? 'its' : 'their'} props are missing. Refresh in a minute.` })
 
   // Point-in-time archive: each retrieved snapshot is recorded once (the run row makes a repeat a no-op), best effort, never allowed to break the page.

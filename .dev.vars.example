@@ -1,6 +1,8 @@
 # Your SharpAPI key from https://sharpapi.io (the free plan is enough: DraftKings and FanDuel, 12 requests a minute, quotes delayed 60 seconds).
 SHARPAPI_KEY=your_key_from_sharpapi.io
-# Games to pull player props for per refresh. Each game takes about 3 of the free plan's 12 requests a minute. Game odds (moneyline, spread, total) cover every game regardless.
-ODDS_MAX_EVENTS=3
+# Player props are off for now. Set ODDS_PROPS=1 to sync them again.
+# ODDS_PROPS=1
+# Games the odds sync (scripts/sync_odds.mjs) stores player props for per run. Each game takes about 3 of the free plan's 12 requests a minute. Game odds (moneyline, spread, total) cover every game regardless.
+ODDS_MAX_EVENTS=8
 # Optional: comma-separated SharpAPI sportsbook ids. Default draftkings,fanduel, which are the free plan's two books.
 # ODDS_BOOKS=draftkings,fanduel

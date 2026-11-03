@@ -23,6 +23,10 @@ copy only stays current while you push fresh data to it from here.
    ```
 5. Put Cloudflare Access (Zero Trust, free for a few users) in front of the site if it is only for you. The site itself is public otherwise.
 
+## Odds
+
+The deployed site reads `odds_snapshot`; fill it from your computer with `node scripts/sync_odds.mjs --remote` (the `ingest/server.mjs` helper runs the local copy every 10 minutes). Run it on a schedule (Windows Task Scheduler every 10 to 15 minutes) if you want the deployed odds to stay current.
+
 ## Request limits
 
 SharpAPI's free plan allows 12 requests a minute. Game odds for the whole slate take one or two requests and are cached 10 minutes; each game's player props take about three and are cached 10 minutes. Props load one game at a time and, if the limit is hit, the board shows the games it got and says the rest are missing. Game odds never depend on props.

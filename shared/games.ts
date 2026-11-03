@@ -13,6 +13,8 @@ export interface GameLeanRow {
   as_of: string
   /** Rotation players the injury report lists Out, "Name (avg minutes)" separated by semicolons; empty when none (or when the team has no rotation yet this season). */
   absent_home?: string | null; absent_away?: string | null
+  /** games-v2 (PREREG_GAMES_V2.md): which model made `model_home_prob`, the v1 number beside it, opponent-adjusted margin ratings (points per game against an average team), the predicted home margin, and the common-opponent tally. */
+  model_version?: string | null; model_v1_prob?: number | null; srs_home?: number | null; srs_away?: number | null; pred_margin?: number | null; co_diff?: number | null
 }
 
 export interface Lean {
@@ -82,6 +84,8 @@ const absentees = (list?: string | null) => (list ?? '').split(';').map((s) => s
 
 const pct0 = (x: number) => `${Math.round(x * 100)}%`
 const NET_GAP = 6, ELO_GAP = 25, ELO_HUGE = 100, BEYOND_ELO = 0.03
+/** Display thresholds for the games-v2 reasons: a rating gap of 2.5 points a game, and a common-opponent tally that leans at least 30% one way. */
+const SRS_GAP = 2.5, CO_GAP = 0.3
 
 /**
  * Why the model favours the team it does. The model's inputs are home court, a margin-aware Elo and the rotation players the injury report lists Out; those
@@ -116,6 +120,23 @@ export function gameReasons(r: GameLeanRow, marketHomeProb: number | null, uncer
   if (Math.abs(shift) >= BEYOND_ELO) {
     const favPlain = homeFav ? plain : 1 - plain
     add('context', 'Beyond Elo', `Elo with home court alone gives ${fav} ${pct0(favPlain)}; the model says ${pct0(l.modelProb)}, ${l.modelProb > favPlain ? 'higher' : 'lower'}, because it also reads the injury report and was fitted on past seasons.`)
+  }
+
+  // games-v2 inputs (PREREG_GAMES_V2.md): ratings adjusted for who each team has played, and the common-opponent tally.
+  if (r.model_version === 'games-v2' && r.srs_home != null && r.srs_away != null) {
+    const mine = homeFav ? r.srs_home : r.srs_away, theirs = homeFav ? r.srs_away : r.srs_home
+    const d = mine - theirs
+    const sgn = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(1)}`
+    if (Math.abs(d) >= SRS_GAP) add(d > 0 ? 'for' : 'against', 'Opponent-adjusted rating', `Adjusted for the strength of every team each has played (chains such as "A beat C, B lost to C" included), ${fav} rates ${sgn(mine)} points a game against an average team and ${opp} ${sgn(theirs)}.`)
+    else add('context', 'Opponent-adjusted rating', `Adjusted for who each has played, the teams are close: ${fav} ${sgn(mine)}, ${opp} ${sgn(theirs)} points a game against an average team.`)
+    if (r.pred_margin != null) {
+      const m = r.pred_margin, winner = m >= 0 ? r.home : r.away
+      add('context', 'Expected margin', `The ratings, with home court, expect ${winner} to win by about ${Math.abs(m).toFixed(1)} points. A guide to the size of the edge, not a prediction of the score.`)
+    }
+  }
+  if (r.model_version === 'games-v2' && r.co_diff != null && Math.abs(r.co_diff) >= CO_GAP) {
+    const forHome = r.co_diff > 0
+    add((forHome === homeFav) ? 'for' : 'against', 'Common opponents', `Against opponents both teams have played, ${forHome ? r.home : r.away} has the better recent results (a tally of ${Math.round(Math.abs(r.co_diff) * 100)}% of the shared opponents that differ).`)
   }
 
   // The market.
