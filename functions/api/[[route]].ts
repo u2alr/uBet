@@ -6,6 +6,8 @@ import { parseStandings } from '../../shared/standings.ts'
 import { parseLiveBox } from '../../shared/liveBox.ts'
 import { parseSportsDbEvents } from '../../shared/sportsdb.ts'
 import type { GameLeanRow } from '../../shared/games.ts'
+import adaptationStatus from '../../shared/adaptation.status.json' with { type: 'json' }
+import { review, type ReviewRow } from '../../shared/seasonReview.ts'
 import teamFormStatus from '../../shared/teamForm.status.json' with { type: 'json' }
 import { teamForm, type TeamResult } from '../../shared/teamForm.ts'
 import { teamBet } from '../../shared/teamBets.ts'
@@ -512,6 +514,14 @@ app.get('/team-bets', async (c) => {
   const best = rows.filter((r) => r.state === 'pre' && r.bet.best).map((r) => ({ gameId: r.id, ...r.bet.best! })).sort((a, b) => b.ev - a.ev).slice(0, 10)
   return c.json({ data: { games: rows, best }, meta: { teamForm: teamFormStatus, oddsAvailable: odds !== null && odds.size > 0, modelGames: rows.filter((r) => r.modelAsOf).length,
     note: 'Our chance is the game model blended with the market; with no price it is the model alone. The model is tested on past games, but it has not been tested against sportsbook prices and cannot see late injury news. Expected profit is a rough guide.', model: gamesStatus } })
+})
+
+// The season so far, reviewed: who the model had as the favourite before each game already played, who won, and what the upsets had in common. The predictions are the
+// walk-forward ones (earlier seasons only) that research/game_snapshot.py stores; the review counts upsets against what the model expected before reading anything into them.
+app.get('/season-review', async (c) => {
+  const rows = await c.env.DB.prepare('SELECT date, home, away, p_home, home_won, srs_gap, talent_diff, rest_diff, b2b_home, b2b_away FROM season_review ORDER BY date, home')
+    .all<ReviewRow>().then((r) => r.results).catch(() => [] as ReviewRow[])   // the table does not exist until migration 0024
+  return c.json({ data: review(rows), meta: { model: gamesStatus, adaptation: adaptationStatus } })
 })
 
 // ---------- availability (ESPN's keyless injury list) ----------

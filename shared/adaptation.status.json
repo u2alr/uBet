@@ -1,0 +1,9 @@
+{
+  "tested": [
+    "Online recalibration: fit a scale on the season so far, shrunk toward 1",
+    "Early-season shrink: pull the first 8% of games toward 50%"
+  ],
+  "adopted": [],
+  "result": "Neither changed log loss by more than 0.001 in any of four test seasons, and neither passed its pre-registered rule. The model already learns the season through its day-by-day ratings and refits.",
+  "evidence": "research/PREREG_GAMES_V2.md"
+}

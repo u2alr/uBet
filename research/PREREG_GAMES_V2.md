@@ -58,3 +58,21 @@ Run once as specified (`research/game_eval_v2.py`, output `research/out/games_v2
 # Last addendum (after the model was chosen; a simplification, not a new claim): the common-opponent input is removed
 
 The product owner asked that last season's and the preseason's matchups play no part, and the page now uses this season's regular-season games only. The model's `co_diff` input looked 400 days back, across seasons, so it was the one place older matchups still entered. A paired ablation on the same four folds showed it adds nothing: dropping it changes log loss by -0.0002, -0.0000, +0.0005 and +0.0000 (E0, A, B, F; mean +0.0001, positive meaning dropping it is better). It was therefore removed from `lin_v2` (and so from `gbm_v2`), and the evaluation was re-run so the published numbers describe the model that ships. The decision rule was not changed and was re-applied to the re-run; its outcome is in `RESULTS_GAMES_V2.md`. The common-opponent tally is still computed for display, from this season's regular-season games only, as context.
+
+---
+
+# Addendum (written BEFORE the adaptation tests below were run): can the model learn from the season as it unfolds?
+
+**Why.** The 2026-27 games so far show clear favourites (stated 65 to 78%) winning 61% of the time against 72% stated, while heavy favourites did as stated. Eighty-nine games cannot tell luck from a pattern, so two ways of learning within a season are tested on the four seasons that can.
+
+**What already adapts, and so is not tested again.** Elo updates after every game; the opponent-adjusted ratings re-solve every day with 30, 60 and 120 day memories; the model is refit on every game played, this season's included.
+
+**Two candidates, each applied to the walk-forward `lin_v2` probabilities of folds E0, A, B and F (fixed now, no tuning):**
+1. **Online recalibration.** Before each game, fit one scale `a` on that season's EARLIER games only, in `P = sigmoid(a * logit(p))`, with a penalty `40 * (a - 1)^2` (a prior that the model is calibrated, worth about 200 games), and use `a` for the game. Games on the same date share the same `a`.
+2. **Early-season shrink.** For games in the first 8% of a season, multiply `logit(p)` by 0.85.
+
+**Rule (fixed now).** A candidate is adopted only if its paired log-loss improvement over `lin_v2`, pooled over E0, A and B, has a 95% interval entirely above 0, AND on F it is not worse than `lin_v2` by more than 0.001. Nothing else about the model changes.
+
+# Outcome of the adaptation addendum (run once, as specified: `research/game_eval_adapt.py`, `research/out/games_adapt.json`)
+
+Neither candidate is adopted. Online recalibration: pooled paired change in log loss over E0, A, B of -0.0001, 95% interval [-0.0009, +0.0007]. Early-season shrink: +0.0001, [-0.0005, +0.0008]. Both are indistinguishable from nothing in every season, including F. The model already learns the season through its day-by-day ratings and its refits, and adding a correction on top of that only adds noise. Nothing about the model changed.

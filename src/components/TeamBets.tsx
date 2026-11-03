@@ -5,6 +5,7 @@ import type { MoneylineBet, BookLine, TeamBet } from '../../shared/teamBets.ts'
 import { commonLean, type TeamForm } from '../../shared/teamForm.ts'
 import { api, pct } from '../lib/format'
 import { teamByName } from '../lib/teams'
+import { TIERS, tierOf } from '../lib/tiers'
 import ReasonList from './ReasonList'
 import TeamChip from './TeamChip'
 
@@ -26,17 +27,6 @@ const shortDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateStrin
 const signed = (n: number | null, d = 1) => (n == null ? '–' : `${n > 0 ? '+' : ''}${n.toFixed(d)}`)
 const evText = (n: number) => `${n > 0 ? '+' : ''}${(n * 100).toFixed(1)}%`
 
-/**
- * Who we think wins and how sure we are, in words and colors. This is the likelier winner, which is a different question from which bet is good value, so green (which means
- * value here) is not used: heavy is violet, clear is sky blue, slight is amber, a toss-up is grey. Full class names, so Tailwind can see them.
- */
-const TIERS = [
-  { min: 0.78, label: 'Heavy favourite', short: 'Heavy', range: '78% and up', bar: 'bg-violet-500', text: 'text-violet-400', tint: 'bg-violet-500/10 ring-1 ring-violet-500/60', badge: 'bg-violet-500' },
-  { min: 0.65, label: 'Clear favourite', short: 'Clear', range: '65 to 78%', bar: 'bg-sky-400', text: 'text-sky-400', tint: 'bg-sky-400/10 ring-1 ring-sky-400/60', badge: 'bg-sky-400' },
-  { min: 0.56, label: 'Slight favourite', short: 'Slight', range: '56 to 65%', bar: 'bg-amber-400', text: 'text-amber-400', tint: 'bg-amber-400/10 ring-1 ring-amber-400/60', badge: 'bg-amber-400' },
-  { min: 0, label: 'Toss-up', short: 'Toss-up', range: 'under 56%', bar: 'bg-neutral-500', text: 'text-neutral-400', tint: 'bg-neutral-500/10 ring-1 ring-neutral-500/60', badge: 'bg-neutral-400' },
-] as const
-const tierOf = (p: number) => TIERS.find((x) => p >= x.min) ?? TIERS[TIERS.length - 1]
 const confidence = (p: number) => tierOf(p).label
 const pickOf = (r: Row) => {
   const p = r.bet.ours?.homeProb ?? r.bet.market.homeProb

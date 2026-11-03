@@ -1,7 +1,7 @@
 import { PLAYER_PROPS } from './features.ts'
 // The address bar is the source of truth for where you are, so the browser's back and forward buttons just work.
 // Hash routes keep this a static site: #/Teams (home, team bets), #/Today, #/Props, #/Today/game/<id>, #/Players, #/Players/<playerId>, #/Results ...
-const ALL_TABS = ['Teams', 'Today', 'Props', 'Matchups', 'Cheatsheet', 'Standings', 'Results', 'Players'] as const
+const ALL_TABS = ['Teams', 'Today', 'Review', 'Props', 'Matchups', 'Cheatsheet', 'Standings', 'Results', 'Players'] as const
 export type Tab = (typeof ALL_TABS)[number]
 /** What the header shows. The player-props tabs are hidden while PLAYER_PROPS is off; their addresses still open, so old links keep working. */
 const PROPS_TABS: readonly Tab[] = ['Props', 'Matchups', 'Cheatsheet', 'Results', 'Players']

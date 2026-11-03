@@ -9,6 +9,7 @@ const CheatSheet = lazy(() => import('./components/CheatSheet'))
 const Matchups = lazy(() => import('./components/Matchups'))
 import PropsBoard from './components/PropsBoard'
 import TeamBets from './components/TeamBets'
+import SeasonReview from './components/SeasonReview'
 import SyncBar from './components/SyncBar'
 import Today from './components/Today'
 import { TABS, formatRoute, parseRoute, type Route } from './lib/route'
@@ -58,6 +59,7 @@ function Shell() {
       <h1 className="sr-only">{tab === 'Today' ? 'Games' : tab === 'Cheatsheet' ? 'Cheat sheet' : tab}</h1>
       <Suspense fallback={<p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">Loading…</p>}>
       {tab === 'Teams' && <TeamBets refreshKey={refreshKey} onOpenGame={(id) => go({ tab: 'Today', gameId: id })} />}
+      {tab === 'Review' && <SeasonReview refreshKey={refreshKey} />}
       {tab === 'Props' && <PropsBoard refreshKey={refreshKey} onOpenPlayer={openPlayer} />}
       {tab === 'Today' && (gameId
         ? <GameDetail refreshKey={refreshKey} gameId={gameId} onBack={() => go({ tab: 'Today' })} onOpenPlayer={openPlayer} />
