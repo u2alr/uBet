@@ -16,7 +16,7 @@ sys.path.insert(0, str(HERE))
 import fixture_data  # noqa: E402
 
 FILES = ["test_leakage.py", "test_leakage_detector.py", "test_nb.py", "test_port.py", "test_v3.py", "test_calibration_report.py",
-         "test_kalshi.py", "test_market_eval.py", "test_injury_names.py", "test_injury_default.py", "test_archive_export.py", "test_context_features.py", "test_human_factors.py", "test_defense.py", "test_games.py", "test_games_v2.py", "test_games_v3.py", "test_injury_outcomes.py", "test_games_v4.py", "test_games_v5.py", "test_games_v6.py","test_shadow_report.py", "test_market_games.py", "test_nba_injury_pdf.py"]
+         "test_kalshi.py", "test_market_eval.py", "test_injury_names.py", "test_injury_default.py", "test_archive_export.py", "test_context_features.py", "test_human_factors.py", "test_defense.py", "test_games.py", "test_games_v2.py", "test_games_v3.py", "test_injury_outcomes.py", "test_games_v4.py", "test_games_v5.py", "test_games_v6.py","test_shadow_report.py", "test_market_games.py", "test_nba_injury_pdf.py", "test_games_v7.py"]
 
 
 def main() -> int:
