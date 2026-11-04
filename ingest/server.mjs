@@ -71,7 +71,11 @@ async function startSync(mode, player) {
     } else if (mode === 'player') {
       await run(['--seasons', '3', player], `Syncing ${player}`)
     } else if (await run(['--teams-only'], 'Updating teams')) {
-      await run(['--all-active', '--seasons', '1', '--delay', '1'], 'Syncing box scores')
+      // Fast path: the whole league in a few requests, only what is new. If NBA.com refuses the big request, fall back to one player at a time.
+      if (!(await run(['--league'], 'Syncing box scores'))) {
+        state.error = ''
+        await run(['--all-active', '--seasons', '1', '--delay', '1'], 'Syncing box scores (one player at a time)')
+      }
       // Fresh game logs -> fresh projections for the upcoming games.
       await run([], 'Updating projections', projectScript)
       // New games' matchups (incremental: only games not yet stored) and the defensive context for the next games. Display only; a failure here never blocks the rest.

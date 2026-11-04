@@ -1,10 +1,10 @@
 // Team bets: for one game (with no price, just the model's own chance), the best price on each side of the moneyline, the market's no-margin chance, our chance (the game model blended with the market the same way
-// props are), expected profit, and our own fair prices (moneyline and spread) next to the market's. Pure: no network, no database, no clock.
+// props are), and our own fair prices (moneyline and spread) next to the market's. It does not recommend bets. Pure: no network, no database, no clock.
 //
 // Honesty about what is tested: the game model (shared/games.status.json) is calibrated on past games but has NOT been tested against sportsbook prices, and it cannot see
-// injuries or lineups. So the chance used here is a blend that leans on the market, and every expected-profit figure is a rough guide, not a verdict.
+// injuries or lineups. So the chance used here is a blend that leans on the market.
 // Spreads and totals are shown as market lines only (we have no validated model of margin or scoring); our fair spread is a conversion of our win chance, not a separate model.
-import { blendProb, expectedValue, MODEL_WEIGHT } from './baseline.ts'
+import { blendProb, MODEL_WEIGHT } from './baseline.ts'
 import { consensusProb, fairProb, median } from './devig.ts'
 
 /** A best price this far above the runner-up looks stale or mistyped, so the runner-up is used instead (same rule as the props engine). */
@@ -41,10 +41,6 @@ export interface MoneylineBet {
   /** Our chance: the model blended with the market. Equal to the market's when there is no model. */
   prob: number
   modelProb: number | null
-  /** prob - marketProb. Positive: we like this side more than the market does. */
-  edge: number
-  /** Expected profit per 1 staked at the best price. */
-  ev: number
 }
 
 export interface TeamBet {
@@ -52,8 +48,6 @@ export interface TeamBet {
   away: string
   market: { spread: number | null; total: number | null; spreadBook: string | null; homeProb: number | null; books: number; booksUsed: number; booksDropped: number; /** True when at least two books priced the moneyline, so the chance and the price are cross-checked. */ corroborated: boolean }
   moneyline: { home: MoneylineBet; away: MoneylineBet } | null
-  /** The better of the two moneyline bets by expected profit, or null when neither is positive or fewer than two books priced the game. */
-  best: MoneylineBet | null
   ours: { fairMoneyline: { home: number; away: number }; spread: number | null; homeProb: number } | null
 }
 
@@ -98,15 +92,17 @@ export function teamBet(i: TeamBetInput): TeamBet {
   const cons = consensusProb(probs)
   const marketHome = cons ? cons.prob : null
   const spreadBooks = i.books.filter((b) => b.spread)
-  const spread = median(spreadBooks.map((b) => b.spread!.point))
-  const total = median(i.books.filter((b) => b.total).map((b) => b.total!.point))
+  // The median of two books can land between lines (-2.5 and -2 average to -2.25); lines come in half points, so the result is put back on one.
+  const onLine = (x: number | null) => (x == null ? null : halfPoint(x))
+  const spread = onLine(median(spreadBooks.map((b) => b.spread!.point)))
+  const total = onLine(median(i.books.filter((b) => b.total).map((b) => b.total!.point)))
   const market = { spread, total, spreadBook: spreadBooks[0]?.title ?? null, homeProb: marketHome == null ? null : round(marketHome), books: i.books.length, booksUsed: cons?.used ?? 0, booksDropped: cons?.dropped ?? 0, corroborated: (cons?.used ?? 0) >= 2 }
   if (marketHome == null) {
-    // No book has priced the game. A model number still stands on its own (it is calibrated on past games), but there is no price to take and so no expected profit.
-    if (i.modelHomeProb == null) return { home: i.home, away: i.away, market, moneyline: null, best: null, ours: null }
+    // No book has priced the game. A model number still stands on its own (it is calibrated on past games), but there is no price to show.
+    if (i.modelHomeProb == null) return { home: i.home, away: i.away, market, moneyline: null, ours: null }
     const p = i.modelHomeProb
     return {
-      home: i.home, away: i.away, market, moneyline: null, best: null,
+      home: i.home, away: i.away, market, moneyline: null,
       ours: { fairMoneyline: { home: round(1 / p, 2), away: round(1 / (1 - p), 2) }, spread: i.modelMargin != null ? halfPoint(-i.modelMargin) : fairSpread(p, null, null), homeProb: round(p) },
     }
   }
@@ -125,14 +121,11 @@ export function teamBet(i: TeamBetInput): TeamBet {
     return {
       side, team: side === 'home' ? i.home : i.away, price: b.price, book: b.book, priceCapped: b.capped, marketProb: round(mp), prob: round(p),
       modelProb: i.modelHomeProb == null ? null : round(side === 'home' ? i.modelHomeProb : 1 - i.modelHomeProb),
-      edge: round(p - mp), ev: round(expectedValue(p, 0, b.price)),
     }
   }
   const home = mk('home'), away = mk('away')
-  const top = home.ev >= away.ev ? home : away
   return {
-    home: i.home, away: i.away, market, moneyline: { home, away }, best: top.ev > 0 && market.corroborated ? top : null,   // a single book cannot be cross-checked, so it never earns a recommendation
-   
+    home: i.home, away: i.away, market, moneyline: { home, away },
     ours: { fairMoneyline: { home: round(1 / homeProb, 2), away: round(1 / (1 - homeProb), 2) }, spread: i.modelMargin != null ? halfPoint(-i.modelMargin) : fairSpread(homeProb, spread, marketHome), homeProb: round(homeProb) },
   }
 }

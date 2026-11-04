@@ -42,5 +42,8 @@ ingest/.venv/Scripts/python research/game_snapshot.py --remote   # re-score the 
 The box-score sync writes to production with `--remote`; run it before game days:
 
 ```bash
-ingest/.venv/Scripts/python ingest/sync.py --remote --all-active --seasons 1 --delay 1
+ingest/.venv/Scripts/python ingest/sync.py --remote --league --full   # first load of a season (a few minutes)
+ingest/.venv/Scripts/python ingest/sync.py --remote --league          # afterwards: only what is new (seconds)
 ```
+
+`--all-active` still works as a one-player-at-a-time fallback (about 25 minutes); the Sync button uses it automatically if the league-wide request fails.

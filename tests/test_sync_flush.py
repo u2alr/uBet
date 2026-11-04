@@ -61,6 +61,41 @@ class SyncStamp(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(any("'last_sync'" in f for f in flushed))
 
+    def test_the_league_path_stamps_last_sync_in_one_write_and_a_failed_request_stamps_nothing(self):
+        flushed = []
+        frame = sync.pd.DataFrame([dict(PLAYER_ID=7, PLAYER_NAME="Seven", TEAM_ABBREVIATION="BOS", GAME_ID="0022600001", GAME_DATE="2026-11-03", MATCHUP="BOS vs. NYK", WL="W", MIN=30,
+                                        PTS=20, REB=5, AST=5, FG3M=2, STL=1, BLK=0, FGM=7, FGA=15, FG3A=6, FTM=4, FTA=4, OREB=1, DREB=4, TOV=2, PF=3, PLUS_MINUS=8)])
+
+        def fake_run(cmd, **kw):
+            flushed.append(sync.OUT.read_text(encoding="utf-8"))
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(sys, "argv", ["sync.py", "--league", "--full"]), mock.patch.object(sync, "current_teams", return_value={7: "BOS"}), \
+             mock.patch.object(sync, "fetch_league", return_value=frame), mock.patch.object(sync.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(sync.players, "get_active_players", return_value=[]), mock.patch.object(sync, "OUT", Path(tempfile.mkdtemp()) / "out.sql"):
+            sync.main()
+            self.assertEqual(len(flushed), 1)
+            self.assertIn("'last_sync'", flushed[0])
+            self.assertIn("INSERT OR REPLACE INTO player_games", flushed[0])
+            self.assertIn("INSERT OR REPLACE INTO players (id, name, team, position) VALUES (7,", flushed[0])
+        flushed.clear()
+        with mock.patch.object(sys, "argv", ["sync.py", "--league", "--full"]), mock.patch.object(sync, "current_teams", return_value={}), \
+             mock.patch.object(sync, "fetch_league", side_effect=RuntimeError("stats.nba.com timed out")), mock.patch.object(sync.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(sync, "OUT", Path(tempfile.mkdtemp()) / "out.sql"):
+            with self.assertRaises(RuntimeError):
+                sync.main()
+            self.assertEqual(flushed, [], "nothing is written, so last_sync cannot claim a sync that did not happen")
+
+    def test_a_league_sync_keeps_only_current_players_and_skips_did_not_plays(self):
+        row = dict(PLAYER_NAME="X", TEAM_ABBREVIATION="BOS", GAME_ID="0022600001", GAME_DATE="2026-11-03", MATCHUP="BOS @ NYK", WL="L", MIN=20, PTS=1, REB=1, AST=1, FG3M=0, STL=0, BLK=0, FGM=0,
+                   FGA=1, FG3A=0, FTM=1, FTA=2, OREB=0, DREB=1, TOV=0, PF=1, PLUS_MINUS=-3)
+        frame = sync.pd.DataFrame([{**row, "PLAYER_ID": 1}, {**row, "PLAYER_ID": 2}, {**row, "PLAYER_ID": 3, "MIN": 0}])
+        sql = "\n".join(sync.league_sql([(2026, "regular", frame)], {1: "BOS"}, keep={1, 3}))
+        self.assertIn("VALUES (1,", sql)
+        self.assertNotIn("VALUES (2,", sql, "not a current player")
+        self.assertNotIn("VALUES (3,", sql, "did not play")
+        self.assertIn("'NYK',0,0)", sql, "an away game by a team that lost")
+
     def test_the_module_compiles_and_grades_predictions(self):
         self.assertIn("predictions", sync.GRADE_SQL)
 

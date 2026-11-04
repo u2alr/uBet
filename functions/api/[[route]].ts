@@ -8,6 +8,7 @@ import { parseSportsDbEvents } from '../../shared/sportsdb.ts'
 import type { GameLeanRow } from '../../shared/games.ts'
 import adaptationStatus from '../../shared/adaptation.status.json' with { type: 'json' }
 import { review, type ReviewRow } from '../../shared/seasonReview.ts'
+import { SOURCES, gutKey, isOpen, parsePick, scoreGut, type GutPick, type GutResult, type Source } from '../../shared/gut.ts'
 import teamFormStatus from '../../shared/teamForm.status.json' with { type: 'json' }
 import { teamForm, type TeamResult } from '../../shared/teamForm.ts'
 import { modelIsFresh, teamBet } from '../../shared/teamBets.ts'
@@ -91,6 +92,9 @@ function privileged(c: Ctx) {
   const host = new URL(c.req.url).hostname
   return host === 'localhost' || host === '127.0.0.1' || host === '[::1]'
 }
+
+/** Only a page served from this computer may change the user's own picks: they are personal, and the site has no logins. A token does not widen this. */
+const localOnly = (c: Ctx) => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(c.req.url).hostname)
 
 /** ?fresh=1 means "skip the cache", which costs provider credits, so only privileged callers get it. */
 const wantsFresh = (c: Ctx) => c.req.query('fresh') === '1' && privileged(c)
@@ -488,8 +492,8 @@ async function loadTeamOdds(env: Bindings, fresh = false): Promise<Map<string, G
   return new Map(events.map((e) => [`${teamKey(e.away_team)}@${teamKey(e.home_team)}`, parseGameOdds(e)]))
 }
 
-// Team bets: every upcoming game with the best price on each side, the market's chance, ours (the game model blended with the market) and the expected profit,
-// plus our own fair moneyline and spread. The odds are the stored ones; no provider call. `best` ranks the sides with positive expected profit.
+// Team bets: every upcoming game with the best price on each side, the market's chance, ours (the game model blended with the market),
+// plus our own fair moneyline and spread. The odds are the stored ones; no provider call. It suggests no bets.
 app.get('/team-bets', async (c) => {
   const fresh = wantsFresh(c)
   const [games, odds, leanRows, results] = await Promise.all([
@@ -512,11 +516,10 @@ app.get('/team-bets', async (c) => {
     // A model snapshot that is too old is not blended in: the price alone is a better guide than a stale model.
     const modelFresh = !!m && modelIsFresh(m.as_of, Date.now())
     const bet = teamBet({ home: g.home.abbr, away: g.away.abbr, books: ge?.books ?? [], modelHomeProb: modelFresh ? m!.model_home_prob : null, modelMargin: modelFresh ? m!.pred_margin ?? null : null })
-    return { id: g.id, date: g.date, state: g.state as string, status: g.status as string, home: { abbr: g.home.abbr, name: g.home.name, score: g.home.score }, away: { abbr: g.away.abbr, name: g.away.name, score: g.away.score }, bet, books: ge?.books ?? [], form: teamForm(normAbbr(g.home.abbr), normAbbr(g.away.abbr), results, etDate(g.date)), model: m ?? null, modelAsOf: m?.as_of ?? null, modelStale: !!m && !modelFresh }
+    return { id: g.id, gutRef: { date: etDate(g.date), home: normAbbr(g.home.abbr), away: normAbbr(g.away.abbr) }, date: g.date, state: g.state as string, status: g.status as string, home: { abbr: g.home.abbr, name: g.home.name, score: g.home.score }, away: { abbr: g.away.abbr, name: g.away.name, score: g.away.score }, bet, books: ge?.books ?? [], form: teamForm(normAbbr(g.home.abbr), normAbbr(g.away.abbr), results, etDate(g.date)), model: m ?? null, modelAsOf: m?.as_of ?? null, modelStale: !!m && !modelFresh }
   })
-  const best = rows.filter((r) => r.state === 'pre' && r.bet.best).map((r) => ({ gameId: r.id, ...r.bet.best! })).sort((a, b) => b.ev - a.ev).slice(0, 10)
-  return c.json({ data: { games: rows, best }, meta: { teamForm: teamFormStatus, oddsAvailable: odds !== null && odds.size > 0, modelGames: rows.filter((r) => r.modelAsOf).length,
-    note: 'Our chance is the game model blended with the market; with no price it is the model alone. The model is tested on past games, but it has not been tested against sportsbook prices and cannot see late injury news. Expected profit is a rough guide.', model: gamesStatus } })
+  return c.json({ data: { games: rows }, meta: { teamForm: teamFormStatus, oddsAvailable: odds !== null && odds.size > 0, modelGames: rows.filter((r) => r.modelAsOf).length,
+    note: 'Our chance is the game model blended with the market; with no price it is the model alone. The model is tested on past games, but it has not been tested against sportsbook prices and cannot see late injury news.', model: gamesStatus } })
 })
 
 // The season so far, reviewed: who the model had as the favourite before each game already played, who won, and what the upsets had in common. The predictions are the
@@ -525,6 +528,67 @@ app.get('/season-review', async (c) => {
   const rows = await c.env.DB.prepare('SELECT date, home, away, p_home, home_won, srs_gap, talent_diff, rest_diff, b2b_home, b2b_away FROM season_review ORDER BY date, home')
     .all<ReviewRow>().then((r) => r.results).catch(() => [] as ReviewRow[])   // the table does not exist until migration 0024
   return c.json({ data: review(rows), meta: { model: gamesStatus, adaptation: adaptationStatus } })
+})
+
+// ---------- gut feeling ----------
+// The user's own picks (shared/gut.ts). Saved only from a page on this computer and only before tip-off; read by anyone. They are scored on finished games against the
+// model's own pre-game number and never change a displayed probability.
+
+interface GutRow { source: Source; date: string; home: string; away: string; pick: 'home' | 'away'; level: 1 | 2 | 3; note: string | null; model_home_prob: number | null; saved_at: string }
+const gutOut = (r: GutRow): GutPick => ({ source: r.source, date: r.date, home: r.home, away: r.away, pick: r.pick, level: r.level, note: r.note, modelHomeProb: r.model_home_prob, savedAt: r.saved_at })
+
+/** Finished regular-season games from `since` on: (date, home, away) -> did the home team win. */
+async function finishedResults(env: Bindings, since: string): Promise<Map<string, boolean>> {
+  const rows = await env.DB.prepare(
+    `SELECT g.date AS date, pg.team_id AS teamId, pg.opp AS opp, pg.is_home AS home, MAX(pg.won) AS won
+     FROM player_games pg JOIN games g ON g.id = pg.game_id WHERE g.game_type = 'regular' AND g.date >= ? AND pg.opp IS NOT NULL AND pg.is_home = 1
+     GROUP BY g.id, pg.team_id`).bind(since).all<{ date: string; teamId: number; opp: string; home: number; won: number }>()
+  const out = new Map<string, boolean>()
+  for (const r of rows.results) { const home = abbrOfTeamId(r.teamId); if (home) out.set(gutKey(r.date, normAbbr(home), normAbbr(r.opp)), !!r.won) }
+  return out
+}
+
+app.get('/gut', async (c) => {
+  const rows = await c.env.DB.prepare('SELECT source, date, home, away, pick, level, note, model_home_prob, saved_at FROM gut_pick WHERE source = \'claude\' ORDER BY date DESC, home')
+    .all<GutRow>().then((r) => r.results).catch(() => [] as GutRow[])      // the table does not exist until migration 0027
+  const picks = rows.map(gutOut)
+  const results = picks.length ? await finishedResults(c.env, picks[picks.length - 1].date).catch(() => new Map<string, boolean>()) : new Map<string, boolean>()
+  const done: GutResult[] = picks.flatMap((p) => { const w = results.get(gutKey(p.date, p.home, p.away)); return w === undefined ? [] : [{ ...p, homeWon: w }] })
+  const open = picks.filter((p) => !results.has(gutKey(p.date, p.home, p.away)))
+  const by = <T,>(f: (rows: GutResult[]) => T) => Object.fromEntries(SOURCES.map((s) => [s, f(done.filter((r) => r.source === s))])) as Record<Source, T>
+  return c.json({ data: { picks: open, records: by(scoreGut), recent: by((rows) => rows.slice(0, 20)) }, meta: { canEdit: localOnly(c), note: "Claude's picks are scored against the model's own pre-game number. They never change a displayed probability." } })
+})
+
+app.post('/gut', async (c) => {
+  if (!localOnly(c)) return c.json({ error: 'Picks can only be saved from the copy running on your own computer.' }, 403)
+  const parsed = parsePick(await c.req.json().catch(() => null))
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const v = parsed.value
+  const games = await loadGames(c.env, false).catch(() => null)
+  if (!games) return c.json({ error: 'The schedule is unavailable, so the game cannot be checked. Try again in a moment.' }, 503)
+  const game = games.find((g: any) => normAbbr(g.home.abbr) === v.home && normAbbr(g.away.abbr) === v.away && etDate(g.date) === v.date)
+  if (!game) return c.json({ error: 'No such game on the schedule.' }, 404)
+  if (game.state !== 'pre' || !isOpen(game.date, Date.now())) return c.json({ error: 'The game has started: a pick has to be made before tip-off.' }, 409)
+  const lean = await c.env.DB.prepare('SELECT model_home_prob FROM game_lean WHERE date = ? AND home = ? AND away = ?').bind(v.date, v.home, v.away).first<{ model_home_prob: number }>().catch(() => null)
+  await c.env.DB.prepare(
+    `INSERT INTO gut_pick (source, date, home, away, pick, level, note, model_home_prob) VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT (source, date, home, away) DO UPDATE SET pick = excluded.pick, level = excluded.level, note = excluded.note, model_home_prob = excluded.model_home_prob, saved_at = datetime('now')`,
+  ).bind(v.source, v.date, v.home, v.away, v.pick, v.level, v.note, lean?.model_home_prob ?? null).run()
+  return c.json({ ok: true })
+})
+
+app.delete('/gut', async (c) => {
+  if (!localOnly(c)) return c.json({ error: 'Picks can only be changed from the copy running on your own computer.' }, 403)
+  const { date, home, away } = c.req.query()
+  const source = 'claude'
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '') || !/^[A-Z]{2,4}$/.test(home ?? '') || !/^[A-Z]{2,4}$/.test(away ?? '')) return c.json({ error: 'date, home and away are required' }, 400)
+  const games = await loadGames(c.env, false).catch(() => null)
+  const game = games?.find((g: any) => normAbbr(g.home.abbr) === home && normAbbr(g.away.abbr) === away && etDate(g.date) === date)
+  if (game && (game.state !== 'pre' || !isOpen(game.date, Date.now()))) return c.json({ error: 'The game has started: the pick is locked.' }, 409)
+  // A game that has left the schedule is over: its pick is part of the record and cannot be erased.
+  if (!game && date < etDate(new Date().toISOString())) return c.json({ error: 'That game is over: the pick is locked.' }, 409)
+  await c.env.DB.prepare('DELETE FROM gut_pick WHERE source = ? AND date = ? AND home = ? AND away = ?').bind(source, date, home, away).run()
+  return c.json({ ok: true })
 })
 
 // ---------- availability (ESPN's keyless injury list) ----------

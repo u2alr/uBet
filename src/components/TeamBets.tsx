@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { gameReasons, type GameLeanRow } from '../../shared/games.ts'
 import { normName } from '../../shared/picks.ts'
-import type { MoneylineBet, BookLine, TeamBet } from '../../shared/teamBets.ts'
+import type { BookLine, TeamBet } from '../../shared/teamBets.ts'
+import { LEVELS, gutKey, type GutPick, type GutRef } from '../../shared/gut.ts'
 import { commonLean, type TeamForm } from '../../shared/teamForm.ts'
 import { api, pct } from '../lib/format'
 import { teamByName } from '../lib/teams'
@@ -10,22 +11,22 @@ import ReasonList from './ReasonList'
 import TeamChip from './TeamChip'
 
 interface Row {
-  id: string; date: string; state: 'pre' | 'in' | 'post'; status: string
+  id: string; gutRef: GutRef; date: string; state: 'pre' | 'in' | 'post'; status: string
   home: { abbr: string; name: string; score: string }; away: { abbr: string; name: string; score: string }
   bet: TeamBet; books: BookLine[]; form: TeamForm; model: GameLeanRow | null; modelAsOf: string | null; modelStale?: boolean
 }
 interface FormStatus { commonOpponentLean: { games: number; picksWinner: number; homeTeamWon: number }; commonOpponentLeanGap2: { picksWinner: number; games: number } }
 interface ModelStatus { version: string; logLoss: number; accuracy: number; testGames: number; testSeason: string; baselineLogLoss: number; baselineName?: string }
-interface Res { data: { games: Row[]; best: (MoneylineBet & { gameId: string })[] }; meta: { oddsAvailable: boolean; modelGames: number; note: string; teamForm: FormStatus; model?: ModelStatus } }
+interface Res { data: { games: Row[] }; meta: { oddsAvailable: boolean; modelGames: number; note: string; teamForm: FormStatus; model?: ModelStatus } }
+interface GutRes { data: { picks: GutPick[] } }
 interface Absence { id: number; name: string; team: string | null; status: string }
 
-type Sort = 'tip' | 'confident' | 'value'
-const SORTS: [Sort, string][] = [['tip', 'Tip-off'], ['confident', 'Most confident'], ['value', 'Best value']]
+type Sort = 'tip' | 'confident'
+const SORTS: [Sort, string][] = [['tip', 'Tip-off'], ['confident', 'Most confident']]
 
 const timeLabel = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 const shortDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 const signed = (n: number | null, d = 1) => (n == null ? '–' : `${n > 0 ? '+' : ''}${n.toFixed(d)}`)
-const evText = (n: number) => `${n > 0 ? '+' : ''}${(n * 100).toFixed(1)}%`
 
 const confidence = (p: number) => tierOf(p).label
 const pickOf = (r: Row) => {
@@ -51,7 +52,6 @@ function Side({ r, side, picked, absent }: { r: Row; side: 'home' | 'away'; pick
         <Chip abbr={t.abbr} name={t.name} size={28} />
         <span className="flex items-center gap-1.5">
           {picked && <span className={`rounded-full px-2 py-0.5 text-xs font-medium text-neutral-950 ${prob != null ? tierOf(prob).badge : 'bg-neutral-400'}`}>Our pick</span>}
-          {bet && bet.ev > 0 && <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-emerald-400" title="Expected profit per unit staked at the best price. A rough guide: the game model is untested against sportsbook prices.">value ≈ {evText(bet.ev)}</span>}
         </span>
       </div>
       <div className="mt-0.5 truncate text-xs text-neutral-500">{t.name}{out > 0 && <span className="text-red-300"> · {out} out</span>}</div>
@@ -119,7 +119,7 @@ function Form({ r }: { r: Row }) {
 }
 
 /** The expanded game: both teams side by side with every book's price, the lines, head-to-head, common opponents, the model's reasons and the injury report. */
-function GameDetail({ r, absent, onOpenGame, status }: { r: Row; absent: Absence[]; onOpenGame: (id: string) => void; status: FormStatus | undefined }) {
+function GameDetail({ r, absent, onOpenGame, status, claude }: { r: Row; absent: Absence[]; onOpenGame: (id: string) => void; status: FormStatus | undefined; claude: GutPick | undefined }) {
   const pick = pickOf(r)
   const bet = r.bet
   const lineText = bet.market.spread == null ? null : `${r.home.abbr} ${signed(bet.market.spread)}`
@@ -152,6 +152,8 @@ function GameDetail({ r, absent, onOpenGame, status }: { r: Row; absent: Absence
         </div>
       )}
 
+      {claude && <ClaudeGut r={r} pick={claude} />}
+
       <Form r={r} />
 
       {reasons.length > 0 ? <ReasonList title={`Why the model favours ${r.model && r.model.model_home_prob >= 0.5 ? r.model.home : r.model?.away}`} reasons={reasons} /> : <p className="text-xs text-neutral-500">No model number for this game yet (it appears after the next sync).</p>}
@@ -166,10 +168,32 @@ function GameDetail({ r, absent, onOpenGame, status }: { r: Row; absent: Absence
   )
 }
 
-const COLS = 'md:grid-cols-[minmax(9.5rem,1fr)_4.75rem_minmax(11rem,1.5fr)_6.5rem_6.5rem_1rem]'
+/** Claude's own call for this game, made before tip-off with the same rules as yours; read-only, and it never changes our numbers. */
+function ClaudeGut({ r, pick }: { r: Row; pick: GutPick }) {
+  const team = pick.pick === 'home' ? r.home : r.away
+  const mp = r.model?.model_home_prob
+  const disagree = mp != null && mp !== 0.5 && (mp > 0.5) !== (pick.pick === 'home')
+  return (
+    <p className="text-sm text-neutral-300">
+      <b className="text-neutral-50">Claude's gut:</b> <b className="text-sky-300">{team.name}</b> · {LEVELS.find((l) => l.level === pick.level)?.label}
+      {disagree && <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">differs from the model</span>}
+      {pick.note && <span className="block text-xs text-neutral-500">“{pick.note}”</span>}
+    </p>
+  )
+}
 
-/** One game on one line: who we pick and how sure, the best price on that side, and the value tag. Click to open everything. */
-function GameRow({ r, absent, open, onToggle, onOpenGame, status }: { r: Row; absent: Absence[]; open: boolean; onToggle: () => void; onOpenGame: (id: string) => void; status: FormStatus | undefined }) {
+/** A small tag on the row: which side the user picked, and a bolt when that is not the model's side. */
+function GutBadge({ r, saved }: { r: Row; saved: GutPick }) {
+  const mp = r.model?.model_home_prob
+  const disagree = mp != null && mp !== 0.5 && (mp > 0.5) !== (saved.pick === 'home')
+  const abbr = saved.pick === 'home' ? r.home.abbr : r.away.abbr
+  return <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${disagree ? 'bg-amber-500/15 text-amber-300' : 'bg-neutral-800 text-neutral-300'}`} title={disagree ? "Claude's gut and the model pick different teams" : "Claude's gut pick"}>Claude {abbr}{disagree ? ' ⚡' : ''}</span>
+}
+
+const COLS = 'md:grid-cols-[minmax(9.5rem,1fr)_4.75rem_minmax(11rem,1.5fr)_6.5rem_1rem]'
+
+/** One game on one line: who we pick and how sure, and the best price on that side. Click to open everything. */
+function GameRow({ r, absent, open, onToggle, onOpenGame, status, claude }: { r: Row; absent: Absence[]; open: boolean; onToggle: () => void; onOpenGame: (id: string) => void; status: FormStatus | undefined; claude: GutPick | undefined }) {
   const pick = pickOf(r)
   const bet = r.bet
   const price = pick ? bet.moneyline?.[pick.side] : undefined
@@ -178,7 +202,8 @@ function GameRow({ r, absent, open, onToggle, onOpenGame, status }: { r: Row; ab
     <article id={`team-game-${r.id}`} className="scroll-mt-32 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900">
       <button onClick={onToggle} aria-expanded={open} aria-controls={open ? detailId : undefined}
         className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5 px-3 py-2.5 text-left hover:bg-neutral-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500 ${COLS}`}>
-        <span className="flex items-center gap-2"><Chip abbr={r.away.abbr} name={r.away.name} size={22} /><span className="text-neutral-600">@</span><Chip abbr={r.home.abbr} name={r.home.name} size={22} /></span>
+        <span className="flex items-center gap-2"><Chip abbr={r.away.abbr} name={r.away.name} size={22} /><span className="text-neutral-600">@</span><Chip abbr={r.home.abbr} name={r.home.name} size={22} />
+          {claude && <GutBadge r={r} saved={claude} />}</span>
         <span className="text-right text-xs tabular-nums text-neutral-400 md:text-left">
           {r.state === 'pre' ? timeLabel(r.date) : <span className="text-emerald-400">{r.away.score}–{r.home.score} · {r.status}</span>}
         </span>
@@ -195,12 +220,9 @@ function GameRow({ r, absent, open, onToggle, onOpenGame, status }: { r: Row; ab
         <span className="text-sm tabular-nums text-neutral-200">
           {price ? <>{price.price.toFixed(2)} <span className="text-xs text-neutral-600">{price.book}</span></> : <span className="text-xs text-neutral-600">no price</span>}
         </span>
-        <span className="text-right text-xs tabular-nums md:text-left">
-          {bet.best ? <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-emerald-400" title={`${bet.best.team} moneyline at ${bet.best.price.toFixed(2)} (${bet.best.book}). Expected profit per unit staked: a rough guide.`}>{bet.best.team} ≈ {evText(bet.best.ev)}</span> : bet.moneyline ? <span className="text-neutral-600">no value</span> : null}
-        </span>
         <span aria-hidden className={`hidden text-neutral-500 transition-transform md:block ${open ? 'rotate-90' : ''}`}>›</span>
       </button>
-      {open && <div id={detailId}><GameDetail r={r} absent={absent} onOpenGame={onOpenGame} status={status} /></div>}
+      {open && <div id={detailId}><GameDetail r={r} absent={absent} onOpenGame={onOpenGame} status={status} claude={claude} /></div>}
     </article>
   )
 }
@@ -214,11 +236,10 @@ function dayName(key: string) {
   return new Date(`${key}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-/** The slate at a glance: the strongest picks and the best value, whatever day is open. Clicking one opens its game. */
-function TopStrip({ games, best, onJump }: { games: Row[]; best: Res['data']['best']; onJump: (id: string) => void }) {
+/** The slate at a glance: the strongest picks, whatever day is open. Clicking one opens its game. */
+function TopStrip({ games, onJump }: { games: Row[]; onJump: (id: string) => void }) {
   const strongest = games.filter((g) => g.state === 'pre').map((g) => ({ g, p: pickOf(g) })).filter((x) => x.p).sort((a, b) => b.p!.prob - a.p!.prob).slice(0, 3)
-  const value = best.slice(0, 2).map((b) => ({ b, g: games.find((x) => x.id === b.gameId) })).filter((x) => x.g)
-  if (!strongest.length && !value.length) return null
+  if (!strongest.length) return null
   const chip = 'flex items-center gap-2 rounded-full bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500'
   return (
     <section aria-label="Top of the slate" className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -233,17 +254,6 @@ function TopStrip({ games, best, onJump }: { games: Row[]; best: Res['data']['be
           ))}
         </div>
       )}
-      {value.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs uppercase tracking-widest text-neutral-500">Best value</span>
-          {value.map(({ b, g }) => (
-            <button key={`${b.gameId}${b.side}`} onClick={() => onJump(b.gameId)} className={chip} title="Expected profit per unit staked at the best price: a rough guide, untested against sportsbook prices.">
-              <span className="font-semibold text-neutral-50">{b.team}</span><span className="tabular-nums text-emerald-400">≈ {evText(b.ev)}</span>
-              <span className="text-xs tabular-nums text-neutral-500">{b.price.toFixed(2)} · {g!.away.abbr}@{g!.home.abbr}</span>
-            </button>
-          ))}
-        </div>
-      )}
     </section>
   )
 }
@@ -251,6 +261,7 @@ function TopStrip({ games, best, onJump }: { games: Row[]; best: Res['data']['be
 export default function TeamBets({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGame: (id: string) => void }) {
   const [res, setRes] = useState<Res | null>(null)
   const [absent, setAbsent] = useState<Absence[]>([])
+  const [gut, setGut] = useState<GutRes | null>(null)
   const [error, setError] = useState('')
   const [sort, setSort] = useState<Sort>('tip')
   const [day, setDay] = useState<string | null>(null)
@@ -262,6 +273,12 @@ export default function TeamBets({ refreshKey, onOpenGame }: { refreshKey: numbe
     api<{ data: Absence[] }>('/absences').then((r) => live && setAbsent(r.data)).catch(() => live && setAbsent([]))
     return () => { live = false }
   }, [refreshKey])
+  useEffect(() => {
+    let live = true
+    api<GutRes>('/gut').then((r) => live && setGut(r)).catch(() => live && setGut(null))
+    return () => { live = false }
+  }, [refreshKey])
+  const gutPicks = useMemo(() => new Map((gut?.data.picks ?? []).map((p) => [gutKey(p.date, p.home, p.away), p])), [gut])
 
   const all = res?.data.games
   const days = useMemo(() => {
@@ -273,7 +290,6 @@ export default function TeamBets({ refreshKey, onOpenGame }: { refreshKey: numbe
   const rows = useMemo(() => {
     const g = [...(current?.[1] ?? [])]
     if (sort === 'confident') g.sort((a, b) => (pickOf(b)?.prob ?? 0) - (pickOf(a)?.prob ?? 0))
-    else if (sort === 'value') g.sort((a, b) => (b.bet.best?.ev ?? -1) - (a.bet.best?.ev ?? -1))
     return g
   }, [current, sort])
 
@@ -311,14 +327,13 @@ export default function TeamBets({ refreshKey, onOpenGame }: { refreshKey: numbe
             <b className="font-medium text-neutral-200">Confidence colors</b>
             {TIERS.map((x) => <span key={x.short} className="flex items-center gap-1.5"><span aria-hidden className={`inline-block h-2 w-5 rounded-full ${x.bar}`} /><span className={x.text}>{x.short}</span><span className="text-neutral-600">{x.range}</span></span>)}
           </p>
-          <p><b className="font-medium text-neutral-200">Pick</b> is who we think wins. <b className="font-medium text-neutral-200">Value</b> is a different question: whether a price pays more than our chance says it should. The pick and the value side can be different teams.</p>
-          <p><b className="font-medium text-neutral-200">≈ %</b> is expected profit per unit staked, a rough guide.</p>
+          <p><b className="font-medium text-neutral-200">Pick</b> is who we think wins, and <b className="font-medium text-neutral-200">Best price</b> is the highest price any book offers on that side. We do not suggest bets.</p>
         </div>
       )}
 
       {!res.meta.oddsAvailable && <p className="text-xs text-amber-400">No team odds are stored yet. Run <code className="text-neutral-300">npm run sync:odds</code> (or <code className="text-neutral-300">npm run dev:sync</code>, which does it every 10 minutes).</p>}
 
-      <TopStrip games={all ?? []} best={res.data.best} onJump={jump} />
+      <TopStrip games={all ?? []} onJump={jump} />
 
       <div className="sticky top-12 z-10 -mx-3 flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800/80 bg-neutral-950/95 px-3 py-2 backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-8 lg:px-8">
         <div role="tablist" aria-label="Day" className="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -340,9 +355,10 @@ export default function TeamBets({ refreshKey, onOpenGame }: { refreshKey: numbe
       {rows.length === 0 ? <p className="rounded-lg bg-neutral-900 px-3 py-3 text-sm text-neutral-500">No games scheduled.</p> : (
         <div className="space-y-2" role="tabpanel">
           <div className={`hidden px-3 text-xs text-neutral-600 md:grid md:gap-x-4 ${COLS}`} aria-hidden>
-            <span>Game</span><span>Tip</span><span>Our pick</span><span>Best price</span><span>Value</span><span />
+            <span>Game</span><span>Tip</span><span>Our pick</span><span>Best price</span><span />
           </div>
-          {rows.map((g) => <GameRow key={g.id} r={g} absent={absent} open={!!openMap[g.id]} onToggle={() => setOpenMap((o) => ({ ...o, [g.id]: !o[g.id] }))} onOpenGame={onOpenGame} status={res.meta.teamForm} />)}
+          {rows.map((g) => <GameRow key={g.id} r={g} absent={absent} open={!!openMap[g.id]} onToggle={() => setOpenMap((o) => ({ ...o, [g.id]: !o[g.id] }))} onOpenGame={onOpenGame} status={res.meta.teamForm}
+            claude={gutPicks.get(gutKey(g.gutRef.date, g.gutRef.home, g.gutRef.away))} />)}
         </div>
       )}
     </div>

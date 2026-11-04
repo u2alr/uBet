@@ -22,7 +22,8 @@ npm run db:migrate                    # create the local D1 tables
 
 python -m venv ingest/.venv
 ingest/.venv/Scripts/python -m pip install nba_api
-ingest/.venv/Scripts/python ingest/sync.py "Stephen Curry"      # or --all-active
+ingest/.venv/Scripts/python ingest/sync.py --league             # fast: whole league, only what is new (~15 s)
+ingest/.venv/Scripts/python ingest/sync.py "Stephen Curry"      # one player; --all-active is the slow loop (~25 min)
 
 npm run build && npm run dev:api      # API on :8788
 npm run dev                           # app on :5173
@@ -35,6 +36,7 @@ npm run dev:sync                      # optional: lets the Sync button run inges
 
 - `stats.nba.com` blocks cloud IPs and throttles heavy runs, so box scores are loaded from your own machine.
   `sync.py --start N` resumes an interrupted run; `--remote` writes to production D1.
+- **Claude's gut.** Before tip-off Claude records its own pick for each game with a one-line reason (`shared/gut.ts`, `/api/gut`, migrations 0027 and 0028). It never changes a number we show; the Review tab scores it against the model's own pre-game pick, and only the games where they disagreed can say who is better (a verdict needs 50 of them). Saving works only from the copy running on your own computer.
 - Player props only appear for players you have synced. Injuries and lineup news are not modeled.
 - Keys live in `.dev.vars` (git-ignored). Never commit them.
 

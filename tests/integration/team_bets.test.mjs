@@ -20,11 +20,15 @@ describe('/api/team-bets', () => {
     assert.ok(Math.abs(1 / ours.fairMoneyline.home + 1 / ours.fairMoneyline.away - 1) < 0.01, 'our fair prices carry no margin')
     assert.equal(body.meta.oddsAvailable, true)
   })
-  it('ranks only sides with positive expected profit, best first, and carries the honesty note', async () => {
+  it('suggests no bets: no ranked list, no expected profit, no best-bet field, and the honesty note is there', async () => {
     const { body } = await api('/team-bets')
-    const evs = body.data.best.map((b) => b.ev)
-    assert.ok(evs.every((e) => e > 0))
-    assert.deepEqual(evs, [...evs].sort((a, b) => b - a))
+    assert.equal('best' in body.data, false)
+    for (const g of body.data.games) {
+      assert.equal('best' in g.bet, false)
+      for (const side of ['home', 'away']) {
+        if (g.bet.moneyline) { assert.equal('ev' in g.bet.moneyline[side], false); assert.equal('edge' in g.bet.moneyline[side], false) }
+      }
+    }
     assert.match(body.meta.note, /not been tested against sportsbook prices/)
   })
 })

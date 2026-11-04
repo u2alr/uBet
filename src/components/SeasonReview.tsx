@@ -3,6 +3,7 @@ import type { FavouriteGame, Review, TierSummary } from '../../shared/seasonRevi
 import { api, pct } from '../lib/format'
 import { teamId } from '../lib/teams'
 import { tierByKey, tierOf } from '../lib/tiers'
+import GutRecord from './GutRecord'
 import TeamChip from './TeamChip'
 
 interface Res { data: Review; meta: { model?: { version: string; logLoss: number; accuracy: number }; adaptation: { tested: string[]; adopted: string[]; result: string; evidence: string } } }
@@ -164,6 +165,8 @@ export default function SeasonReview({ refreshKey }: { refreshKey: number }) {
         </div>
         {calls.length > shown && <button onClick={() => setShown(shown + 25)} className="text-xs text-neutral-400 hover:text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500">Show 25 more ({calls.length - shown} left)</button>}
       </section>
+
+      <GutRecord />
 
       <section className="space-y-2 rounded-xl bg-neutral-900 px-4 py-3 text-xs leading-relaxed text-neutral-400">
         <h3 className="text-xs uppercase tracking-widest text-neutral-500">How this is applied to future games</h3>

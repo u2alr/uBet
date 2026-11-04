@@ -24,12 +24,16 @@ test('the market chance has each book margin removed on its own, and the best pr
   assert.equal(t.market.total, 228.5)
 })
 
-test('with no model, our chance is the market chance and no side shows an edge', () => {
+test('two books that disagree by half a point give a line that exists, not a quarter point', () => {
+  const t = teamBet({ home: 'CLE', away: 'OKC', modelHomeProb: null, books: [book('A', 1.8, 2.1, -2.5), book('B', 1.8, 2.1, -2)] })
+  assert.equal(t.market.spread, -2)
+  assert.ok(Number.isInteger(t.market.spread! * 2), 'on a half point')
+})
+
+test('with no model, our chance is the market chance', () => {
   const t = teamBet({ home: 'CLE', away: 'OKC', modelHomeProb: null, books: [book('DraftKings', 1.8, 2.1)] })
-  assert.equal(t.moneyline!.home.edge, 0)
+  assert.equal(t.moneyline!.home.prob, t.moneyline!.home.marketProb)
   assert.equal(t.moneyline!.home.modelProb, null)
-  assert.ok(t.moneyline!.home.ev < 0, 'the margin makes a market-priced bet a small loss')
-  assert.equal(t.best, null)
 })
 
 test('a model that likes the underdog more than the market moves our chance toward it, but only part of the way', () => {
@@ -39,14 +43,11 @@ test('a model that likes the underdog more than the market moves our chance towa
   const away = t.moneyline!.away
   assert.ok(away.prob > 1 - market, 'we like the away side more than the market does')
   assert.ok(away.prob < 0.55, 'but we do not hand the model the whole decision')
-  assert.ok(away.edge > 0 && away.ev > -0.1)
   assert.equal(away.modelProb, 0.55)
 })
 
-test('a clearly positive side is reported as the best bet; our fair prices have no margin', () => {
+test('our fair prices have no margin', () => {
   const t = teamBet({ home: 'CLE', away: 'OKC', modelHomeProb: 0.2, books: [book('DraftKings', 1.45, 3.4), book('FanDuel', 1.46, 3.35)] })
-  assert.equal(t.best?.side, 'away')
-  assert.ok(t.best!.ev > 0)
   const f = t.ours!.fairMoneyline
   assert.ok(Math.abs(1 / f.home + 1 / f.away - 1) < 0.01)
 })
@@ -59,17 +60,15 @@ test('our spread moves with our win chance, on the market scale', () => {
   assert.equal(fairSpread(1, -4.5, 0.6), null)
 })
 
-test('a game no book prices and no model has seen gives no bets and no numbers instead of invented ones', () => {
+test('a game no book prices and no model has seen gives no prices and no numbers instead of invented ones', () => {
   const t = teamBet({ home: 'CLE', away: 'OKC', modelHomeProb: null, books: [] })
   assert.equal(t.moneyline, null)
-  assert.equal(t.best, null)
   assert.equal(t.ours, null)
 })
 
-test('with no price the model still gives its own chance and spread, but never a bet or an expected profit', () => {
+test('with no price the model still gives its own chance and spread, but no price', () => {
   const t = teamBet({ home: 'CLE', away: 'OKC', modelHomeProb: 0.7, modelMargin: 6.2, books: [] })
   assert.equal(t.moneyline, null)
-  assert.equal(t.best, null)
   assert.equal(t.ours!.homeProb, 0.7)
   assert.equal(t.ours!.spread, -6)
   assert.ok(Math.abs(1 / t.ours!.fairMoneyline.home + 1 / t.ours!.fairMoneyline.away - 1) < 0.01)
@@ -110,10 +109,3 @@ test('a model snapshot is fresh for a day and a half, and a missing or unreadabl
   assert.ok(Math.abs(modelAgeHours('2026-11-03T06:00:00Z', now)! - 6) < 1e-9)
 })
 
-test('a single-book game never produces a recommended bet, even when the model disagrees strongly', () => {
-  const one = teamBet({ home: 'CLE', away: 'OKC', modelHomeProb: 0.3, books: [book('Only', 1.5, 2.7)] })
-  assert.ok(one.moneyline!.away.ev > 0, 'the numbers alone would show an edge')
-  assert.equal(one.best, null)
-  const two = teamBet({ home: 'CLE', away: 'OKC', modelHomeProb: 0.3, books: [book('A', 1.5, 2.7), book('B', 1.5, 2.7)] })
-  assert.ok(two.best != null)
-})
