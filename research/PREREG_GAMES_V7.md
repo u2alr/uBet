@@ -35,7 +35,7 @@ No sportsbook edge: no historical game lines exist. The features use who actuall
 | Absence-adjusted form | -0.0002 | [-0.0008, +0.0004] | 1 | no |
 | Narrow results against depleted opponents | -0.0003 | [-0.0009, +0.0001] | 0 | no |
 
-On the confirmation season F: soft schedule +0.0006, absence-adjusted form -0.0000, narrow results -0.0003 (all inside the "not worse than 0.001" band; the narrow-results group was worse than `lin_v2` in the three seasons where it had an interval away from zero, A and F). On 2026-27 so far, absence-adjusted form shows +0.0010 [-0.0005, +0.0026]: too small, too early, and not read as evidence.
+On the confirmation season F: soft schedule +0.0006, absence-adjusted form -0.0000, narrow results -0.0003 (all inside the "not worse than 0.001" band; the narrow-results group was measurably worse than `lin_v2` in A and F, where its 95% interval lies entirely below zero). On 2026-27 so far, absence-adjusted form shows +0.0010 [-0.0005, +0.0026]: too small, too early, and not read as evidence.
 
 **What this says about "a team nearly lost to a depleted opponent".** Reading results against who the opponent was missing does not predict the next game better than the ratings games-v2 already uses. Narrow results against depleted teams, if anything, add noise. The idea was reasonable and is now tested; it is not a hidden edge.
 
