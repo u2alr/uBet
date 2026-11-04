@@ -46,7 +46,7 @@ npm run dev:sync                      # optional: lets the Sync button run inges
 written first in `research/PREREG.md`.
 
 ```bash
-ingest/.venv/Scripts/python -m pip install pandas numpy scipy scikit-learn tzdata
+ingest/.venv/Scripts/python -m pip install pandas numpy scipy scikit-learn tzdata pdfplumber
 ingest/.venv/Scripts/python research/pull_raw.py             # league-wide game logs (one request per season)
 ingest/.venv/Scripts/python research/features.py             # point-in-time features
 ingest/.venv/Scripts/python research/tests/test_leakage.py   # proves no feature peeks at the future
@@ -130,3 +130,5 @@ No market-beating result exists: see `research/MARKET_EVAL_STATUS.md`.
 
 
 **Live test against the sportsbook price.** `research/PREREG_MARKET_GAMES.md` fixes, before any result is read, how the model is checked against the books: from the numbers the system stores before each game (`game_lean_log`), it compares the market's chance, the model alone and the blend the site shows by log loss, with a day-clustered 95% interval, and says nothing until 300 finished games have a stored price. `ingest/.venv/Scripts/python research/market_games_report.py` prints the count (and the verdict once there are 300). Run `scripts/refresh_slate.ps1` a few times a day, once shortly before the first tip-off, so the last stored price is close to the start; `ingest/update.ps1` (the daily task) now runs it too. This tests information, not profit: stored prices are the last seen on game day, not true closing lines. Injury reports are stored by the same snapshot (`injury_log`); `research/injury_outcomes.py` measures how often listed players actually play.
+
+**Injury lists.** The base is the NBA's official injury report (`official.nba.com`, a PDF the league posts every 15 minutes in Eastern time; `research/nba_injury_pdf.py` finds the newest one, reads it, and stores each report in `nba_injury_report`, migration 0029). A team that has filed is taken from that report alone, so a player the league no longer lists drops out; ESPN's list fills in only for teams that have not filed yet ("not yet submitted"). The PDF prints names without spaces, so players are matched to the roster by their letters; names that match nobody (two-way and G League players with no NBA box scores) are counted and left out, never guessed. If the PDF cannot be fetched or read, the snapshot carries on with ESPN's list and says so. `research/game_snapshot.py` does this on every run, so `scripts/refresh_slate.ps1` refreshes it. Needs `pdfplumber` (`ingest/.venv/Scripts/python -m pip install pdfplumber`).

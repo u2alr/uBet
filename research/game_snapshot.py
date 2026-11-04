@@ -24,6 +24,8 @@ import game_features_v2 as V  # noqa: E402
 import game_features_v3 as V3  # noqa: E402
 import game_features_v4 as V4  # noqa: E402
 import human_factors as H  # noqa: E402
+import nba_injury_pdf as NI  # noqa: E402
+from nba_api.stats.static import teams as nba_static  # noqa: E402
 from defense_snapshot import ET, inserts, upcoming_games  # noqa: E402
 from project import norm_name  # noqa: E402
 
@@ -110,6 +112,11 @@ def main():
     by_name = {norm_name(n): int(i) for n, i in zip(names.PLAYER_NAME, names.PLAYER_ID)}
     label = dict(zip(names.PLAYER_ID.astype(int), names.PLAYER_NAME))
     report = injury_report()
+    official = NI.official_report([(t["abbreviation"], t["full_name"]) for t in nba_static.get_teams()])     # the league's own PDF, newer than ESPN's list; None when it cannot be read
+    if official and official["rows"]:
+        listed, unmatched = NI.to_espn_shape(official["rows"], {NI.letters(n): n for n in names.PLAYER_NAME})
+        report = NI.merge(report, listed, {r["team_name"] for r in official["rows"]})   # the league's own list is the base; ESPN fills in only for teams that have not filed
+        print(f"  official report {official['report_time']} ET: {len(official['rows'])} listed, {len(unmatched)} not on the roster ({', '.join(unmatched[:6])}{'...' if len(unmatched) > 6 else ''})")
     out_ids = {by_name[norm_name(r["player"])] for r in report if "out" in r["status"].lower() and norm_name(r["player"]) in by_name}
 
     # For the shadow feature only: anyone on the report, whatever the status, is not assumed to play (a Day-To-Day star back from a long absence must not earn "returning" credit by default).
@@ -160,6 +167,8 @@ def main():
     sql += inserts("game_lean", ["date", "home", "away", "model_home_prob", "elo_home", "elo_away", "home_net10", "away_net10", "home_off20", "home_def20", "away_off20", "away_def20", "as_of", "absent_home", "absent_away", "model_version", "model_v1_prob", "srs_home", "srs_away", "pred_margin", "co_diff"], rows)
     sql += [x.replace("INSERT OR REPLACE", "INSERT OR IGNORE") for x in inserts("game_lean_log", ["date", "home", "away", "as_of", "model_home_prob", "market_home_prob", "market_book", "model_version", "model_v1_prob", "shadow_prob", "shadow_name", "shadow2_prob", "shadow2_name"], log)]
     sql += [x.replace("INSERT OR REPLACE", "INSERT OR IGNORE") for x in inserts("injury_log", ["as_of", "team", "player", "status", "note"], inj)]
+    if official and official["rows"]:
+        sql += NI.store_sql(official["report_time"], official["rows"])
     OUT.mkdir(exist_ok=True)
     f = OUT / "game_lean.sql"
     f.write_text("\n".join(sql), encoding="utf-8")
