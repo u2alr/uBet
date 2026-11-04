@@ -1,0 +1,28 @@
+# On every push to main: check the code, build it, and publish it to the Cloudflare Pages project "ubet-app". A failing check stops the deploy.
+# Needs two repository secrets (Settings > Secrets and variables > Actions): CLOUDFLARE_API_TOKEN (Account > Cloudflare Pages > Edit) and CLOUDFLARE_ACCOUNT_ID.
+# It does not touch the database: apply new migrations yourself with `npx wrangler d1 migrations apply ubet --remote`.
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx wrangler pages deploy dist --project-name ubet-app --branch main --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
