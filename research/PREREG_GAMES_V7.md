@@ -22,3 +22,21 @@ Nothing is tuned after the first run: the window (5), the minimum (3 games), the
 
 ## Not claimed
 No sportsbook edge: no historical game lines exist. The features use who actually played in past games, not who was listed, so a positive result would be an upper bound for what a live injury report could deliver.
+
+---
+
+# Outcome (run once as specified: `research/game_eval_v7.py`, output `research/out/games_v7.json`)
+
+**No group is adopted; games-v2 is unchanged.** Pooled over E0, A and B, paired change in log loss against `lin_v2` with the 98.3% interval the rule requires (positive is better):
+
+| Group | Pooled change | 98.3% interval | Better in how many of E0, A, B | Adopted |
+|---|---|---|---|---|
+| Soft schedule (opponents' absent talent) | +0.0002 | [-0.0010, +0.0015] | 2 | no (interval includes 0) |
+| Absence-adjusted form | -0.0002 | [-0.0008, +0.0004] | 1 | no |
+| Narrow results against depleted opponents | -0.0003 | [-0.0009, +0.0001] | 0 | no |
+
+On the confirmation season F: soft schedule +0.0006, absence-adjusted form -0.0000, narrow results -0.0003 (all inside the "not worse than 0.001" band; the narrow-results group was worse than `lin_v2` in the three seasons where it had an interval away from zero, A and F). On 2026-27 so far, absence-adjusted form shows +0.0010 [-0.0005, +0.0026]: too small, too early, and not read as evidence.
+
+**What this says about "a team nearly lost to a depleted opponent".** Reading results against who the opponent was missing does not predict the next game better than the ratings games-v2 already uses. Narrow results against depleted teams, if anything, add noise. The idea was reasonable and is now tested; it is not a hidden edge.
+
+**What happens next.** Nothing is displayed or stored as a shadow. One caveat for any later look: the features use who actually played in past games, which is the best case for an injury-report version, so a failure here is a failure of the best case.
