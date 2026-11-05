@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+// The unit tests that run against every planted bug (they import only from shared/, which is what gets copied).
+const TESTS = ['baseline.test.ts', 'picks.test.ts', 'devig.test.ts', 'teamBets.test.ts', 'lineups.test.ts', 'health.test.ts', 'gut.test.ts', 'properties.test.ts']
+
 // [file, text to find (must occur exactly once), replacement, what the bug is]
 const MUTANTS = [
   ['baseline.ts', 'const over = Math.min(Math.max(1 - cdfAt(d, k), 0), 1)', 'const over = Math.min(Math.max(cdfAt(d, k), 0), 1)', 'over uses the wrong tail'],
@@ -33,6 +36,27 @@ const MUTANTS = [
   ['picks.ts', 'const modelProb = win / (win + lose)', 'const modelProb = win', 'model probability ignores the refund (unconditional)'],
   ['picks.ts', 'ev: expectedValue(prob, outcome.push, top.price)', 'ev: prob * top.price - 1', 'EV ignores the refund chance'],
   ['picks.ts', 'hitRate(played, L.point, 10, side)', 'hitRate(played, L.point, 10)', 'under picks report the over hit rate'],
+  // Lineups: the rules that keep a lineup page honest
+  ['lineups.ts', 'ranked.slice(0, STARTERS)', 'ranked.slice(0, STARTERS + 1)', 'six starters are shown'],
+  ['lineups.ts', "(p.listing.status !== 'out' && p.listing.status !== 'doubtful')", 'true', 'a player listed Out is named as the replacement'],
+  ['lineups.ts', "const use = state === 'listed' ? listings : new Map<string, Listing & { display: string }>()", 'const use = listings', 'flags are shown even when the team has not submitted'],
+  ['lineups.ts', 'return rows.filter((r) => r.game_date === gameDate && r.matchup === matchup)', 'return rows.filter((r) => r.game_date === gameDate)', "another game's rows (same day) are used for this game"],
+  ['lineups.ts', 'return rows.filter((r) => r.game_date === gameDate && r.matchup === matchup)', 'return rows.filter((r) => r.matchup === matchup)', "yesterday's rows are used for today's game"],
+  ['lineups.ts', "if (mine.some((r) => r.status === 'NOT_SUBMITTED')) return 'not_submitted'", '', 'a team that has not filed is reported as having nobody listed'],
+  ['lineups.ts', "return k.replace(/(jr|sr|iii|ii|iv)$/, '')", 'return k', 'names with a suffix no longer match the report'],
+  ['lineups.ts', "const unglue = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2')", "const unglue = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/(\\w)(III|II|IV)$/, '$1 $2')", 'a suffix is spaced twice ("Butler I II")'],
+  // Team bets
+  ['teamBets.ts', 'const onLine = (x: number | null) => (x == null ? null : halfPoint(x))', 'const onLine = (x: number | null) => (x == null ? null : x)', 'a market line that is not on a half point'],
+  ['teamBets.ts', 'if (quotes.length >= 2 && quotes[0].price > quotes[1].price * STALE_PRICE_RATIO) return { ...quotes[1], capped: true }', '', 'a stale best price is shown as the best'],
+  ['teamBets.ts', 'const homeProb = i.modelHomeProb == null ? marketHome : blendProb(i.modelHomeProb, marketHome, MODEL_WEIGHT)', 'const homeProb = i.modelHomeProb == null ? marketHome : i.modelHomeProb', 'the model is trusted fully instead of blended'],
+  ['teamBets.ts', "fairProb(b.moneyline!.home, b.moneyline!.away, 'power')", "fairProb(b.moneyline!.home, b.moneyline!.away, 'proportional')", 'the margin is removed the biased way'],
+  // Health
+  ['health.ts', 'ok: h !== null && h <= MAX_REPORT_HOURS', 'ok: true', 'a stale NBA report is reported as healthy'],
+  ['health.ts', 'if (i.propsOn !== false) checks.push(', 'checks.push(', 'empty projections count as a fault while props are off'],
+  // Gut grading
+  ['gut.ts', "if (g.state !== 'post') continue", '', 'a game still being played is graded'],
+  ['gut.ts', '|| h === a || (h === 0 && a === 0)', '', 'a tie or a 0-0 is graded'],
+  ['gut.ts', '&& Date.parse(tipIso) > nowMs', '', 'a pick can be changed after tip-off'],
   ['picks.ts', 'if (!validQuote(out)) { invalidQuotes++; continue }', '', 'malformed provider quotes are used'],
   ['picks.ts', '(m === 4 && d >= 16) || m === 5 || m === 6', '(m === 4 && d >= 8) || m === 5 || m === 6', 'playoff window starts too early'],
   ['baseline.ts', 'return alphas[i - 1] + t * (alphas[i] - alphas[i - 1])', 'return alphas[i]', 'v3 dispersion not interpolated'],
@@ -56,8 +80,7 @@ for (const [file, find, replace, what] of MUTANTS) {
     const hits = src.split(find).length - 1
     if (hits !== 1) { console.log(`SETUP ERROR  "${find.slice(0, 60)}" occurs ${hits} times in ${file}`); process.exitCode = 2; continue }
     writeFileSync(target, src.replace(find, replace))
-    const r = spawnSync('node', ['--no-warnings', '--test', join(dir, 'shared', 'baseline.test.ts'), join(dir, 'shared', 'picks.test.ts')],
-      { encoding: 'utf8', timeout: 90_000 })
+    const r = spawnSync('node', ['--no-warnings', '--test', ...TESTS.map((t) => join(dir, 'shared', t))], { encoding: 'utf8', timeout: 120_000 })
     const dead = r.status !== 0
     console.log(`${dead ? 'killed  ' : 'SURVIVED'}  ${file.padEnd(12)} ${what}`)
     if (dead) killed++
