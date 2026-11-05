@@ -32,3 +32,24 @@ Reported for information only, and unable to adopt anything: R against B0 (how m
 
 ## Not claimed
 No sportsbook edge: no historical game lines exist. Four reports a day is coarser than the league's 15-minute updates, so a late scratch after the last stored report is not seen.
+
+---
+
+# Outcome (run once as specified: `research/game_eval_v8.py`, output `research/out/games_v8.json`; the backfill covers 971 game days from 2020-12-22 to 2026-11-04, about 398,000 report rows)
+
+**Neither candidate is adopted; games-v2 is unchanged.** Pooled over E0, A and B, paired change in log loss against B0 (listed Out only, what the live system can know) with the 97.5% interval the rule requires (positive is better):
+
+| Candidate | Pooled change | 97.5% interval | Better in how many of E0, A, B | F not worse by more than 0.001 | Adopted |
+|---|---|---|---|---|---|
+| C1: status-aware expected loss (Out 0, Doubtful 0.15, Questionable 0.5, Probable 0.9) | +0.0005 | [-0.0005, +0.0014] | 3 of 3 | yes (+0.0008) | no (interval includes 0) |
+| C2: the single biggest name listed Out or Doubtful | -0.0002 | [-0.0011, +0.0008] | 1 of 3 | yes (-0.0001) | no |
+
+Per season (E0, A, B, F, 2026-27 so far): C1 +0.0005, +0.0004, +0.0005, +0.0008, -0.0022; C2 -0.0003, -0.0008, +0.0006, -0.0001, +0.0011. C1 was positive in every development season and in F: the steadiest sign of any group tested since v2, and too small to clear the interval, the same shape as star concentration in v6. Its 2026-27 number (121 games) is not read as evidence.
+
+**Reference (information only).** R, which knows who actually played, beat B0 by +0.0001, +0.0049, +0.0060 and +0.0029 in E0, A, B and F (no interval excluded 0). So knowing only the league's pre-game listings costs about 0.003 to 0.006 log loss against hindsight, and C1 recovers roughly a tenth of that.
+
+**What the reports are worth, from the play rates (information only).** Of players the report used listed each status, the share who then played: **Out 0.00** in every season (about 38,000 listings), **Doubtful 0.01 to 0.06**, **Questionable 0.47 to 0.53**, **Probable 0.84 to 0.95**, "Available" 0.71 to 0.87. So the NBA's "Out" is as reliable as hindsight, which is why treating only listed Out as absent loses so little; "Questionable" really is close to a coin flip, and "Doubtful" is closer to Out than to the 0.15 fixed here.
+
+**Limits of this run.** Only 63% to 74% of games had a usable report under the rule (four stored reports a day; a team still "not yet submitted" in the latest qualifying one blocks it), so the report features are 0 and `has_rep` = 0 for about 30% of games in every model. That dilutes any effect and is the main reason a larger sample of finer-grained reports (every 15 minutes, as the league posts them) is worth a new pre-registration rather than a re-run of this one: the window, weights and statuses here are final and were not tuned after the result.
+
+**What happens next.** Nothing changes in the model or the pages. The pages already show every status the NBA lists; the model keeps counting only Out.
