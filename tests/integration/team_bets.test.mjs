@@ -35,6 +35,7 @@ describe('/api/team-bets', () => {
         assert.deepEqual(mine.slice(0, 6), theirs.slice(0, 6), `${g.home.abbr} ${side}`)
       }
       assert.deepEqual(g.lineup.home.starters, other.home.starters.map((p) => p.name))
+      assert.equal(g.lineup.home.state, other.home.state, 'the same report state on both pages')
     }
   })
   it('suggests no bets: no ranked list, no expected profit, no best-bet field, and the honesty note is there', async () => {

@@ -167,6 +167,18 @@ def merge(espn: list[dict], official: list[dict], covered: set[str] | None = Non
     return [r for r in espn if r["team"] not in covered] + official
 
 
+def store_rows(parsed: dict) -> list[dict]:
+    """The rows to store for a parsed report: every listed player, plus one row (status NOT_SUBMITTED, no player) for each team and game the report says has not filed."""
+    seen = set()
+    not_filed = []
+    for f in parsed.get("filings", []):
+        key = (f["game_date"], f["team"])
+        if not f["filed"] and key not in seen:
+            seen.add(key)
+            not_filed.append({"team": f["team"], "player": "", "status": "NOT_SUBMITTED", "reason": "", "game_date": f["game_date"], "matchup": f["matchup"]})
+    return parsed["rows"] + not_filed
+
+
 def store_sql(report_time: str, rows: list[dict]) -> list[str]:
     q = lambda v: "NULL" if v is None else "'" + str(v).replace("'", "''") + "'"  # noqa: E731
     return [f"INSERT OR IGNORE INTO nba_injury_report (report_time, team, player, status, reason, game_date, matchup) VALUES ({', '.join(q(v) for v in (report_time, r['team'], r['player'], r['status'], r['reason'], r['game_date'], r['matchup']))});" for r in rows]
@@ -180,7 +192,7 @@ def main():
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     rep = official_report([(t["abbreviation"], t["full_name"]) for t in nba_teams.get_teams()])
-    if not rep or not rep["rows"]:
+    if not rep or not (rep["rows"] or rep["filings"]):
         sys.exit("No official injury report could be read.")
     by = {}
     for r in rep["rows"]:
@@ -191,7 +203,7 @@ def main():
     out = ROOT / "research" / "out"
     out.mkdir(exist_ok=True)
     f = out / "nba_injuries.sql"
-    f.write_text("\n".join(store_sql(rep["report_time"], rep["rows"])), encoding="utf-8")
+    f.write_text("\n".join(store_sql(rep["report_time"], store_rows(rep))), encoding="utf-8")
     subprocess.run(["npx", "wrangler", "d1", "execute", "ubet", "--remote" if a.remote else "--local", "--file", str(f)], cwd=ROOT, shell=True, check=True)
 
 

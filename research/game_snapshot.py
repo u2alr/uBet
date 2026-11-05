@@ -167,8 +167,8 @@ def main():
     sql += inserts("game_lean", ["date", "home", "away", "model_home_prob", "elo_home", "elo_away", "home_net10", "away_net10", "home_off20", "home_def20", "away_off20", "away_def20", "as_of", "absent_home", "absent_away", "model_version", "model_v1_prob", "srs_home", "srs_away", "pred_margin", "co_diff"], rows)
     sql += [x.replace("INSERT OR REPLACE", "INSERT OR IGNORE") for x in inserts("game_lean_log", ["date", "home", "away", "as_of", "model_home_prob", "market_home_prob", "market_book", "model_version", "model_v1_prob", "shadow_prob", "shadow_name", "shadow2_prob", "shadow2_name"], log)]
     sql += [x.replace("INSERT OR REPLACE", "INSERT OR IGNORE") for x in inserts("injury_log", ["as_of", "team", "player", "status", "note"], inj)]
-    if official and official["rows"]:
-        sql += NI.store_sql(official["report_time"], official["rows"])
+    if official and (official["rows"] or official["filings"]):
+        sql += NI.store_sql(official["report_time"], NI.store_rows(official))
     OUT.mkdir(exist_ok=True)
     f = OUT / "game_lean.sql"
     f.write_text("\n".join(sql), encoding="utf-8")

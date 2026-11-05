@@ -1,22 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
-import { STATUS_LABEL, type LineupPlayer, type LineupStatus, type TeamLineup } from '../../shared/lineups.ts'
+import { STATUS_LABEL, type LineupPlayer, type LineupStatus, type ReportState, type TeamLineup } from '../../shared/lineups.ts'
 import { api } from '../lib/format'
 import { teamByName } from '../lib/teams'
 import TeamChip from './TeamChip'
 
 interface Side extends TeamLineup { abbr: string; name: string }
 interface Game { id: string; date: string; state: 'pre' | 'in' | 'post'; status: string; home: Side; away: Side }
-interface Res { data: { games: Game[] }; meta: { officialReportAt: string | null; espnAvailable: boolean; note: string } }
+interface Res { data: { games: Game[] }; meta: { officialReportAt: string | null; note: string } }
 
-/** Colors for each status: red is out, orange doubtful, amber questionable or game-time, green probable. Text always names the status, never color alone. */
+/** Colors for each status: red is out, orange doubtful, amber questionable, green probable. Text always names the status, never color alone. */
 const PILL: Record<LineupStatus, string> = {
   out: 'bg-red-500/15 text-red-300 ring-1 ring-red-500/30',
   doubtful: 'bg-orange-500/15 text-orange-300 ring-1 ring-orange-500/30',
   questionable: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
-  gtd: 'bg-amber-500/10 text-amber-200 ring-1 ring-amber-500/20',
   probable: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30',
 }
-const SHORT: Record<LineupStatus, string> = { out: 'OUT', doubtful: 'DOUBT', questionable: 'QUES', gtd: 'GTD', probable: 'PROB' }
+const SHORT: Record<LineupStatus, string> = { out: 'OUT', doubtful: 'DOUBT', questionable: 'QUES', probable: 'PROB' }
 
 const dayKey = (iso: string) => new Date(iso).toLocaleDateString('en-CA')
 function dayName(key: string) {
@@ -51,25 +50,28 @@ function sinceText(lastPlayed: string | null | undefined, missed: number | null 
   if (missed === 0) return `Played last game (${shortDay(lastPlayed)})`
   return `Missed last ${missed} · last played ${shortDay(lastPlayed)}`
 }
+/** What to say under a team about where its flags come from: only the league's report is ever used. */
+function sourceText(state: ReportState, asOf: string | null): string {
+  const when = asOf ? ` · updated ${etStamp(asOf)}${ageText(asOf)}` : ''
+  switch (state) {
+    case 'listed': return `NBA injury report${when}`
+    case 'clear': return `NBA injury report${when} · no one listed for this team`
+    case 'not_submitted': return `Not yet submitted to the NBA${when} · default lineup`
+    default: return 'No NBA report for this game yet · default lineup'
+  }
+}
 
-function Pill({ status, reason, source, note }: { status: LineupStatus; reason: string; source: 'official' | 'espn'; note?: string }) {
+function Pill({ status, reason }: { status: LineupStatus; reason: string }) {
   return (
-    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${PILL[status]}`}
-      title={`${STATUS_LABEL[status]}${reason || note ? `: ${reason || note}` : ''} (${source === 'official' ? 'NBA injury report' : 'ESPN'})`}>
+    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${PILL[status]}`} title={`${STATUS_LABEL[status]}${reason ? `: ${reason}` : ''} (NBA injury report)`}>
       {SHORT[status]}
     </span>
   )
 }
 
 function Detail({ listing, lastPlayed, missed }: { listing: NonNullable<LineupPlayer['listing']>; lastPlayed?: string | null; missed?: number | null }) {
-  const since = sinceText(lastPlayed, missed)
-  const bits = [listing.reason, since].filter(Boolean)
-  return (
-    <div className="pb-1.5 pl-8 pr-3 text-xs leading-snug text-neutral-500">
-      {bits.length > 0 && <div>{bits.join(' · ')}</div>}
-      {listing.note && <div className="line-clamp-2 text-neutral-600" title={listing.note}>{listing.note}{listing.updated && <span className="text-neutral-700"> (ESPN, {shortDay(listing.updated.slice(0, 10))})</span>}</div>}
-    </div>
-  )
+  const bits = [listing.reason, sinceText(lastPlayed, missed)].filter(Boolean)
+  return bits.length ? <div className="pb-1.5 pl-8 pr-3 text-xs leading-snug text-neutral-500">{bits.join(' · ')}</div> : null
 }
 
 function TeamColumn({ t, align }: { t: Side; align: 'left' | 'right' }) {
@@ -91,7 +93,7 @@ function TeamColumn({ t, align }: { t: Side; align: 'left' | 'right' }) {
             <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
               <span className="w-3 shrink-0 text-xs tabular-nums text-neutral-600">{i + 1}</span>
               <span className={`min-w-0 flex-1 truncate ${p.listing?.status === 'out' ? 'text-neutral-500 line-through' : 'text-neutral-100'}`}>{p.name}</span>
-              {p.listing && <Pill status={p.listing.status} reason={p.listing.reason} source={p.listing.source} note={p.listing.note} />}
+              {p.listing && <Pill status={p.listing.status} reason={p.listing.reason} />}
               <span className="w-10 shrink-0 text-right text-xs tabular-nums text-neutral-600" title="Minutes per game over the last 10 team games">{p.avgMin.toFixed(0)} min</span>
             </div>
             {p.listing && <Detail listing={p.listing} lastPlayed={p.lastPlayed} missed={p.missed} />}
@@ -101,27 +103,20 @@ function TeamColumn({ t, align }: { t: Side; align: 'left' | 'right' }) {
       {t.nextUp.length > 0 && (
         <p className="mt-1.5 text-xs text-neutral-500" title="Next by minutes, not listed Out or Doubtful">
           <span className="text-neutral-600">Next up </span>
-          {t.nextUp.map((p, i) => <span key={p.id}>{i > 0 && ', '}<span className="text-neutral-400">{p.name}</span><span className="text-neutral-600"> {p.avgMin.toFixed(0)}m</span>{p.listing && <span className="ml-1"><Pill status={p.listing.status} reason={p.listing.reason} source={p.listing.source} note={p.listing.note} /></span>}</span>)}
+          {t.nextUp.map((p, i) => <span key={p.id}>{i > 0 && ', '}<span className="text-neutral-400">{p.name}</span><span className="text-neutral-600"> {p.avgMin.toFixed(0)}m</span>{p.listing && <span className="ml-1"><Pill status={p.listing.status} reason={p.listing.reason} /></span>}</span>)}
         </p>
       )}
       {t.alsoListed.length > 0 && (
         <ul className="mt-1.5 space-y-0.5 text-xs">
           {t.alsoListed.map((a) => (
-            <li key={a.name} className="text-neutral-500">
-              <div className="flex items-center gap-2">
-                <Pill status={a.listing.status} reason={a.listing.reason} source={a.listing.source} note={a.listing.note} />
-                <span className="min-w-0 truncate"><span className="text-neutral-400">{a.name}</span>{a.listing.reason && <span> · {a.listing.reason}</span>}{a.lastPlayed && <span className="text-neutral-600"> · last played {shortDay(a.lastPlayed)}</span>}</span>
-              </div>
-              {a.listing.note && <div className="line-clamp-2 pl-[3.25rem] text-neutral-600" title={a.listing.note}>{a.listing.note}{a.listing.updated && <span className="text-neutral-700"> (ESPN, {shortDay(a.listing.updated.slice(0, 10))})</span>}</div>}
+            <li key={a.name} className="flex items-center gap-2 text-neutral-500">
+              <Pill status={a.listing.status} reason={a.listing.reason} />
+              <span className="min-w-0 truncate"><span className="text-neutral-400">{a.name}</span>{a.listing.reason && <span> · {a.listing.reason}</span>}{a.lastPlayed && <span className="text-neutral-600"> · last played {shortDay(a.lastPlayed)}</span>}</span>
             </li>
           ))}
         </ul>
       )}
-      <p className="mt-1.5 text-[10px] uppercase tracking-wide text-neutral-600">
-        {t.source === 'official'
-          ? `NBA injury report${t.asOf ? ` · updated ${etStamp(t.asOf)}${ageText(t.asOf)}` : ''}`
-          : t.source === 'espn' ? 'ESPN list (not on the NBA report yet) · refreshed about every 15 min' : 'No injury list for this team yet'}
-      </p>
+      <p className="mt-1.5 text-[10px] uppercase tracking-wide text-neutral-600">{sourceText(t.state, t.asOf)}</p>
     </div>
   )
 }
@@ -153,8 +148,8 @@ export default function Lineups({ refreshKey }: { refreshKey: number }) {
       <div>
         <h2 className="text-lg font-semibold text-neutral-50">Lineups</h2>
         <p className="text-xs text-neutral-500">
-          Projected starters, with who is out or in doubt.{' '}
-          {res.meta.officialReportAt ? <>NBA injury report of {res.meta.officialReportAt} ET.</> : <>The NBA injury report is not stored yet; ESPN's list is used.</>}{' '}
+          Projected starters for upcoming games, flagged from the NBA's official injury report only.{' '}
+          {res.meta.officialReportAt ? <>Newest report: {etStamp(res.meta.officialReportAt)}{ageText(res.meta.officialReportAt)}.</> : <>No recent NBA report is stored, so the default lineups are shown without flags.</>}{' '}
           Starters are projected from recent minutes, not confirmed: real lineups are posted about 30 minutes before tip.
         </p>
       </div>

@@ -1,79 +1,101 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Injury } from './injuries.ts'
-import { buildLineup, cleanReason, espnListings, nameKey, officialDisplay, officialKey, officialListings, reportAgeHours, type Candidate, type OfficialRow } from './lineups.ts'
+import { buildLineup, cleanReason, nameKey, officialDisplay, officialKey, officialListings, reportAgeHours, reportState, type Candidate, type OfficialRow } from './lineups.ts'
 
 const roster: Candidate[] = [
   { id: 1, name: 'Star One', avgMin: 36 }, { id: 2, name: 'Guard Two', avgMin: 34 }, { id: 3, name: 'Wing Three', avgMin: 31 }, { id: 4, name: 'Big Four', avgMin: 29 },
   { id: 5, name: 'Forward Five', avgMin: 28 }, { id: 6, name: 'Sixth Man', avgMin: 24 }, { id: 7, name: 'Seventh Guy', avgMin: 20 }, { id: 8, name: 'Eighth Guy', avgMin: 15 },
   { id: 9, name: 'Ninth Guy', avgMin: 9 }, { id: 10, name: 'Never Played', avgMin: 0 },
 ]
-const row = (player: string, status: string, reason: string | null = null, team = 'ATL', game_date: string | null = '2026-11-04'): OfficialRow => ({ team, player, status, reason, game_date })
+const DAY = '2026-11-04'
+const MATCHUP = 'WAS@ATL'
+const row = (player: string, status: string, reason: string | null = null, team = 'ATL', game_date: string | null = DAY, matchup: string | null = MATCHUP): OfficialRow => ({ team, player, status, reason, game_date, matchup })
+const lineup = (rows: OfficialRow[], team = 'ATL', date = DAY, matchup = MATCHUP, asOf = '2026-11-04 17:30') =>
+  buildLineup(roster, officialListings(rows, team, date, matchup), reportState(rows, team, date, matchup), asOf)
 
 test('names match across the roster spelling and the PDF spelling, accents and suffixes included', () => {
   assert.equal(nameKey('Jaren Jackson Jr.'), officialKey('JacksonJr.,Jaren'))
   assert.equal(nameKey('Nikola Jokić'), officialKey('Jokic,Nikola'))
   assert.equal(nameKey('Yanic Konan Niederhauser'), officialKey('Niederhauser,YanicKonan'))
+  assert.equal(nameKey('Jimmy Butler III'), officialKey('ButlerIII,Jimmy'))
   assert.notEqual(nameKey('Jalen Johnson'), nameKey('Jalen Green'))
 })
 
-test('a name the PDF ran together is made readable', () => {
+test('a name the PDF ran together is spaced once, a suffix included', () => {
   assert.equal(officialDisplay('Niederhauser,YanicKonan'), 'Yanic Konan Niederhauser')
-  assert.equal(officialDisplay('Gueye,Mouhamed'), 'Mouhamed Gueye')
+  assert.equal(officialDisplay('ButlerIII,Jimmy'), 'Jimmy Butler III')
+  assert.equal(officialDisplay('CenacJr.,Christopher'), 'Christopher Cenac Jr.')
+  assert.equal(officialDisplay('Trent Jr.,Gary'), 'Gary Trent Jr.')
 })
 
-test('the five starters are the five with the most minutes, in that order, and the next three are the bench', () => {
-  const l = buildLineup(roster, null, new Map())
+test('with no entry at all the default lineup is shown: five by minutes, the next three, and no flags', () => {
+  const l = lineup([])
   assert.deepEqual(l.starters.map((p) => p.name), ['Star One', 'Guard Two', 'Wing Three', 'Big Four', 'Forward Five'])
   assert.deepEqual(l.nextUp.map((p) => p.name), ['Sixth Man', 'Seventh Guy', 'Eighth Guy'])
-  assert.equal(l.source, 'none')
+  assert.equal(l.state, 'absent')
+  assert.equal(l.asOf, null)
+  assert.ok(![...l.starters, ...l.nextUp].some((p) => p.listing), 'no flags without a report')
+  assert.equal(l.alsoListed.length, 0)
   assert.ok(!l.starters.some((p) => p.name === 'Never Played'), 'a player with no minutes is never a starter')
 })
 
-test('a starter listed Out stays in the five with the flag, and the replacement comes from the bench, not from an Out player', () => {
-  const off = officialListings([row('One,Star', 'Out', 'Injury/Illness-LeftAnkleSprain'), row('Two,Sixth', 'Out')], 'ATL', '2026-11-04')
-  const fixed = [{ ...roster[0], name: 'Star One' }]
-  assert.ok(off)
-  const l = buildLineup([...fixed, ...roster.slice(1).map((r) => (r.name === 'Sixth Man' ? { ...r, name: 'Sixth Man' } : r))], new Map([[nameKey('Star One'), off!.get(officialKey('One,Star'))!]]), new Map())
+test('a team the report says has not filed shows the default lineup with no flags, even if the other team has players listed', () => {
+  const rows = [row('Two,Guard', 'Out', null, 'WAS'), row('', 'NOT_SUBMITTED', null, 'ATL')]
+  const l = lineup(rows, 'ATL')
+  assert.equal(l.state, 'not_submitted')
+  assert.ok(![...l.starters, ...l.nextUp].some((p) => p.listing))
+  assert.equal(lineup(rows, 'WAS').state, 'listed')
+})
+
+test('a game on the report where this team has nobody listed is clear, and shows the default lineup', () => {
+  const l = lineup([row('Two,Guard', 'Out', null, 'WAS')], 'ATL')
+  assert.equal(l.state, 'clear')
+  assert.equal(l.asOf, '2026-11-04 17:30', 'the report time is shown: the league did publish this game')
+  assert.ok(![...l.starters, ...l.nextUp].some((p) => p.listing))
+})
+
+test('a listed starter keeps his place with the flag and the reason, and the official name is matched to the roster', () => {
+  const l = lineup([row('One,Star', 'Out', 'Injury/Illness-LeftAnkleSprain')])
+  assert.equal(l.state, 'listed')
+  assert.equal(l.starters[0].name, 'Star One')
   assert.equal(l.starters[0].listing?.status, 'out')
   assert.equal(l.starters[0].listing?.reason, 'Left Ankle Sprain')
-  assert.equal(l.source, 'official')
+  assert.equal(l.asOf, '2026-11-04 17:30')
 })
 
-test('the next men up skip anyone listed Out or Doubtful', () => {
-  const listings = new Map([
-    [nameKey('Sixth Man'), { status: 'out' as const, reason: '', source: 'official' as const, display: 'Sixth Man' }],
-    [nameKey('Seventh Guy'), { status: 'doubtful' as const, reason: '', source: 'official' as const, display: 'Seventh Guy' }],
-  ])
-  const l = buildLineup(roster, listings, new Map())
+test('only rows for THIS game count: the same team on another day or in another game is never used', () => {
+  const rows = [
+    row('One,Star', 'Out', null, 'ATL', '2026-11-03', 'WAS@ATL'),     // yesterday's game
+    row('Two,Guard', 'Out', null, 'ATL', DAY, 'ATL@BOS'),             // another game today
+    row('Three,Wing', 'Questionable', null, 'ATL', DAY, MATCHUP),      // this game
+  ]
+  const l = lineup(rows)
+  assert.equal(l.starters[0].listing, null, 'yesterday is ignored')
+  assert.equal(l.starters[1].listing, null, 'another matchup is ignored')
+  assert.equal(l.starters[2].listing?.status, 'questionable')
+  assert.equal(reportState(rows, 'ATL', '2026-11-09', MATCHUP), 'absent', 'a game the report does not have')
+})
+
+test('the next men up skip anyone listed Out or Doubtful, who still show as listed, worst first', () => {
+  const l = lineup([row('Man,Sixth', 'Out'), row('Guy,Seventh', 'Doubtful')])
   assert.deepEqual(l.nextUp.map((p) => p.name), ['Eighth Guy', 'Ninth Guy'])
-  assert.deepEqual(l.alsoListed.map((a) => a.name), ['Sixth Man', 'Seventh Guy'], 'the ones skipped still show as listed, worst first')
+  assert.deepEqual(l.alsoListed.map((a) => a.name), ['Sixth Man', 'Seventh Guy'])
 })
 
-test('a team that has filed with the league is taken from that report alone: a stale ESPN entry does not come back', () => {
-  const off = officialListings([row('Two,Guard', 'Questionable')], 'ATL', '2026-11-04')
-  const espnFeed = new Map<string, Injury>([['star one', { status: 'out', label: 'Out', note: 'stale', team: 'Atlanta Hawks', name: 'Star One' }]])
-  const espn = espnListings(espnFeed, () => true)
-  const l = buildLineup(roster, off, espn)
-  assert.equal(l.source, 'official')
-  assert.equal(l.starters[0].listing, null, 'Star One is not on the league report, so no flag')
-  assert.equal(l.starters[1].listing?.status, 'questionable')
+test('Available is not a flag and a G League assignment is not shown as an injury', () => {
+  const rows = [row('Three,Wing', 'Available'), row('Ghost,Rookie', 'Out', 'GLeague-Two-Way')]
+  const l = lineup(rows)
+  assert.equal(l.state, 'clear', 'neither is something to flag')
+  assert.equal(l.alsoListed.length, 0)
 })
 
-test('a team the league has not filed for falls back to ESPN, and day-to-day reads as game-time', () => {
-  assert.equal(officialListings([row('Two,Guard', 'Out', null, 'BOS')], 'ATL', '2026-11-04'), null)
-  const espn = espnListings(new Map<string, Injury>([['guard two', { status: 'day-to-day', label: 'Day-To-Day', note: 'knee', team: 'Atlanta Hawks', name: 'Guard Two' }]]), () => true)
-  const l = buildLineup(roster, null, espn)
-  assert.equal(l.source, 'espn')
-  assert.equal(l.starters[1].listing?.status, 'gtd')
-})
-
-test('rows for another game date are ignored, Available is not a flag, and a G League assignment is not listed as an injury', () => {
-  const off = officialListings([row('Two,Guard', 'Out', null, 'ATL', '2026-11-05'), row('Three,Wing', 'Available'), row('Ghost,Rookie', 'Out', 'GLeague-Two-Way')], 'ATL', '2026-11-04')
-  assert.ok(off)
-  assert.equal(off!.size, 1, 'only the G League row survives parsing; the other date and Available are out')
-  const l = buildLineup(roster, off, new Map())
-  assert.equal(l.alsoListed.length, 0, 'a G League assignment is not shown')
+test('last played and games missed ride along with each player', () => {
+  const withDates: Candidate[] = [{ id: 1, name: 'Star One', avgMin: 36, lastPlayed: '2026-11-02', missed: 2 }, { id: 2, name: 'Guard Two', avgMin: 30 }]
+  const rows = [row('One,Star', 'Out')]
+  const l = buildLineup(withDates, officialListings(rows, 'ATL', DAY, MATCHUP), reportState(rows, 'ATL', DAY, MATCHUP), '2026-11-05 02:15')
+  assert.equal(l.starters[0].lastPlayed, '2026-11-02')
+  assert.equal(l.starters[0].missed, 2)
+  assert.equal(l.starters[1].lastPlayed, null, 'a player with no dates gets null, not a guess')
 })
 
 test('reasons are made readable', () => {
@@ -87,29 +109,4 @@ test('a report older than a day and a half is detectable and an unreadable stamp
   assert.ok(reportAgeHours('2026-11-05 06:00', now)! < 12)
   assert.ok(reportAgeHours('2026-11-03 06:00', now)! > 36)
   assert.equal(reportAgeHours('nope', now), null)
-})
-
-test('last played and games missed ride along with each player, and the report time is kept only when the league wrote the list', () => {
-  const withDates: Candidate[] = [{ id: 1, name: 'Star One', avgMin: 36, lastPlayed: '2026-11-02', missed: 2 }, { id: 2, name: 'Guard Two', avgMin: 30 }]
-  const off = officialListings([row('One,Star', 'Out', 'Injury/Illness-LeftAnkleSprain')], 'ATL', '2026-11-04')
-  const l = buildLineup(withDates, off, new Map(), '2026-11-05 02:15')
-  assert.equal(l.starters[0].lastPlayed, '2026-11-02')
-  assert.equal(l.starters[0].missed, 2)
-  assert.equal(l.starters[1].lastPlayed, null, 'a player with no dates gets null, not a guess')
-  assert.equal(l.asOf, '2026-11-05 02:15')
-  const e = buildLineup(withDates, null, espnListings(new Map<string, Injury>(), () => true), '2026-11-05 02:15')
-  assert.equal(e.asOf, null, 'ESPN has no stamp of its own, so none is claimed')
-})
-
-test("ESPN's own entry date is kept so a stale note can be told from a fresh one", () => {
-  const feed = new Map<string, Injury>([['guard two', { status: 'out', label: 'Out', note: "won't play Wednesday", team: 'Atlanta Hawks', name: 'Guard Two', updated: '2026-11-04T01:19Z' }]])
-  const listing = espnListings(feed, () => true).get(nameKey('Guard Two'))
-  assert.equal(listing?.updated, '2026-11-04T01:19Z')
-})
-
-test('a name the PDF ran together with a suffix is spaced once ("Butler III", not "Butler I II")', () => {
-  assert.equal(officialDisplay('ButlerIII,Jimmy'), 'Jimmy Butler III')
-  assert.equal(officialDisplay('CenacJr.,Christopher'), 'Christopher Cenac Jr.')
-  assert.equal(officialDisplay('Trent Jr.,Gary'), 'Gary Trent Jr.')
-  assert.equal(nameKey('Jimmy Butler III'), officialKey('ButlerIII,Jimmy'))
 })

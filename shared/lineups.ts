@@ -1,21 +1,27 @@
 // Projected lineups with each player's injury status, the way a lineup page reads: five likely starters per team, flagged Out / Doubtful / Questionable / Probable.
 // Pure: no network, no database, no clock.
 //
+// The ONLY source of flags is the NBA's official injury report (the PDFs on official.nba.com, stored by research/nba_injury_pdf.py). No other feed is read here. When the league has no
+// entry for a team and game (not yet submitted, nobody listed, or no report for that game), the default projected lineup is shown with no flags.
+//
 // Two honest limits. Starters are PROJECTED, not confirmed: they are the five players with the most minutes per game over the team's last 10 games (a game a player missed counts as 0
 // minutes, so someone out for weeks drops away). Real lineups are posted about 30 minutes before tip and are not available here. And a status is a listing, not a prediction: the
 // league's report says "Questionable", not how likely he is to play.
 import { normName } from './picks.ts'
-import type { Injury, InjuryStatus } from './injuries.ts'
 
-export type LineupStatus = 'out' | 'doubtful' | 'questionable' | 'probable' | 'gtd'
-export const STATUS_LABEL: Record<LineupStatus, string> = { out: 'Out', doubtful: 'Doubtful', questionable: 'Questionable', probable: 'Probable', gtd: 'Game-time' }
-const SEVERITY: Record<LineupStatus, number> = { out: 5, doubtful: 4, questionable: 3, gtd: 2, probable: 1 }
+export type LineupStatus = 'out' | 'doubtful' | 'questionable' | 'probable'
+export const STATUS_LABEL: Record<LineupStatus, string> = { out: 'Out', doubtful: 'Doubtful', questionable: 'Questionable', probable: 'Probable' }
+const SEVERITY: Record<LineupStatus, number> = { out: 4, doubtful: 3, questionable: 2, probable: 1 }
 export const STARTERS = 5
 export const NEXT_UP = 3
 /** An official report older than this is not trusted for tonight's games. */
 export const MAX_REPORT_AGE_HOURS = 36
 
-export interface Listing { status: LineupStatus; reason: string; source: 'official' | 'espn'; /** A longer news line (ESPN's), for a tooltip only. */ note?: string; /** When ESPN last updated its entry for him (ISO). */ updated?: string }
+/** What the league's report says about one team in one game: 'listed' (at least one player), 'clear' (the game is on the report and the team filed, nobody listed), 'not_submitted' (the report
+ *  says the team has not filed), or 'absent' (the game is not on the newest report, or there is no recent report). Only 'listed' carries flags. */
+export type ReportState = 'listed' | 'clear' | 'not_submitted' | 'absent'
+
+export interface Listing { status: LineupStatus; reason: string }
 export interface Candidate {
   id: number; name: string
   /** Minutes per game over the team's last games, a missed game counting as 0. */
@@ -31,8 +37,8 @@ export interface TeamLineup {
   nextUp: LineupPlayer[]
   /** Listed players who are not in the five or the next three (an injured reserve, a rotation player on the report). */
   alsoListed: { name: string; listing: Listing; lastPlayed?: string | null }[]
-  source: 'official' | 'espn' | 'none'
-  /** When the list behind the flags was written: the league's printed report time ('YYYY-MM-DD HH:MM' Eastern), or null for ESPN's feed (no stamp of its own). */
+  state: ReportState
+  /** The league's printed time of the report behind the flags ('YYYY-MM-DD HH:MM' Eastern), or null when there is no entry for this team. */
   asOf: string | null
 }
 
@@ -61,26 +67,34 @@ export function statusFromOfficial(raw: string): LineupStatus | null {
   if (s === 'doubtful') return 'doubtful'
   if (s === 'questionable') return 'questionable'
   if (s === 'probable') return 'probable'
-  return null                                   // "Available": nothing to flag
+  return null                                   // "Available" and "NOT_SUBMITTED": nothing to flag
 }
 
-export function statusFromEspn(s: InjuryStatus): LineupStatus | null {
-  return s === 'out' ? 'out' : s === 'doubtful' ? 'doubtful' : s === 'questionable' ? 'questionable' : s === 'day-to-day' ? 'gtd' : null
+export interface OfficialRow { team: string; player: string; status: string; reason: string | null; game_date: string | null; matchup?: string | null }
+
+/** The rows of the report that belong to THIS game: its date and its matchup ("AWAY@HOME", the league's own team codes). A row for the same team on another day, or in another game, is never used. */
+function gameRows(rows: OfficialRow[], gameDate: string, matchup: string): OfficialRow[] {
+  return rows.filter((r) => r.game_date === gameDate && r.matchup === matchup)
 }
 
-export interface OfficialRow { team: string; player: string; status: string; reason: string | null; game_date: string | null }
+/** What the report says about one team in one game (see ReportState). */
+export function reportState(rows: OfficialRow[], teamAbbr: string, gameDate: string, matchup: string): ReportState {
+  const game = gameRows(rows, gameDate, matchup)
+  if (!game.length) return 'absent'
+  const mine = game.filter((r) => r.team === teamAbbr)
+  if (mine.some((r) => r.status === 'NOT_SUBMITTED')) return 'not_submitted'
+  return mine.some((r) => statusFromOfficial(r.status) && cleanReason(r.reason) !== 'G League') ? 'listed' : 'clear'
+}
 
-/** Listings for one team from the league's report: key -> listing, or null when the team has no row (it has not filed, so ESPN's list is the fallback). */
-export function officialListings(rows: OfficialRow[], teamAbbr: string, gameDate: string): Map<string, Listing & { display: string }> | null {
-  const mine = rows.filter((r) => r.team === teamAbbr && (r.game_date == null || r.game_date === gameDate))
-  if (!mine.length) return null
+/** Listings for one team in one game from the league's report: key -> listing. Empty when the team has no entry for this game. */
+export function officialListings(rows: OfficialRow[], teamAbbr: string, gameDate: string, matchup: string): Map<string, Listing & { display: string }> {
   const out = new Map<string, Listing & { display: string }>()
-  for (const r of mine) {
+  for (const r of gameRows(rows, gameDate, matchup).filter((x) => x.team === teamAbbr)) {
     const status = statusFromOfficial(r.status)
     if (!status) continue
     const key = officialKey(r.player)
     const cur = out.get(key)
-    if (!cur || SEVERITY[status] > SEVERITY[cur.status]) out.set(key, { status, reason: cleanReason(r.reason), source: 'official', display: officialDisplay(r.player) })
+    if (!cur || SEVERITY[status] > SEVERITY[cur.status]) out.set(key, { status, reason: cleanReason(r.reason), display: officialDisplay(r.player) })
   }
   return out
 }
@@ -92,18 +106,6 @@ export function cleanReason(raw: string | null | undefined): string {
   return unglue(raw.replace(/^Injury\/Illness-?/i, '').replace(/^Injury\/Illness/i, '')).replace(/\s+/g, ' ').trim()
 }
 
-/** Listings for one team from ESPN's feed, `inj` being the whole feed by normalised name and `isTeam` telling which entries belong to the team. */
-export function espnListings(inj: Map<string, Injury>, isTeam: (injury: Injury) => boolean): Map<string, Listing & { display: string }> {
-  const out = new Map<string, Listing & { display: string }>()
-  for (const i of inj.values()) {
-    if (!isTeam(i)) continue
-    const status = statusFromEspn(i.status)
-    if (!status || !i.name) continue
-    out.set(nameKey(i.name), { status, reason: '', note: i.note.slice(0, 240), source: 'espn', display: i.name, ...(i.updated ? { updated: i.updated } : {}) })
-  }
-  return out
-}
-
 /** Hours between the report's own time ('YYYY-MM-DD HH:MM', Eastern) and `nowMs`, or null when unreadable. Eastern is taken as UTC-5 or UTC-4 by the date: close enough for a 36-hour limit. */
 export function reportAgeHours(reportTime: string | null | undefined, nowMs: number): number | null {
   const m = reportTime?.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/)
@@ -112,18 +114,18 @@ export function reportAgeHours(reportTime: string | null | undefined, nowMs: num
   return Math.max(0, (nowMs - t) / 3_600_000)
 }
 
-export function buildLineup(candidates: Candidate[], official: Map<string, Listing & { display: string }> | null, espn: Map<string, Listing & { display: string }>, asOf: string | null = null): TeamLineup {
-  const listings = official ?? espn
-  const source: TeamLineup['source'] = official ? 'official' : espn.size ? 'espn' : 'none'
+/** The lineup of one team for one game. `listings` and `state` come from the league's report; with any state but 'listed' the default projected lineup is returned with no flags. */
+export function buildLineup(candidates: Candidate[], listings: Map<string, Listing & { display: string }>, state: ReportState, asOf: string | null = null): TeamLineup {
+  const use = state === 'listed' ? listings : new Map<string, Listing & { display: string }>()
   const ranked = [...candidates].filter((c) => c.avgMin > 0).sort((a, b) => b.avgMin - a.avgMin || a.name.localeCompare(b.name))
-  const as = (c: Candidate): LineupPlayer => ({ id: c.id, name: c.name, avgMin: Math.round(c.avgMin * 10) / 10, listing: listings.get(nameKey(c.name)) ?? null, lastPlayed: c.lastPlayed ?? null, missed: c.missed ?? null })
+  const as = (c: Candidate): LineupPlayer => ({ id: c.id, name: c.name, avgMin: Math.round(c.avgMin * 10) / 10, listing: use.get(nameKey(c.name)) ?? null, lastPlayed: c.lastPlayed ?? null, missed: c.missed ?? null })
   const starters = ranked.slice(0, STARTERS).map(as)
   const pool = ranked.slice(STARTERS).map(as)
   const nextUp = pool.filter((p) => !p.listing || (p.listing.status !== 'out' && p.listing.status !== 'doubtful')).slice(0, NEXT_UP)
   const shown = new Set([...starters, ...nextUp].map((p) => nameKey(p.name)))
-  const alsoListed = [...listings.entries()]
+  const alsoListed = [...use.entries()]
     .filter(([k, l]) => !shown.has(k) && l.reason !== 'G League')
-    .map(([, l]) => ({ name: l.display, listing: { status: l.status, reason: l.reason, source: l.source, ...(l.note ? { note: l.note } : {}), ...(l.updated ? { updated: l.updated } : {}) } }))
+    .map(([, l]) => ({ name: l.display, listing: { status: l.status, reason: l.reason } }))
     .sort((a, b) => SEVERITY[b.listing.status] - SEVERITY[a.listing.status] || a.name.localeCompare(b.name))
-  return { starters, nextUp, alsoListed, source, asOf: official ? asOf : null }
+  return { starters, nextUp, alsoListed, state, asOf: state === 'absent' ? null : asOf }
 }

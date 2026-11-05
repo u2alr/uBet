@@ -3,7 +3,7 @@ import { gameReasons, type GameLeanRow } from '../../shared/games.ts'
 import { normName } from '../../shared/picks.ts'
 import type { BookLine, TeamBet } from '../../shared/teamBets.ts'
 import { LEVELS, gutKey, type GutPick, type GutRef } from '../../shared/gut.ts'
-import { STATUS_LABEL, type LineupStatus } from '../../shared/lineups.ts'
+import { STATUS_LABEL, type LineupStatus, type ReportState } from '../../shared/lineups.ts'
 import { commonLean, type TeamForm } from '../../shared/teamForm.ts'
 import { api, pct } from '../lib/format'
 import { teamByName } from '../lib/teams'
@@ -11,8 +11,8 @@ import { TIERS, tierOf } from '../lib/tiers'
 import ReasonList from './ReasonList'
 import TeamChip from './TeamChip'
 
-interface LineupFlag { name: string; role: 'starter' | 'bench' | 'listed'; status: LineupStatus; reason: string; note: string | null; lastPlayed?: string | null; missed?: number | null }
-interface LineupSide { source: 'official' | 'espn' | 'none'; asOf: string | null; starters: string[]; flagged: LineupFlag[] }
+interface LineupFlag { name: string; role: 'starter' | 'bench' | 'listed'; status: LineupStatus; reason: string; lastPlayed?: string | null; missed?: number | null }
+interface LineupSide { state: ReportState; asOf: string | null; starters: string[]; flagged: LineupFlag[] }
 interface Row {
   id: string; lineup: { home: LineupSide; away: LineupSide } | null; gutRef: GutRef; date: string; state: 'pre' | 'in' | 'post'; status: string
   home: { abbr: string; name: string; score: string }; away: { abbr: string; name: string; score: string }
@@ -122,7 +122,7 @@ function Form({ r }: { r: Row }) {
 }
 
 const FLAG_PILL: Record<LineupStatus, string> = {
-  out: 'bg-red-500/15 text-red-300', doubtful: 'bg-orange-500/15 text-orange-300', questionable: 'bg-amber-500/15 text-amber-300', gtd: 'bg-amber-500/10 text-amber-200', probable: 'bg-emerald-500/15 text-emerald-300',
+  out: 'bg-red-500/15 text-red-300', doubtful: 'bg-orange-500/15 text-orange-300', questionable: 'bg-amber-500/15 text-amber-300', probable: 'bg-emerald-500/15 text-emerald-300',
 }
 const stamp = (t: string | null) => {
   const m = t?.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/)
@@ -151,13 +151,13 @@ function LineupPanel({ r }: { r: Row }) {
               <div className="text-neutral-300">
                 {L.starters.length === 0 ? <span className="text-neutral-600">no recent box scores</span> : L.starters.map((n, i) => {
                   const f = starters.find((x) => x.name === n)
-                  return <span key={n}>{i > 0 && ', '}<span className={f?.status === 'out' ? 'text-neutral-500 line-through' : ''}>{n}</span>{f && <span className={`ml-1 rounded px-1 py-px text-[10px] font-semibold ${FLAG_PILL[f.status]}`} title={f.note ?? undefined}>{STATUS_LABEL[f.status]}</span>}</span>
+                  return <span key={n}>{i > 0 && ', '}<span className={f?.status === 'out' ? 'text-neutral-500 line-through' : ''}>{n}</span>{f && <span className={`ml-1 rounded px-1 py-px text-[10px] font-semibold ${FLAG_PILL[f.status]}`}>{STATUS_LABEL[f.status]}</span>}</span>
                 })}
               </div>
               {others.length > 0 && (
                 <ul className="mt-1.5 space-y-0.5 text-neutral-500">
                   {others.slice(0, 5).map((f) => (
-                    <li key={f.name} title={f.note ?? undefined}>
+                    <li key={f.name}>
                       <span className={`mr-1 rounded px-1 py-px text-[10px] font-semibold ${FLAG_PILL[f.status]}`}>{STATUS_LABEL[f.status]}</span>
                       <span className="text-neutral-400">{f.name}</span>{f.reason && <span> · {f.reason}</span>}
                     </li>
@@ -165,7 +165,7 @@ function LineupPanel({ r }: { r: Row }) {
                 </ul>
               )}
               <div className="mt-1.5 text-[10px] uppercase tracking-wide text-neutral-700">
-                {L.source === 'official' ? `NBA injury report${stamp(L.asOf) ? ` · updated ${stamp(L.asOf)}` : ''}` : L.source === 'espn' ? 'ESPN list (not on the NBA report yet)' : 'No injury list yet'}
+                {L.state === 'listed' ? `NBA injury report${stamp(L.asOf) ? ` · updated ${stamp(L.asOf)}` : ''}` : L.state === 'clear' ? 'NBA injury report · no one listed for this team' : L.state === 'not_submitted' ? 'Not yet submitted to the NBA · default lineup' : 'No NBA report for this game yet · default lineup'}
               </div>
             </div>
           )
@@ -323,7 +323,7 @@ export default function TeamBets({ refreshKey, onOpenGame }: { refreshKey: numbe
     const seen = new Map<string, Absence>()          // a team plays on several days, so the same player is flagged in each of its games: count him once
     for (const g of res?.data.games ?? []) for (const side of ['home', 'away'] as const) for (const f of g.lineup?.[side].flagged ?? []) {
       const key = `${g[side].abbr}|${f.name}`
-      if (!seen.has(key)) seen.set(key, { id: seen.size + 1, name: f.name, team: g[side].abbr, status: f.status === 'gtd' ? 'day-to-day' : f.status })
+      if (!seen.has(key)) seen.set(key, { id: seen.size + 1, name: f.name, team: g[side].abbr, status: f.status })
     }
     return [...seen.values()]
   }, [res])

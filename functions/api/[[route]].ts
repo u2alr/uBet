@@ -12,7 +12,7 @@ import { SOURCES, gutKey, isOpen, parsePick, scoreGut, type GutPick, type GutRes
 import teamFormStatus from '../../shared/teamForm.status.json' with { type: 'json' }
 import { teamForm, type TeamResult } from '../../shared/teamForm.ts'
 import { modelIsFresh, teamBet } from '../../shared/teamBets.ts'
-import { MAX_REPORT_AGE_HOURS, buildLineup, espnListings, nameKey, officialListings, reportAgeHours, type Candidate, type LineupPlayer, type Listing, type OfficialRow } from '../../shared/lineups.ts'
+import { MAX_REPORT_AGE_HOURS, buildLineup, nameKey, officialListings, reportAgeHours, reportState, type Candidate, type LineupPlayer, type Listing, type OfficialRow } from '../../shared/lineups.ts'
 import { consensusProb, fairProb } from '../../shared/devig.ts'
 import { ownLine } from '../../shared/ownLines.ts'
 import { assembleGames, assembleProps, type StoredRow } from '../../shared/oddsSnapshot.ts'
@@ -1050,18 +1050,19 @@ app.get('/absences', async (c) => {
   return c.json({ data: listAbsences(results, injuries, (name) => teamByName(name)?.[0] ?? null) })
 })
 
-/** A compact view of one team's lineup for the Teams page: who is flagged, whether they start, and where the list came from. */
-function lineupSummary(t: { starters: LineupPlayer[]; nextUp: LineupPlayer[]; alsoListed: { name: string; listing: Listing; lastPlayed?: string | null }[]; source: string; asOf: string | null }) {
+/** A compact view of one team's lineup for the Teams page: who is flagged, whether they start, and what the league's report says about this team and game. */
+function lineupSummary(t: { starters: LineupPlayer[]; nextUp: LineupPlayer[]; alsoListed: { name: string; listing: Listing; lastPlayed?: string | null }[]; state: string; asOf: string | null }) {
   const flagged = [
-    ...t.starters.filter((p) => p.listing).map((p) => ({ name: p.name, role: 'starter' as const, status: p.listing!.status, reason: p.listing!.reason, note: p.listing!.note ?? null, lastPlayed: p.lastPlayed, missed: p.missed })),
-    ...t.nextUp.filter((p) => p.listing).map((p) => ({ name: p.name, role: 'bench' as const, status: p.listing!.status, reason: p.listing!.reason, note: p.listing!.note ?? null, lastPlayed: p.lastPlayed, missed: p.missed })),
-    ...t.alsoListed.slice(0, 6).map((a) => ({ name: a.name, role: 'listed' as const, status: a.listing.status, reason: a.listing.reason, note: a.listing.note ?? null, lastPlayed: a.lastPlayed ?? null, missed: null as number | null })),
+    ...t.starters.filter((p) => p.listing).map((p) => ({ name: p.name, role: 'starter' as const, status: p.listing!.status, reason: p.listing!.reason, lastPlayed: p.lastPlayed, missed: p.missed })),
+    ...t.nextUp.filter((p) => p.listing).map((p) => ({ name: p.name, role: 'bench' as const, status: p.listing!.status, reason: p.listing!.reason, lastPlayed: p.lastPlayed, missed: p.missed })),
+    ...t.alsoListed.slice(0, 6).map((a) => ({ name: a.name, role: 'listed' as const, status: a.listing.status, reason: a.listing.reason, lastPlayed: a.lastPlayed ?? null, missed: null as number | null })),
   ]
-  return { source: t.source, asOf: t.asOf, starters: t.starters.map((p) => p.name), flagged }
+  return { state: t.state, asOf: t.asOf, starters: t.starters.map((p) => p.name), flagged }
 }
 
-// Lineups: for each game not yet finished, the five projected starters per team (most minutes per game over the team's last 10 games) with their listed status, the next three
-// men up and everyone else on the report. Statuses come from the NBA's official injury report (stored by research/nba_injury_pdf.py) for a team that has filed, ESPN's list for the rest.
+// Lineups: for each game not yet finished (today ET or later), the five projected starters per team (most minutes per game over the team's last 10 games) with their listed status, the
+// next three men up and everyone else on the report. Flags come ONLY from the NBA's official injury report (stored by research/nba_injury_pdf.py) and only from the rows of that game
+// (its date and its matchup). A team the report says has not filed, or with nobody listed, or a game the report does not have, shows the default lineup with no flags.
 // Starters are projected, never confirmed: nothing here knows the real lineup.
 async function lineupRows(env: Bindings, games: any[]) {
   const today = etDate(new Date().toISOString())
@@ -1087,18 +1088,18 @@ async function lineupRows(env: Bindings, games: any[]) {
   const latest = await env.DB.prepare('SELECT MAX(report_time) AS t FROM nba_injury_report').first<{ t: string | null }>().catch(() => null)
   const age = reportAgeHours(latest?.t, Date.now())
   const officialRows = latest?.t && age != null && age <= MAX_REPORT_AGE_HOURS
-    ? (await env.DB.prepare('SELECT team, player, status, reason, game_date FROM nba_injury_report WHERE report_time = ?').bind(latest.t).all<OfficialRow>().then((r) => r.results).catch(() => [] as OfficialRow[]))
+    ? (await env.DB.prepare('SELECT team, player, status, reason, game_date, matchup FROM nba_injury_report WHERE report_time = ?').bind(latest.t).all<OfficialRow>().then((r) => r.results).catch(() => [] as OfficialRow[]))
     : []
-  const espn = (await loadInjuries(env)) ?? new Map<string, Injury>()
-  const teamLineup = (abbr: string, date: string) => {
+  const teamLineup = (abbr: string, date: string, matchup: string) => {
     const code = normAbbr(abbr)
     const id = TEAM_IDS[code]
-    return buildLineup(id ? minutes.get(id) ?? [] : [], officialListings(officialRows, code, date), espnListings(espn, (i) => (i.team ? normAbbr(teamByName(i.team)?.[0] ?? '') === code : false)), latest?.t ?? null)
+    return buildLineup(id ? minutes.get(id) ?? [] : [], officialListings(officialRows, code, date, matchup), reportState(officialRows, code, date, matchup), latest?.t ?? null)
   }
   const rows = upcoming.map((g) => {
     const date = etDate(g.date)
+    const matchup = `${normAbbr(g.away.abbr)}@${normAbbr(g.home.abbr)}`        // the league's own team codes, as its report prints them
     return { id: g.id as string, date: g.date as string, state: g.state as string, status: g.status as string,
-      home: { abbr: g.home.abbr as string, name: g.home.name as string, ...teamLineup(g.home.abbr, date) }, away: { abbr: g.away.abbr as string, name: g.away.name as string, ...teamLineup(g.away.abbr, date) } }
+      home: { abbr: g.home.abbr as string, name: g.home.name as string, ...teamLineup(g.home.abbr, date, matchup) }, away: { abbr: g.away.abbr as string, name: g.away.name as string, ...teamLineup(g.away.abbr, date, matchup) } }
   })
   // Listed players who are not in a team's last 10 box scores (out for weeks): when did each last play? One lookup by name for all of them.
   const listedNames = [...new Set(rows.flatMap((r) => [...r.home.alsoListed, ...r.away.alsoListed].map((a) => a.name)))].slice(0, 150)
@@ -1111,14 +1112,14 @@ async function lineupRows(env: Bindings, games: any[]) {
     const lastBy = new Map(results.map((r) => [nameKey(r.name), r.last]))
     for (const r of rows) for (const side of [r.home, r.away]) for (const a of side.alsoListed) a.lastPlayed = lastBy.get(nameKey(a.name)) ?? null
   }
-  return { rows, officialReportAt: officialRows.length ? latest!.t : null, espnAvailable: espn.size > 0 }
+  return { rows, officialReportAt: officialRows.length ? latest!.t : null }
 }
 
 app.get('/lineups', async (c) => {
   const games = await loadGames(c.env, wantsFresh(c)).catch(() => null)
   if (!games) return c.json({ error: 'The schedule is unavailable right now.' }, 502)
   const r = await lineupRows(c.env, games as any[])
-  return c.json({ data: { games: r.rows }, meta: { officialReportAt: r.officialReportAt, espnAvailable: r.espnAvailable,
+  return c.json({ data: { games: r.rows }, meta: { officialReportAt: r.officialReportAt,
     note: 'Starters are projected from minutes over the last 10 games, not confirmed: real lineups are posted about 30 minutes before tip. A status is what the injury report lists, not a chance of playing.' } })
 })
 
