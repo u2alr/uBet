@@ -12,6 +12,7 @@ import { SOURCES, gutKey, isOpen, parsePick, scoreGut, type GutPick, type GutRes
 import teamFormStatus from '../../shared/teamForm.status.json' with { type: 'json' }
 import { teamForm, type TeamResult } from '../../shared/teamForm.ts'
 import { modelIsFresh, teamBet } from '../../shared/teamBets.ts'
+import { MAX_REPORT_AGE_HOURS, buildLineup, espnListings, officialListings, reportAgeHours, type Candidate, type OfficialRow } from '../../shared/lineups.ts'
 import { consensusProb, fairProb } from '../../shared/devig.ts'
 import { ownLine } from '../../shared/ownLines.ts'
 import { assembleGames, assembleProps, type StoredRow } from '../../shared/oddsSnapshot.ts'
@@ -1044,6 +1045,50 @@ app.get('/absences', async (c) => {
   if (!injuries) return c.json({ error: 'The injury report is unavailable right now.' }, 502)
   const { results } = await c.env.DB.prepare('SELECT id, name, team FROM players').all<{ id: number; name: string; team: string | null }>()
   return c.json({ data: listAbsences(results, injuries, (name) => teamByName(name)?.[0] ?? null) })
+})
+
+// Lineups: for each game not yet finished, the five projected starters per team (most minutes per game over the team's last 10 games) with their listed status, the next three
+// men up and everyone else on the report. Statuses come from the NBA's official injury report (stored by research/nba_injury_pdf.py) for a team that has filed, ESPN's list for the rest.
+// Starters are projected, never confirmed: nothing here knows the real lineup.
+app.get('/lineups', async (c) => {
+  const games = await loadGames(c.env, wantsFresh(c)).catch(() => null)
+  if (!games) return c.json({ error: 'The schedule is unavailable right now.' }, 502)
+  const today = etDate(new Date().toISOString())
+  const upcoming = (games as any[]).filter((g) => g.state !== 'post' && etDate(g.date) >= today).sort((a, b) => Date.parse(a.date) - Date.parse(b.date))
+  const teamIds = [...new Set(upcoming.flatMap((g) => [TEAM_IDS[normAbbr(g.home.abbr)], TEAM_IDS[normAbbr(g.away.abbr)]]).filter((x): x is number => typeof x === 'number'))]
+  const minutes = new Map<number, Candidate[]>()
+  if (teamIds.length) {
+    const ph = teamIds.map(() => '?').join(',')
+    const { results } = await c.env.DB.prepare(
+      `WITH tg AS (
+         SELECT pg.team_id AS team_id, pg.game_id AS gid, ROW_NUMBER() OVER (PARTITION BY pg.team_id ORDER BY g.date DESC, g.id DESC) AS rn
+         FROM (SELECT DISTINCT team_id, game_id FROM player_games WHERE team_id IN (${ph})) pg JOIN games g ON g.id = pg.game_id
+         WHERE g.game_type = 'regular' AND g.date >= date('now', '-120 days'))
+       SELECT pg.team_id AS team, pg.player_id AS id, p.name AS name, SUM(pg.minutes) AS total, (SELECT MAX(rn) FROM tg t2 WHERE t2.team_id = pg.team_id AND t2.rn <= 10) AS n
+       FROM player_games pg JOIN tg ON tg.gid = pg.game_id AND tg.team_id = pg.team_id AND tg.rn <= 10 JOIN players p ON p.id = pg.player_id
+       WHERE pg.minutes > 0 GROUP BY pg.team_id, pg.player_id`,
+    ).bind(...teamIds).all<{ team: number; id: number; name: string; total: number; n: number }>().catch(() => ({ results: [] as { team: number; id: number; name: string; total: number; n: number }[] }))
+    for (const r of results) (minutes.get(r.team) ?? minutes.set(r.team, []).get(r.team)!).push({ id: r.id, name: r.name, avgMin: r.total / Math.max(1, r.n) })
+  }
+  // The league's newest stored report, if it is recent enough to mean anything for tonight.
+  const latest = await c.env.DB.prepare('SELECT MAX(report_time) AS t FROM nba_injury_report').first<{ t: string | null }>().catch(() => null)
+  const age = reportAgeHours(latest?.t, Date.now())
+  const officialRows = latest?.t && age != null && age <= MAX_REPORT_AGE_HOURS
+    ? (await c.env.DB.prepare('SELECT team, player, status, reason, game_date FROM nba_injury_report WHERE report_time = ?').bind(latest.t).all<OfficialRow>().then((r) => r.results).catch(() => [] as OfficialRow[]))
+    : []
+  const espn = (await loadInjuries(c.env)) ?? new Map<string, Injury>()
+  const teamLineup = (abbr: string, date: string) => {
+    const code = normAbbr(abbr)
+    const id = TEAM_IDS[code]
+    return buildLineup(id ? minutes.get(id) ?? [] : [], officialListings(officialRows, code, date), espnListings(espn, (i) => (i.team ? normAbbr(teamByName(i.team)?.[0] ?? '') === code : false)))
+  }
+  const rows = upcoming.map((g) => {
+    const date = etDate(g.date)
+    return { id: g.id as string, date: g.date as string, state: g.state as string, status: g.status as string,
+      home: { abbr: g.home.abbr as string, name: g.home.name as string, ...teamLineup(g.home.abbr, date) }, away: { abbr: g.away.abbr as string, name: g.away.name as string, ...teamLineup(g.away.abbr, date) } }
+  })
+  return c.json({ data: { games: rows }, meta: { officialReportAt: officialRows.length ? latest!.t : null, espnAvailable: espn.size > 0,
+    note: 'Starters are projected from minutes over the last 10 games, not confirmed: real lineups are posted about 30 minutes before tip. A status is what the injury report lists, not a chance of playing.' } })
 })
 
 // Live or final box score for one game (ESPN summary). Short cache so live games stay current without hammering the feed.
