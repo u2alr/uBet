@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { MIN_DISAGREEMENTS, isOpen, parsePick, scoreGut, wilson, type GutResult } from './gut.ts'
+import { MIN_DISAGREEMENTS, gutKey, isOpen, parsePick, scoreGut, scoreboardResults, wilson, type GutResult } from './gut.ts'
 
 const row = (pick: 'home' | 'away', homeWon: boolean, modelHomeProb: number | null, level: 1 | 2 | 3 = 1): GutResult =>
   ({ source: 'claude', date: '2026-11-04', home: 'DET', away: 'PHI', pick, level, note: null, modelHomeProb, savedAt: '2026-11-04T12:00:00Z', homeWon })
@@ -84,5 +84,21 @@ describe('scoreGut', () => {
     const r = scoreGut([])
     assert.equal(r.games, 0)
     assert.equal(r.disagreements.gutShare, null)
+  })
+})
+
+describe('scoreboardResults', () => {
+  const day = (iso: string) => iso.slice(0, 10)
+  const code = (a: string) => ({ GS: 'GSW', NY: 'NYK' } as Record<string, string>)[a] ?? a
+  const game = (state: string, hs: string, as_: string, home = 'GS', away = 'LAL') => ({ date: '2026-11-05T01:00Z', state, home: { abbr: home, score: hs }, away: { abbr: away, score: as_ } })
+
+  it('grades a finished game as soon as the scoreboard says it is over, keyed with the standard team codes', () => {
+    const m = scoreboardResults([game('post', '112', '104')], day, code)
+    assert.equal(m.get(gutKey('2026-11-05', 'GSW', 'LAL')), true)
+    assert.equal(scoreboardResults([game('post', '98', '104')], day, code).get(gutKey('2026-11-05', 'GSW', 'LAL')), false)
+  })
+  it('ignores a game that is not over, and a result that cannot be right (a tie, a 0-0, a score that is not a number)', () => {
+    assert.equal(scoreboardResults([game('in', '50', '48'), game('pre', '0', '0')], day, code).size, 0)
+    assert.equal(scoreboardResults([game('post', '100', '100'), game('post', '0', '0'), game('post', '--', '90')], day, code).size, 0)
   })
 })

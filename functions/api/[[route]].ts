@@ -8,7 +8,7 @@ import { parseSportsDbEvents } from '../../shared/sportsdb.ts'
 import type { GameLeanRow } from '../../shared/games.ts'
 import adaptationStatus from '../../shared/adaptation.status.json' with { type: 'json' }
 import { review, type ReviewRow } from '../../shared/seasonReview.ts'
-import { SOURCES, gutKey, isOpen, parsePick, scoreGut, type GutPick, type GutResult, type Source } from '../../shared/gut.ts'
+import { SOURCES, gutKey, isOpen, parsePick, scoreGut, scoreboardResults, type GutPick, type GutResult, type Source } from '../../shared/gut.ts'
 import teamFormStatus from '../../shared/teamForm.status.json' with { type: 'json' }
 import { teamForm, type TeamResult } from '../../shared/teamForm.ts'
 import { modelIsFresh, teamBet } from '../../shared/teamBets.ts'
@@ -557,7 +557,10 @@ app.get('/gut', async (c) => {
   const rows = await c.env.DB.prepare('SELECT source, date, home, away, pick, level, note, model_home_prob, saved_at FROM gut_pick WHERE source = \'claude\' ORDER BY date DESC, home')
     .all<GutRow>().then((r) => r.results).catch(() => [] as GutRow[])      // the table does not exist until migration 0027
   const picks = rows.map(gutOut)
-  const results = picks.length ? await finishedResults(c.env, picks[picks.length - 1].date).catch(() => new Map<string, boolean>()) : new Map<string, boolean>()
+  const fromBoxScores = picks.length ? await finishedResults(c.env, picks[picks.length - 1].date).catch(() => new Map<string, boolean>()) : new Map<string, boolean>()
+  // A game the scoreboard says is over is graded now, before the box scores sync; the box-score result wins when both exist.
+  const board = picks.length ? scoreboardResults(((await loadGames(c.env, false).catch(() => [])) as any[]), etDate, normAbbr) : new Map<string, boolean>()
+  const results = new Map<string, boolean>([...board, ...fromBoxScores])
   const done: GutResult[] = picks.flatMap((p) => { const w = results.get(gutKey(p.date, p.home, p.away)); return w === undefined ? [] : [{ ...p, homeWon: w }] })
   const open = picks.filter((p) => !results.has(gutKey(p.date, p.home, p.away)))
   const by = <T,>(f: (rows: GutResult[]) => T) => Object.fromEntries(SOURCES.map((s) => [s, f(done.filter((r) => r.source === s))])) as Record<Source, T>

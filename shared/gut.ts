@@ -19,6 +19,19 @@ export interface GutRef { date: string; home: string; away: string }
 
 export const gutKey = (date: string, home: string, away: string) => `${date}|${home}|${away}`
 
+/** Final results straight from the scoreboard, keyed like `gutKey` (true when the home team won). A game counts only when the scoreboard says it is over (`state` 'post') and both scores are
+ *  numbers that differ. This lets a pick be graded as soon as the game ends, hours before box scores sync; the box-score result, when there is one, still wins. */
+export function scoreboardResults(games: { date: string; state: string; home: { abbr: string; score: string }; away: { abbr: string; score: string } }[], dayOf: (iso: string) => string, code: (abbr: string) => string): Map<string, boolean> {
+  const out = new Map<string, boolean>()
+  for (const g of games) {
+    if (g.state !== 'post') continue
+    const h = Number(g.home.score), a = Number(g.away.score)
+    if (!Number.isFinite(h) || !Number.isFinite(a) || h === a || (h === 0 && a === 0)) continue
+    out.set(gutKey(dayOf(g.date), code(g.home.abbr), code(g.away.abbr)), h > a)
+  }
+  return out
+}
+
 export type Parsed = { ok: true; value: { source: Source; date: string; home: string; away: string; pick: Side; level: Level; note: string | null } } | { ok: false; error: string }
 
 /** Checks a request body. The team codes and the date only select a game; the server still has to find that game in the schedule. */
