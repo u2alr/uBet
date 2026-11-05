@@ -1,0 +1,23 @@
+{
+  "measured": "2026-11-05",
+  "seasons": "2020-21 to 2025-26",
+  "source": "the NBA's pre-game injury reports (the latest of the day printed at least an hour before tip) joined to box scores: did the listed player play that day. Players matched by name; unmatched names are left out",
+  "rates": {
+    "out": {
+      "n": 37873,
+      "played": 0.001
+    },
+    "doubtful": {
+      "n": 932,
+      "played": 0.025
+    },
+    "questionable": {
+      "n": 6667,
+      "played": 0.504
+    },
+    "probable": {
+      "n": 2429,
+      "played": 0.907
+    }
+  }
+}

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { STATUS_LABEL, type LineupPlayer, type LineupStatus, type ReportState, type TeamLineup } from '../../shared/lineups.ts'
+import { STATUS_LABEL, historyLine, type LineupPlayer, type LineupStatus, type PlayRates, type ReportState, type TeamLineup } from '../../shared/lineups.ts'
+import playRatesJson from '../../shared/statusPlayRates.json'
 import { api } from '../lib/format'
 import { teamByName } from '../lib/teams'
 import TeamChip from './TeamChip'
 
+const HISTORY = playRatesJson as unknown as PlayRates
 interface Side extends TeamLineup { abbr: string; name: string }
 interface Game { id: string; date: string; state: 'pre' | 'in' | 'post'; status: string; home: Side; away: Side }
 interface Res { data: { games: Game[] }; meta: { officialReportAt: string | null; note: string } }
@@ -63,7 +65,7 @@ function sourceText(state: ReportState, asOf: string | null): string {
 
 function Pill({ status, reason }: { status: LineupStatus; reason: string }) {
   return (
-    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${PILL[status]}`} title={`${STATUS_LABEL[status]}${reason ? `: ${reason}` : ''} (NBA injury report)`}>
+    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${PILL[status]}`} title={`${STATUS_LABEL[status]}${reason ? `: ${reason}` : ''} (NBA injury report). ${historyLine(status, HISTORY)}.`}>
       {SHORT[status]}
     </span>
   )
@@ -71,7 +73,8 @@ function Pill({ status, reason }: { status: LineupStatus; reason: string }) {
 
 function Detail({ listing, lastPlayed, missed }: { listing: NonNullable<LineupPlayer['listing']>; lastPlayed?: string | null; missed?: number | null }) {
   const bits = [listing.reason, sinceText(lastPlayed, missed)].filter(Boolean)
-  return bits.length ? <div className="pb-1.5 pl-8 pr-3 text-xs leading-snug text-neutral-500">{bits.join(' · ')}</div> : null
+  const past = listing.status === 'out' ? null : `plays ${Math.round(HISTORY.rates[listing.status].played * 100)}% of the time when listed ${STATUS_LABEL[listing.status]}`
+  return bits.length || past ? <div className="pb-1.5 pl-8 pr-3 text-xs leading-snug text-neutral-500">{bits.join(' · ')}{past && <span className="text-neutral-600">{bits.length ? ' · ' : ''}historically {past}</span>}</div> : null
 }
 
 function TeamColumn({ t, align }: { t: Side; align: 'left' | 'right' }) {
@@ -175,6 +178,11 @@ export default function Lineups({ refreshKey }: { refreshKey: number }) {
           </section>
         ))}
       </div>
+      <p className="text-xs text-neutral-600">
+        What the flags have meant in past seasons ({HISTORY.seasons}, the NBA's pre-game reports against who then played):{' '}
+        {(['out', 'doubtful', 'questionable', 'probable'] as const).map((s, i) => <span key={s}>{i > 0 && ' · '}{STATUS_LABEL[s]} {HISTORY.rates[s].played < 0.005 ? '~0' : Math.round(HISTORY.rates[s].played * 100)}% played ({HISTORY.rates[s].n.toLocaleString('en-US')})</span>)}.
+        {' '}That is history, not a forecast for any one player.
+      </p>
       <p className="text-xs text-neutral-600">{res.meta.note}</p>
     </div>
   )

@@ -17,6 +17,17 @@ export const NEXT_UP = 3
 /** An official report older than this is not trusted for tonight's games. */
 export const MAX_REPORT_AGE_HOURS = 36
 
+/** The measured history behind each status (shared/statusPlayRates.json, written by research/status_play_rates.py): how often players listed with it then played. */
+export interface PlayRates { seasons: string; rates: Record<LineupStatus, { n: number; played: number }> }
+
+/** "Players listed Questionable have played 50% of the time (6,667 listings, 2020-21 to 2025-26)": a measurement of the past, never a forecast for one player. */
+export function historyLine(status: LineupStatus, h: PlayRates): string {
+  const r = h.rates[status]
+  const p = r.played
+  const share = p < 0.005 ? 'almost never' : p > 0.995 ? 'almost always' : `${Math.round(p * 100)}% of the time`
+  return `Players listed ${STATUS_LABEL[status]} have played ${share} (${r.n.toLocaleString('en-US')} listings, ${h.seasons})`
+}
+
 /** What the league's report says about one team in one game: 'listed' (at least one player), 'clear' (the game is on the report and the team filed, nobody listed), 'not_submitted' (the report
  *  says the team has not filed), or 'absent' (the game is not on the newest report, or there is no recent report). Only 'listed' carries flags. */
 export type ReportState = 'listed' | 'clear' | 'not_submitted' | 'absent'

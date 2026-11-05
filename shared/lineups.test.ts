@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLineup, cleanReason, nameKey, officialDisplay, officialKey, officialListings, reportAgeHours, reportState, type Candidate, type OfficialRow } from './lineups.ts'
+import rates from './statusPlayRates.json' with { type: 'json' }
+import { buildLineup, cleanReason, historyLine, nameKey, officialDisplay, officialKey, officialListings, reportAgeHours, reportState, type Candidate, type OfficialRow } from './lineups.ts'
 
 const roster: Candidate[] = [
   { id: 1, name: 'Star One', avgMin: 36 }, { id: 2, name: 'Guard Two', avgMin: 34 }, { id: 3, name: 'Wing Three', avgMin: 31 }, { id: 4, name: 'Big Four', avgMin: 29 },
@@ -109,4 +110,21 @@ test('a report older than a day and a half is detectable and an unreadable stamp
   assert.ok(reportAgeHours('2026-11-05 06:00', now)! < 12)
   assert.ok(reportAgeHours('2026-11-03 06:00', now)! > 36)
   assert.equal(reportAgeHours('nope', now), null)
+})
+
+test('the measured play rates are sane: each status has a real sample, and Out < Doubtful < Questionable < Probable', () => {
+  const r = rates.rates
+  for (const s of ['out', 'doubtful', 'questionable', 'probable'] as const) assert.ok(r[s].n >= 500, `${s} has only ${r[s].n} listings`)
+  assert.ok(r.out.played < 0.01, 'a player listed Out almost never plays')
+  assert.ok(r.out.played < r.doubtful.played && r.doubtful.played < r.questionable.played && r.questionable.played < r.probable.played)
+  assert.ok(r.questionable.played > 0.35 && r.questionable.played < 0.65, 'Questionable is close to a coin flip')
+  assert.match(rates.seasons, /^20\d\d-\d\d to 20\d\d-\d\d$/)
+})
+
+test('the history line says it is a measurement, with the sample and the seasons, and rounds the extremes in words', () => {
+  const h = { seasons: '2020-21 to 2025-26', rates: { out: { n: 37873, played: 0.001 }, doubtful: { n: 932, played: 0.025 }, questionable: { n: 6667, played: 0.504 }, probable: { n: 2429, played: 0.907 } } }
+  assert.equal(historyLine('questionable', h), 'Players listed Questionable have played 50% of the time (6,667 listings, 2020-21 to 2025-26)')
+  assert.match(historyLine('out', h), /almost never \(37,873 listings/)
+  assert.match(historyLine('probable', h), /91% of the time/)
+  assert.match(historyLine('probable', { ...h, rates: { ...h.rates, probable: { n: 10, played: 0.999 } } }), /almost always/)
 })

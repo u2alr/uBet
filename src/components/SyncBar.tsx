@@ -21,6 +21,7 @@ export default function SyncBar({ onRefresh }: { onRefresh: () => void }) {
   // Poll the local helper (if it's running) so progress shows up, including syncs started elsewhere.
   useEffect(() => {
     let alive = true
+    let timer: ReturnType<typeof setTimeout> | undefined
     const tick = async () => {
       const h = await helperStatus()
       if (!alive) return
@@ -32,10 +33,11 @@ export default function SyncBar({ onRefresh }: { onRefresh: () => void }) {
         setNote(h.error ? `Sync problem: ${h.error}` : '')
       }
       wasRunning.current = !!h?.running
+      // Every 3 seconds while the helper answers (so progress shows); every 30 while it is not running, so a missing helper is not asked about hundreds of times.
+      timer = setTimeout(tick, h ? 3000 : 30_000)
     }
     tick()
-    const id = setInterval(tick, 3000)
-    return () => { alive = false; clearInterval(id) }
+    return () => { alive = false; if (timer) clearTimeout(timer) }
   }, [loadStatus, onRefresh])
 
   const refresh = () => {
