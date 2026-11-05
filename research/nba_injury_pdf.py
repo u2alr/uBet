@@ -64,7 +64,7 @@ def parse_text(text: str, teams: dict[str, tuple[str, str]]) -> dict:
         mo, d, y, hh, mm, ap = m.groups()
         hh = int(hh) % 12 + (12 if ap == "PM" else 0)
         report_time = f"20{y}-{mo}-{d} {hh:02d}:{mm}"
-    rows, date, matchup, team = [], None, None, None
+    rows, filings, date, matchup, team, tip = [], [], None, None, None, None
     status_pat = "|".join(STATUSES)
     for raw in text.splitlines():
         line = raw.strip()
@@ -74,8 +74,10 @@ def parse_text(text: str, teams: dict[str, tuple[str, str]]) -> dict:
         if d:
             date = f"{d.group(3)}-{d.group(1)}-{d.group(2)}"
             line = line[d.end():]
-        t = re.match(r"\d\d:\d\d\(ET\)\s+", line)
+        t = re.match(r"(\d\d):(\d\d)\s*\(ET\)\s+", line)
         if t:
+            hh = int(t.group(1))
+            tip = f"{hh + 12 if 1 <= hh <= 10 else hh:02d}:{t.group(2)}"      # printed without AM/PM: 1 to 10 are afternoon or evening, 11 morning, 12 noon
             line = line[t.end():]
         mt = re.match(r"([A-Z]{2,4})@([A-Z]{2,4})\s+", line)
         if mt:
@@ -83,17 +85,28 @@ def parse_text(text: str, teams: dict[str, tuple[str, str]]) -> dict:
             line = line[mt.end():]
         # a team name (printed without spaces) starts the block of that team's players
         for key, val in teams.items():
-            nm = val[1].replace(" ", "")
-            if line.startswith(nm):
+            hit = next((nm for nm in (val[1], val[1].replace(" ", "")) if line.startswith(nm)), None)      # the older layout keeps the spaces in "Milwaukee Bucks"
+            if hit:
                 team = val
-                line = line[len(nm):].strip()
+                line = line[len(hit):].strip()
                 break
-        if line.replace(" ", "").upper() == "NOTYETSUBMITTED" or not line:
+        if line.replace(" ", "").upper() == "NOTYETSUBMITTED":
+            if team and date:
+                filings.append({"game_date": date, "tip": tip, "matchup": matchup, "team": team[0], "filed": False})      # the team has not filed: the report says nothing about it yet
+            continue
+        if not line:
             continue
         p = re.match(rf"([^\s,]+,[^\s]+)\s+({status_pat})\b\s*(.*)$", line)
-        if p and team and date:
-            rows.append({"game_date": date, "matchup": matchup, "team": team[0], "team_name": team[1], "player": p.group(1), "status": p.group(2), "reason": p.group(3).strip()})
-    return {"report_time": report_time, "rows": rows}
+        printed, status, reason = (p.group(1), p.group(2), p.group(3)) if p else (None, None, None)
+        if not p:
+            # The older layout keeps spaces: "Trent Jr., Gary Doubtful Injury/Illness - Left Ankle; Swelling". They are closed up so both layouts give the same printed form.
+            q = re.match(rf"([A-Za-z'.\-]+(?: [A-Za-z'.\-]+)*),\s*([A-Za-z'.\-]+(?: (?:Jr\.|Sr\.|II|III|IV))?)\s+({status_pat})\b\s*(.*)$", line)
+            if q:
+                printed, status, reason = q.group(1).replace(" ", "") + "," + q.group(2).replace(" ", ""), q.group(3), q.group(4)
+        if printed and team and date:
+            filings.append({"game_date": date, "tip": tip, "matchup": matchup, "team": team[0], "filed": True})
+            rows.append({"game_date": date, "tip": tip, "matchup": matchup, "team": team[0], "team_name": team[1], "player": printed, "status": status, "reason": reason.strip()})
+    return {"report_time": report_time, "rows": rows, "filings": filings}
 
 
 def read_pdf(data: bytes) -> str:

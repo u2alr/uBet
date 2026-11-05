@@ -57,6 +57,29 @@ def test_the_layout_is_read_players_keep_their_team_and_game_and_wrapped_reasons
     assert len(r["rows"]) == 8, "teams that have not filed add no rows"
 
 
+def test_a_team_that_has_not_filed_is_recorded_as_not_filed_and_a_listed_team_as_filed_with_its_tip_time():
+    r = N.parse_text(SAMPLE, TEAMS)
+    f = {(x["matchup"], x["team"]): x for x in r["filings"]}
+    assert f[("ORL@PHX", "ORL")]["filed"] is False and f[("ORL@PHX", "PHX")]["filed"] is False
+    assert f[("ATL@WAS", "ATL")]["filed"] is True and f[("ATL@WAS", "ATL")]["tip"] == "19:00"
+    assert f[("ORL@PHX", "ORL")]["game_date"] == "2026-11-05"
+
+
+def test_the_older_layout_with_spaces_in_names_reads_like_the_newer_one():
+    old = """Injury Report: 01/15/22 05:30 PM
+Game Date Game Time Matchup Team Player Name Current Status Reason
+01/15/2022 06:30 (ET) TOR@MIL Milwaukee Bucks Dowtin, Jeff Out G League - On Assignment
+Holiday, Jrue Out Injury/Illness - Left Ankle; Soreness
+Toronto Raptors Trent Jr., Gary Doubtful Injury/Illness - Left Ankle; Swelling
+"""
+    teams = N.team_keys([("MIL", "Milwaukee Bucks"), ("TOR", "Toronto Raptors")])
+    r = N.parse_text(old, teams)
+    by = {x["player"]: x for x in r["rows"]}
+    assert set(by) == {"Dowtin,Jeff", "Holiday,Jrue", "TrentJr.,Gary"}
+    assert by["TrentJr.,Gary"]["team"] == "TOR" and by["TrentJr.,Gary"]["status"] == "Doubtful"
+    assert by["Holiday,Jrue"]["team"] == "MIL" and by["Holiday,Jrue"]["tip"] == "18:30"
+
+
 def test_nothing_filed_yet_means_no_rows_not_a_healthy_roster():
     r = N.parse_text("Injury Report: 11/05/26 12:00 AM\n11/05/2026 09:00(ET) ORL@PHX OrlandoMagic NOTYETSUBMITTED\nPhoenixSuns NOTYETSUBMITTED\n", TEAMS)
     assert r["rows"] == []
