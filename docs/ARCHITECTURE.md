@@ -36,6 +36,7 @@ ESPN scoreboard / standings ── fetched by the API when a page loads (cached 
 |---|---|---|
 | The site and API | Cloudflare Pages + D1 (`ubet-app`) | Publish with `npx wrangler pages deploy dist --project-name ubet-app`, or let `.github/workflows/deploy.yml` do it on push (needs the two repository secrets in `DEPLOY.md`) |
 | Syncs, model snapshot, injury report | **Your computer** (NBA.com blocks cloud servers) | `npm run dev:sync` runs them on a timer while it is open (odds every 10 min, NBA report every 15 min, box scores every few hours). The live database is only updated when you run `npm run setup:remote` (or `-Quick`) |
+| Scheduled capture | Windows Task Scheduler | `powershell -File scripts/install_tasks.ps1` shows what it would register; `-Apply` registers the NBA report every 15 min and odds + model numbers hourly (local database; `-Remote` also writes the live one); `-Remove` undoes it |
 | Health of the live site | `GET /api/health` | `npm run check:remote` reads it and says what is stale |
 
 ## Tests and how decisions are made
