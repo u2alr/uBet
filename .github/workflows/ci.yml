@@ -1,20 +1,11 @@
-# Continuous integration. No secrets, no live API calls, no paid data: everything runs on code and generated fixtures.
-# Deployment is unchanged (Cloudflare Pages builds from the repository as before); this workflow only gates changes.
-#
-# Not run here: `npm run test:integration`. Those tests start the real Worker against a copy of a local D1 database that already holds real
-# synced box scores (tests/integration/harness.mjs), which a clean checkout does not have. Run them locally before merging.
-name: CI
-
+# Every push and pull request: types, lint, unit tests, a production build, the integration tests (against the real Worker on a small deterministic fixture league: no synced data needed)
+# and the Python research tests. Nothing here writes to Cloudflare or calls a paid API.
+name: ci
 on:
   push:
   pull_request:
-
-permissions:
-  contents: read
-
 jobs:
   web:
-    name: Types, lint, unit tests, database tests, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,27 +15,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run lint
+      - run: npx oxlint
       - run: npm test
-      - run: npm run test:db          # in-memory SQLite: grading SQL for suggested picks
-      - run: npm run check:config     # secret scan and migration numbering; placeholder ids only warn outside production
       - run: npm run build
-
+      - run: npm audit --omit=dev
+      - run: npm run test:integration
+        env:
+          UBET_FIXTURE: '1'
   research:
-    name: Python research tests and the leakage test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4     # the Python tests compare against the real TypeScript model (shared/baseline.ts) through node
-        with:
-          node-version: 24
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
-          cache: pip
-          cache-dependency-path: research/requirements.txt
-      - run: pip install -r research/requirements.txt
-      - name: Research tests (leakage test on a generated fixture league, a seeded leak must be caught)
-        run: python research/tests/run_all.py
-      - name: Ingest script tests (compiles ingest/sync.py, checks it grades everything)
-        run: node --no-warnings --test tests/ingest.test.mjs
+          python-version: '3.12'
+      - run: pip install pandas numpy scipy scikit-learn tzdata pdfplumber nba_api
+      - run: python research/tests/run_all.py

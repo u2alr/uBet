@@ -24,7 +24,13 @@ import nba_injury_pdf as N  # noqa: E402
 DATA = Path(__file__).resolve().parent / "data" / "injuries"
 CSV = DATA / "injury_reports.csv"
 MISSING = DATA / "missing.txt"
-SLOTS = [(11, "AM"), (2, "PM"), (5, "PM"), (7, "PM")]            # the report named for this hour of the day, Eastern
+def slots_for(d: str) -> list[tuple[int, str]]:
+    """The report files asked for on a day: the ones named for these hours (Eastern). Every hour exists from 2021-22 on; the 2020-21 season only has 1, 5 and 8 PM."""
+    return [(1, "PM"), (5, "PM"), (8, "PM")] if d < "2021-10-01" else [(11, "AM"), (2, "PM"), (5, "PM"), (7, "PM")]
+
+
+CONTROL = "Injury-Report_2024-01-15_05PM.pdf"                        # a file known to exist: while it answers 200 the server is serving us
+_control_ok_at = [0.0]
 COLS = ["report_time", "slot_date", "slot", "game_date", "tip", "matchup", "team", "player", "status", "reason"]
 UA = {"User-Agent": "Mozilla/5.0 (uBet research backfill)"}
 
@@ -39,16 +45,28 @@ def fetch(name: str) -> tuple[str, bytes | None]:
     import urllib.error
     import urllib.request
     url = N.BASE.rsplit("/", 1)[0] + "/" + name
-    for attempt in range(4):
+    def serving() -> bool:
+        if time.time() - _control_ok_at[0] < 30:
+            return True
+        try:
+            with urllib.request.urlopen(urllib.request.Request(N.BASE.rsplit("/", 1)[0] + "/" + CONTROL, headers=UA), timeout=40) as r:
+                ok = r.status == 200
+        except Exception:  # noqa: BLE001
+            ok = False
+        if ok:
+            _control_ok_at[0] = time.time()
+        return ok
+
+    for attempt in range(5):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=40) as r:
                 data = r.read()
                 return ("ok", data) if data[:4] == b"%PDF" else ("missing", None)
         except urllib.error.HTTPError as e:
-            if e.code in (403, 404):
-                if e.code == 404:
-                    return "missing", None
-            time.sleep(2 * (attempt + 1))                     # 403 or 429 or 5xx: the server is pushing back, so slow down and ask again
+            # This server answers 403 (not 404) for a file that does not exist. It is only a refusal if a file we know exists is refused too.
+            if e.code == 404 or (e.code == 403 and serving()):
+                return "missing", None
+            time.sleep(30 if e.code == 403 else 2 * (attempt + 1))    # refused or rate-limited: wait it out
         except Exception:  # noqa: BLE001
             time.sleep(2 * (attempt + 1))
     return "error", None
@@ -91,8 +109,8 @@ def main():
     from nba_api.stats.static import teams as nba_teams
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="start", default="2020-12-22")
-    ap.add_argument("--workers", type=int, default=2)
-    ap.add_argument("--pause", type=float, default=1.0, help="seconds each worker waits between requests (the league's server refuses bursts)")
+    ap.add_argument("--workers", type=int, default=3)
+    ap.add_argument("--pause", type=float, default=0.3, help="seconds each worker waits between requests (the league's server refuses bursts)")
     a = ap.parse_args()
     global PAUSE
     PAUSE = a.pause
@@ -104,7 +122,7 @@ def main():
         old = pd.read_csv(CSV, usecols=["slot_date", "slot"])
         done = set(zip(old.slot_date.astype(str), old.slot.astype(str)))
     missing = set(MISSING.read_text().split()) if MISSING.exists() else set()
-    jobs = [(d, h, ap_) for d in game_dates(a.start) for h, ap_ in SLOTS if (d, f"{h}{ap_}") not in done and f"{d}_{h}{ap_}" not in missing]
+    jobs = [(d, h, ap_) for d in game_dates(a.start) for h, ap_ in slots_for(d) if (d, f"{h}{ap_}") not in done and f"{d}_{h}{ap_}" not in missing]
     print(f"{len(jobs)} reports to fetch ({len(done)} already stored, {len(missing)} known not to exist)", flush=True)
     t0, got, none, errors = time.time(), 0, 0, 0
     rows_all: list[dict] = []

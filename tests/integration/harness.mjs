@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { server as fake } from './fake_odds_server.mjs'
+import { seedFixture } from './fixture_seed.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REAL_STATE = join(ROOT, '.wrangler', 'state')
@@ -17,12 +18,27 @@ export const FAKE = `http://127.0.0.1:${FAKE_PORT}`
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** Copy the local D1 into a scratch directory and empty the tables tests write to. */
-export function freshState() {
-  if (!existsSync(REAL_STATE)) throw new Error('No local database found. Run npm run db:migrate and sync some players first.')
-  // Windows can still hold a lock on the previous run's files for a moment after its worker is killed; retry instead of failing the whole file.
+/** Build the scratch database from the migrations and a small deterministic league (tests/integration/fixture_seed.mjs): no synced data and no network needed, so these tests run anywhere. */
+function buildFixtureState() {
   rmSync(TEST_STATE, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 })
-  cpSync(REAL_STATE, TEST_STATE, { recursive: true })
+  execSync(`npx wrangler d1 migrations apply ubet --local --persist-to "${TEST_STATE}"`, { cwd: ROOT, stdio: 'pipe', input: 'y' + String.fromCharCode(10) })
+  const db = openScratch()
+  try { seedFixture(db) } finally { db.close() }
+}
+
+/** The scratch database the tests run on. With UBET_FIXTURE=1, or when there is no local database with box scores (a fresh clone, CI), it is built from the migrations and the fixture league;
+ *  otherwise it is a copy of the developer's own synced database. Either way the tables tests write to are emptied. */
+export function freshState() {
+  const fixtureWanted = process.env.UBET_FIXTURE === '1' || !existsSync(REAL_STATE)
+  if (fixtureWanted) buildFixtureState()
+  else {
+    // Windows can still hold a lock on the previous run's files for a moment after its worker is killed; retry instead of failing the whole file.
+    rmSync(TEST_STATE, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 })
+    cpSync(REAL_STATE, TEST_STATE, { recursive: true })
+    const probe = openScratch()
+    const n = (() => { try { return probe.prepare('SELECT COUNT(*) AS n FROM player_games').get().n } catch { return 0 } finally { probe.close() } })()
+    if (n === 0) buildFixtureState()           // the local database exists but has no box scores: use the fixture league instead of failing
+  }
   const dir = join(TEST_STATE, 'v3', 'd1', 'miniflare-D1DatabaseObject')
   for (const f of readdirSync(dir).filter((n) => n.endsWith('.sqlite'))) {
     const db = new DatabaseSync(join(dir, f))
@@ -33,12 +49,6 @@ export function freshState() {
     } finally { db.close() }
   }
   rmSync(join(TEST_STATE, 'v3', 'cache'), { recursive: true, force: true })  // never inherit cached upstream responses
-  // These tests exercise the join between the fake odds and real synced box scores. An empty database (a fresh clone after db:migrate only) cannot run them: say so plainly.
-  const check = openScratch()
-  try {
-    const n = check.prepare('SELECT COUNT(*) AS n FROM player_games').get().n
-    if (n === 0) throw new Error('The local database has no synced box scores (player_games is empty). Run ingest/sync.py first; these integration tests need real synced players such as Cade Cunningham and Victor Wembanyama.')
-  } finally { check.close() }
 }
 
 /** Open the scratch copy of the app database (the file that holds the `predictions` table). */
