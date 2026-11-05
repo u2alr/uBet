@@ -1,8 +1,9 @@
 # uBet
 
-NBA stats and prop-bet research tool: a props board grouped by game (points, rebounds, assists, threes, PRA) with head-to-head history, per-player game logs and charts,
-upcoming games with live scores, league standings, the injury report per game, suggested bets (value / safest / riskiest), all driven by stored box scores, odds snapshots and graded history. Personal project, informational only.
-Sportsbooks are efficient, so treat every suggestion as a lead to check, not a guarantee.
+NBA game-winner research tool. For every upcoming game it shows **who is likely to win and how sure we are** (a pre-registered game model blended with the sportsbooks' no-margin prices), the best price on each side, the **projected lineups with injury flags taken from the NBA's own injury report**, a season review of how the model's calls turned out, and Claude's recorded gut picks. It **does not suggest bets**. Everything is driven by stored box scores, odds snapshots and the league's reports. Personal project, information only.
+Sportsbooks are efficient, so treat every number as something to check, not a guarantee. The model has **not** been tested against sportsbook prices (that test runs live: `research/PREREG_MARKET_GAMES.md`).
+
+**Read next:** [how the system fits together](docs/ARCHITECTURE.md) and [what every number means](docs/NUMBERS.md). Deployment is in [DEPLOY.md](DEPLOY.md). Player props exist in the code but are switched off (`src/lib/features.ts`).
 
 ## Stack
 
@@ -10,8 +11,8 @@ Sportsbooks are efficient, so treat every suggestion as a lead to check, not a g
 - **API:** Hono on Cloudflare Pages Functions (`functions/api`), D1 (SQLite) for data
 - **Data:** box scores via `nba_api` (`ingest/sync.py`, run locally), schedule from ESPN's public
   endpoints, odds from [SharpAPI](https://sharpapi.io) (game odds first, then player props)
-- **Model:** boosted projections (`research/project.py`) with a negative-binomial tail, blended with the market's fair price; `shared/baseline.ts` is the fallback
-- **Audits:** `AUDIT_ENGINE.md` (engine), `AUDIT_SCORECARD.md` (scores and UI), `node research/ui_audit.mjs` (headless-Edge UI checks)
+- **Model:** games-v2, a logistic model on Elo, opponent-adjusted ratings, rest and who the NBA report lists Out (`research/game_features_v2.py`, chosen by the pre-registered tests in `research/PREREG_GAMES_V2.md`), blended 30/70 with the market. (Player-prop projections, `research/project.py`, are off.)
+- **Audits:** the newest dated `AUDIT_*.md` at the repository root; older ones (`AUDIT_ENGINE.md`, `AUDIT_SCORECARD.md`) describe the retired player-props engine
 
 ## Run locally
 
@@ -136,3 +137,15 @@ No market-beating result exists: see `research/MARKET_EVAL_STATUS.md`.
 **Lineups.** The Lineups tab (`GET /api/lineups`) shows, for every game that has not finished (today ET or later), the five projected starters of each team, the next three men up and everyone else on the injury report. Starters are PROJECTED, not confirmed: they are the five with the most minutes per game over the team's last 10 games, a missed game counting as zero, so a player out for weeks drops away and is listed separately. Real lineups are posted about 30 minutes before tip and are not available here. **Flags come only from the NBA's official injury report** (the PDFs on official.nba.com, stored by `research/nba_injury_pdf.py`), and only from the rows of that game (its date and its matchup). If the report says a team has not submitted, lists nobody for it, or does not have the game yet, the default lineup is shown with no flags; no other feed is read here. Each flagged player shows the reason, when he last played and how many of the team's last 10 games he missed (from the box scores), and each team shows the report's own time and how old it is. A status is what the report lists, not a chance of playing. The logic is `shared/lineups.ts`.
 
 **One source for who is out.** The Teams page and the Lineups tab read the same lineup data (`lineupRows` in the API): `GET /api/team-bets` carries a `lineup` summary for each game, so the "N out" counts, the lineup panel in an opened game and the Lineups tab cannot disagree. The model's number (`research/game_snapshot.py`) still treats only players listed Out as absent and, for a team the NBA has not filed for, still falls back to ESPN's list; Doubtful, Questionable and Probable are shown on the pages but not used by the model until `research/PREREG_GAMES_V8.md` says they help.
+
+## Keeping the live site current
+
+The live site only shows what its database holds, and the database is only written from your computer (NBA.com blocks cloud servers).
+
+```bash
+npm run check:remote     # read-only: the live site's health, and what is stale or missing
+npm run setup:remote     # asks first, then: migrations, box scores, odds, the NBA injury report, model numbers
+powershell -File scripts/setup_remote.ps1 -Quick   # through the day: odds, NBA report, model numbers only
+```
+
+Publish the site itself with `npx wrangler pages deploy dist --project-name ubet-app` after `npm run build`, or let `.github/workflows/deploy.yml` do it on every push (needs the repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`). `.github/workflows/ci.yml` runs every check on every push.

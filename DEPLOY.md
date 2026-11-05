@@ -1,7 +1,23 @@
 # Deploying uBet to Cloudflare Pages
 
-The site and API deploy to Pages. Box scores, projections and the game model are produced on your computer (NBA.com blocks cloud servers), so a deployed
+The site and API deploy to Pages. Box scores, the NBA injury report and the game model are produced on your computer (NBA.com blocks cloud servers), so a deployed
 copy only stays current while you push fresh data to it from here.
+
+**Current setup.** The Pages project is `ubet-app`, created from the command line (a "direct upload" project: Cloudflare cannot connect it to Git afterwards). Publish with:
+
+```bash
+npm run build
+npx wrangler pages deploy dist --project-name ubet-app
+```
+
+or let `.github/workflows/deploy.yml` publish on every push to `main`. That needs two repository secrets (GitHub > Settings > Secrets and variables > Actions): `CLOUDFLARE_API_TOKEN` (create one at dash.cloudflare.com/profile/api-tokens with *Account > Cloudflare Pages > Edit*) and `CLOUDFLARE_ACCOUNT_ID`. The workflow runs the type check and unit tests first and never touches the database.
+
+**Bringing the live database up to date, in one command** (it asks before it writes):
+
+```bash
+npm run check:remote    # read-only: what is stale or missing
+npm run setup:remote    # migrations, box scores, odds, the NBA injury report, model numbers
+```
 
 ## Before the first deploy
 
@@ -36,7 +52,8 @@ SharpAPI's free plan allows 12 requests a minute. Game odds for the whole slate 
 Run these on your computer, pointing at the remote database:
 
 ```bash
-ingest/.venv/Scripts/python research/game_snapshot.py --remote   # re-score the games from today's injury report (seconds, no box-score sync)
+ingest/.venv/Scripts/python research/nba_injury_pdf.py --remote   # store the newest NBA injury report (the Lineups tab and the model read it)
+ingest/.venv/Scripts/python research/game_snapshot.py --remote   # re-score the games from that report (seconds, no box-score sync)
 ```
 
 The box-score sync writes to production with `--remote`; run it before game days:

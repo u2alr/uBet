@@ -78,7 +78,7 @@ def listed_players(reports: pd.DataFrame, chosen: pd.DataFrame, keys: dict[str, 
     return w[["date", "home", "away", "team", "player", "status", "PLAYER_ID", "w", "p"]]
 
 
-def build_v8(base: pd.DataFrame, teams: pd.DataFrame, players: pd.DataFrame, reports: pd.DataFrame | None = None) -> pd.DataFrame:
+def build_v8(base: pd.DataFrame, teams: pd.DataFrame, players: pd.DataFrame, reports: pd.DataFrame | None = None, return_listed: bool = False):
     """`base` is the v1 + v2 frame (one row per game). Adds `has_rep`, `rep_out`, `rep_exp_loss` and `rep_top` (home minus away)."""
     reports = load_reports() if reports is None else reports
     abbr = dict(zip(teams.TEAM_ID, teams.TEAM_ABBREVIATION))
@@ -98,4 +98,4 @@ def build_v8(base: pd.DataFrame, teams: pd.DataFrame, players: pd.DataFrame, rep
         feats[name] = h - a
     g["has_rep"] = chosen.report_ts.notna().astype(float).to_numpy()
     g["rep_out"], g["rep_exp_loss"], g["rep_top"] = feats["out"], feats["loss"], feats["top"]
-    return g
+    return (g, lp) if return_listed else g
