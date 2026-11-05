@@ -15,16 +15,25 @@ export const NEXT_UP = 3
 /** An official report older than this is not trusted for tonight's games. */
 export const MAX_REPORT_AGE_HOURS = 36
 
-export interface Listing { status: LineupStatus; reason: string; source: 'official' | 'espn'; /** A longer news line (ESPN's), for a tooltip only. */ note?: string }
-export interface Candidate { id: number; name: string; /** Minutes per game over the team's last games, a missed game counting as 0. */ avgMin: number }
-export interface LineupPlayer { id: number; name: string; avgMin: number; listing: Listing | null }
+export interface Listing { status: LineupStatus; reason: string; source: 'official' | 'espn'; /** A longer news line (ESPN's), for a tooltip only. */ note?: string; /** When ESPN last updated its entry for him (ISO). */ updated?: string }
+export interface Candidate {
+  id: number; name: string
+  /** Minutes per game over the team's last games, a missed game counting as 0. */
+  avgMin: number
+  /** The date (YYYY-MM-DD) of his latest game within the team's last 10, and how many of the team's games since then he missed (0 if he played the latest one). */
+  lastPlayed?: string | null
+  missed?: number | null
+}
+export interface LineupPlayer { id: number; name: string; avgMin: number; listing: Listing | null; lastPlayed: string | null; missed: number | null }
 export interface TeamLineup {
   starters: LineupPlayer[]
   /** The next players by minutes who are not listed Out or Doubtful: who steps in when a starter is out. */
   nextUp: LineupPlayer[]
   /** Listed players who are not in the five or the next three (an injured reserve, a rotation player on the report). */
-  alsoListed: { name: string; listing: Listing }[]
+  alsoListed: { name: string; listing: Listing; lastPlayed?: string | null }[]
   source: 'official' | 'espn' | 'none'
+  /** When the list behind the flags was written: the league's printed report time ('YYYY-MM-DD HH:MM' Eastern), or null for ESPN's feed (no stamp of its own). */
+  asOf: string | null
 }
 
 /** Letters only, lower case, accents and generational suffixes removed: the form two spellings of one name share ("Jaren Jackson Jr." and "JacksonJr.,Jaren"). */
@@ -40,7 +49,7 @@ export const officialKey = (printed: string): string => {
 }
 
 /** "YanicKonan" -> "Yanic Konan", "CenacJr." -> "Cenac Jr.": enough to read a name the PDF ran together. */
-const unglue = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/(\w)(Jr\.?|Sr\.?|III|II|IV)$/, '$1 $2')
+const unglue = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2')
 export function officialDisplay(printed: string): string {
   const [last, ...rest] = printed.split(',')
   return `${unglue(rest.join(''))} ${unglue(last)}`.trim()
@@ -90,7 +99,7 @@ export function espnListings(inj: Map<string, Injury>, isTeam: (injury: Injury) 
     if (!isTeam(i)) continue
     const status = statusFromEspn(i.status)
     if (!status || !i.name) continue
-    out.set(nameKey(i.name), { status, reason: '', note: i.note.slice(0, 240), source: 'espn', display: i.name })
+    out.set(nameKey(i.name), { status, reason: '', note: i.note.slice(0, 240), source: 'espn', display: i.name, ...(i.updated ? { updated: i.updated } : {}) })
   }
   return out
 }
@@ -103,18 +112,18 @@ export function reportAgeHours(reportTime: string | null | undefined, nowMs: num
   return Math.max(0, (nowMs - t) / 3_600_000)
 }
 
-export function buildLineup(candidates: Candidate[], official: Map<string, Listing & { display: string }> | null, espn: Map<string, Listing & { display: string }>): TeamLineup {
+export function buildLineup(candidates: Candidate[], official: Map<string, Listing & { display: string }> | null, espn: Map<string, Listing & { display: string }>, asOf: string | null = null): TeamLineup {
   const listings = official ?? espn
   const source: TeamLineup['source'] = official ? 'official' : espn.size ? 'espn' : 'none'
   const ranked = [...candidates].filter((c) => c.avgMin > 0).sort((a, b) => b.avgMin - a.avgMin || a.name.localeCompare(b.name))
-  const as = (c: Candidate): LineupPlayer => ({ id: c.id, name: c.name, avgMin: Math.round(c.avgMin * 10) / 10, listing: listings.get(nameKey(c.name)) ?? null })
+  const as = (c: Candidate): LineupPlayer => ({ id: c.id, name: c.name, avgMin: Math.round(c.avgMin * 10) / 10, listing: listings.get(nameKey(c.name)) ?? null, lastPlayed: c.lastPlayed ?? null, missed: c.missed ?? null })
   const starters = ranked.slice(0, STARTERS).map(as)
   const pool = ranked.slice(STARTERS).map(as)
   const nextUp = pool.filter((p) => !p.listing || (p.listing.status !== 'out' && p.listing.status !== 'doubtful')).slice(0, NEXT_UP)
   const shown = new Set([...starters, ...nextUp].map((p) => nameKey(p.name)))
   const alsoListed = [...listings.entries()]
     .filter(([k, l]) => !shown.has(k) && l.reason !== 'G League')
-    .map(([, l]) => ({ name: l.display, listing: { status: l.status, reason: l.reason, source: l.source, ...(l.note ? { note: l.note } : {}) } }))
+    .map(([, l]) => ({ name: l.display, listing: { status: l.status, reason: l.reason, source: l.source, ...(l.note ? { note: l.note } : {}), ...(l.updated ? { updated: l.updated } : {}) } }))
     .sort((a, b) => SEVERITY[b.listing.status] - SEVERITY[a.listing.status] || a.name.localeCompare(b.name))
-  return { starters, nextUp, alsoListed, source }
+  return { starters, nextUp, alsoListed, source, asOf: official ? asOf : null }
 }

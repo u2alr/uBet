@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { STATUS_LABEL, type LineupStatus, type TeamLineup } from '../../shared/lineups.ts'
+import { STATUS_LABEL, type LineupPlayer, type LineupStatus, type TeamLineup } from '../../shared/lineups.ts'
 import { api } from '../lib/format'
 import { teamByName } from '../lib/teams'
 import TeamChip from './TeamChip'
@@ -27,6 +27,30 @@ function dayName(key: string) {
   return new Date(`${key}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 const timeLabel = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+const shortDay = (ymd: string) => new Date(`${ymd}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+/** 'YYYY-MM-DD HH:MM' Eastern, as the league prints it, to "Nov 5, 2:15 AM ET". */
+const etStamp = (t: string) => {
+  const m = t.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})$/)
+  if (!m) return t
+  const h = Number(m[2])
+  return `${shortDay(m[1])}, ${h % 12 || 12}:${m[3]} ${h < 12 ? 'AM' : 'PM'} ET`
+}
+/** "(12 min ago)" for a report time printed in Eastern, so a stale list is visible at a glance. */
+function ageText(t: string | null): string {
+  const m = t?.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/)
+  if (!m) return ''
+  const nowEt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
+  const min = Math.round((nowEt.getTime() - new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])).getTime()) / 60_000)
+  if (min < 0) return ''
+  return min < 90 ? ` (${min} min ago)` : min < 36 * 60 ? ` (${Math.round(min / 60)} h ago)` : ' (old)'
+}
+/** How long a player has been out, from his box scores: "Played last game", "Missed last 3 (last played Nov 2)", or just when he last played. */
+function sinceText(lastPlayed: string | null | undefined, missed: number | null | undefined): string | null {
+  if (!lastPlayed) return null
+  if (missed == null) return `Last played ${shortDay(lastPlayed)}`
+  if (missed === 0) return `Played last game (${shortDay(lastPlayed)})`
+  return `Missed last ${missed} · last played ${shortDay(lastPlayed)}`
+}
 
 function Pill({ status, reason, source, note }: { status: LineupStatus; reason: string; source: 'official' | 'espn'; note?: string }) {
   return (
@@ -34,6 +58,17 @@ function Pill({ status, reason, source, note }: { status: LineupStatus; reason: 
       title={`${STATUS_LABEL[status]}${reason || note ? `: ${reason || note}` : ''} (${source === 'official' ? 'NBA injury report' : 'ESPN'})`}>
       {SHORT[status]}
     </span>
+  )
+}
+
+function Detail({ listing, lastPlayed, missed }: { listing: NonNullable<LineupPlayer['listing']>; lastPlayed?: string | null; missed?: number | null }) {
+  const since = sinceText(lastPlayed, missed)
+  const bits = [listing.reason, since].filter(Boolean)
+  return (
+    <div className="pb-1.5 pl-8 pr-3 text-xs leading-snug text-neutral-500">
+      {bits.length > 0 && <div>{bits.join(' · ')}</div>}
+      {listing.note && <div className="line-clamp-2 text-neutral-600" title={listing.note}>{listing.note}{listing.updated && <span className="text-neutral-700"> (ESPN, {shortDay(listing.updated.slice(0, 10))})</span>}</div>}
+    </div>
   )
 }
 
@@ -52,32 +87,40 @@ function TeamColumn({ t, align }: { t: Side; align: 'left' | 'right' }) {
       <ol className="divide-y divide-neutral-800/70 rounded-lg bg-neutral-950/50">
         {t.starters.length === 0 && <li className="px-3 py-3 text-sm text-neutral-500">No recent box scores for this team yet.</li>}
         {t.starters.map((p, i) => (
-          <li key={p.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-            <span className="w-3 shrink-0 text-xs tabular-nums text-neutral-600">{i + 1}</span>
-            <span className={`min-w-0 flex-1 truncate ${p.listing?.status === 'out' ? 'text-neutral-500 line-through' : 'text-neutral-100'}`}>{p.name}</span>
-            {p.listing && <Pill status={p.listing.status} reason={p.listing.reason} source={p.listing.source} note={p.listing.note} />}
-            <span className="w-10 shrink-0 text-right text-xs tabular-nums text-neutral-600" title="Minutes per game over the last 10 team games">{p.avgMin.toFixed(0)} min</span>
+          <li key={p.id}>
+            <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
+              <span className="w-3 shrink-0 text-xs tabular-nums text-neutral-600">{i + 1}</span>
+              <span className={`min-w-0 flex-1 truncate ${p.listing?.status === 'out' ? 'text-neutral-500 line-through' : 'text-neutral-100'}`}>{p.name}</span>
+              {p.listing && <Pill status={p.listing.status} reason={p.listing.reason} source={p.listing.source} note={p.listing.note} />}
+              <span className="w-10 shrink-0 text-right text-xs tabular-nums text-neutral-600" title="Minutes per game over the last 10 team games">{p.avgMin.toFixed(0)} min</span>
+            </div>
+            {p.listing && <Detail listing={p.listing} lastPlayed={p.lastPlayed} missed={p.missed} />}
           </li>
         ))}
       </ol>
       {t.nextUp.length > 0 && (
-        <p className="mt-1.5 truncate text-xs text-neutral-500" title="Next by minutes, not listed Out or Doubtful">
+        <p className="mt-1.5 text-xs text-neutral-500" title="Next by minutes, not listed Out or Doubtful">
           <span className="text-neutral-600">Next up </span>
-          {t.nextUp.map((p, i) => <span key={p.id}>{i > 0 && ', '}<span className="text-neutral-400">{p.name}</span>{p.listing && <span className="ml-1"><Pill status={p.listing.status} reason={p.listing.reason} source={p.listing.source} note={p.listing.note} /></span>}</span>)}
+          {t.nextUp.map((p, i) => <span key={p.id}>{i > 0 && ', '}<span className="text-neutral-400">{p.name}</span><span className="text-neutral-600"> {p.avgMin.toFixed(0)}m</span>{p.listing && <span className="ml-1"><Pill status={p.listing.status} reason={p.listing.reason} source={p.listing.source} note={p.listing.note} /></span>}</span>)}
         </p>
       )}
       {t.alsoListed.length > 0 && (
         <ul className="mt-1.5 space-y-0.5 text-xs">
           {t.alsoListed.map((a) => (
-            <li key={a.name} className="flex items-center gap-2 text-neutral-500">
-              <Pill status={a.listing.status} reason={a.listing.reason} source={a.listing.source} note={a.listing.note} />
-              <span className="min-w-0 truncate"><span className="text-neutral-400">{a.name}</span>{a.listing.reason && <span> · {a.listing.reason}</span>}</span>
+            <li key={a.name} className="text-neutral-500">
+              <div className="flex items-center gap-2">
+                <Pill status={a.listing.status} reason={a.listing.reason} source={a.listing.source} note={a.listing.note} />
+                <span className="min-w-0 truncate"><span className="text-neutral-400">{a.name}</span>{a.listing.reason && <span> · {a.listing.reason}</span>}{a.lastPlayed && <span className="text-neutral-600"> · last played {shortDay(a.lastPlayed)}</span>}</span>
+              </div>
+              {a.listing.note && <div className="line-clamp-2 pl-[3.25rem] text-neutral-600" title={a.listing.note}>{a.listing.note}{a.listing.updated && <span className="text-neutral-700"> (ESPN, {shortDay(a.listing.updated.slice(0, 10))})</span>}</div>}
             </li>
           ))}
         </ul>
       )}
-      <p className="mt-1.5 text-[10px] uppercase tracking-wide text-neutral-700">
-        {t.source === 'official' ? 'NBA injury report' : t.source === 'espn' ? 'ESPN (not on the NBA report yet)' : 'No injury list for this team yet'}
+      <p className="mt-1.5 text-[10px] uppercase tracking-wide text-neutral-600">
+        {t.source === 'official'
+          ? `NBA injury report${t.asOf ? ` · updated ${etStamp(t.asOf)}${ageText(t.asOf)}` : ''}`
+          : t.source === 'espn' ? 'ESPN list (not on the NBA report yet) · refreshed about every 15 min' : 'No injury list for this team yet'}
       </p>
     </div>
   )

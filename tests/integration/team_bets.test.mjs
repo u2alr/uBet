@@ -20,6 +20,23 @@ describe('/api/team-bets', () => {
     assert.ok(Math.abs(1 / ours.fairMoneyline.home + 1 / ours.fairMoneyline.away - 1) < 0.01, 'our fair prices carry no margin')
     assert.equal(body.meta.oddsAvailable, true)
   })
+  it('carries the same lineup data as the Lineups tab, so the two pages agree on who is out', async () => {
+    const { body } = await api('/team-bets')
+    const lineups = (await api('/lineups')).body.data.games
+    const withLineup = body.data.games.filter((g) => g.lineup)
+    assert.ok(withLineup.length > 0)
+    for (const g of withLineup) {
+      const other = lineups.find((x) => x.id === g.id)
+      if (!other) continue
+      for (const side of ['home', 'away']) {
+        const mine = g.lineup[side].flagged.filter((f) => f.status === 'out').map((f) => f.name).sort()
+        const theirs = [...other[side].starters, ...other[side].nextUp].filter((p) => p.listing?.status === 'out').map((p) => p.name)
+          .concat(other[side].alsoListed.filter((a) => a.listing.status === 'out').map((a) => a.name)).sort()
+        assert.deepEqual(mine.slice(0, 6), theirs.slice(0, 6), `${g.home.abbr} ${side}`)
+      }
+      assert.deepEqual(g.lineup.home.starters, other.home.starters.map((p) => p.name))
+    }
+  })
   it('suggests no bets: no ranked list, no expected profit, no best-bet field, and the honesty note is there', async () => {
     const { body } = await api('/team-bets')
     assert.equal('best' in body.data, false)

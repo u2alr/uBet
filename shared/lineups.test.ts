@@ -88,3 +88,28 @@ test('a report older than a day and a half is detectable and an unreadable stamp
   assert.ok(reportAgeHours('2026-11-03 06:00', now)! > 36)
   assert.equal(reportAgeHours('nope', now), null)
 })
+
+test('last played and games missed ride along with each player, and the report time is kept only when the league wrote the list', () => {
+  const withDates: Candidate[] = [{ id: 1, name: 'Star One', avgMin: 36, lastPlayed: '2026-11-02', missed: 2 }, { id: 2, name: 'Guard Two', avgMin: 30 }]
+  const off = officialListings([row('One,Star', 'Out', 'Injury/Illness-LeftAnkleSprain')], 'ATL', '2026-11-04')
+  const l = buildLineup(withDates, off, new Map(), '2026-11-05 02:15')
+  assert.equal(l.starters[0].lastPlayed, '2026-11-02')
+  assert.equal(l.starters[0].missed, 2)
+  assert.equal(l.starters[1].lastPlayed, null, 'a player with no dates gets null, not a guess')
+  assert.equal(l.asOf, '2026-11-05 02:15')
+  const e = buildLineup(withDates, null, espnListings(new Map<string, Injury>(), () => true), '2026-11-05 02:15')
+  assert.equal(e.asOf, null, 'ESPN has no stamp of its own, so none is claimed')
+})
+
+test("ESPN's own entry date is kept so a stale note can be told from a fresh one", () => {
+  const feed = new Map<string, Injury>([['guard two', { status: 'out', label: 'Out', note: "won't play Wednesday", team: 'Atlanta Hawks', name: 'Guard Two', updated: '2026-11-04T01:19Z' }]])
+  const listing = espnListings(feed, () => true).get(nameKey('Guard Two'))
+  assert.equal(listing?.updated, '2026-11-04T01:19Z')
+})
+
+test('a name the PDF ran together with a suffix is spaced once ("Butler III", not "Butler I II")', () => {
+  assert.equal(officialDisplay('ButlerIII,Jimmy'), 'Jimmy Butler III')
+  assert.equal(officialDisplay('CenacJr.,Christopher'), 'Christopher Cenac Jr.')
+  assert.equal(officialDisplay('Trent Jr.,Gary'), 'Gary Trent Jr.')
+  assert.equal(nameKey('Jimmy Butler III'), officialKey('ButlerIII,Jimmy'))
+})

@@ -3,7 +3,7 @@ import { normName } from './picks.ts'
 
 export type InjuryStatus = 'out' | 'doubtful' | 'questionable' | 'day-to-day' | 'other'
 /** `team` and `name` are as ESPN lists them; the club is newer than our roster's last box score after a trade. */
-export interface Injury { status: InjuryStatus; label: string; note: string; team?: string; name?: string }
+export interface Injury { status: InjuryStatus; label: string; note: string; team?: string; name?: string; /** When ESPN last updated this entry (ISO), if it says. */ updated?: string }
 
 const SEVERITY: Record<InjuryStatus, number> = { out: 4, doubtful: 3, questionable: 2, 'day-to-day': 1, other: 0 }
 
@@ -16,7 +16,7 @@ const statusOf = (raw: string): InjuryStatus => {
   return 'other'
 }
 
-interface EspnInjuryFeed { injuries?: { displayName?: string; injuries?: { status?: string; shortComment?: string; athlete?: { displayName?: string } }[] }[] }
+interface EspnInjuryFeed { injuries?: { displayName?: string; injuries?: { status?: string; shortComment?: string; date?: string; athlete?: { displayName?: string } }[] }[] }
 
 /** Player (by normalised name) -> their most serious listed status. Malformed entries are skipped, never thrown on. */
 export function parseInjuries(feed: unknown): Map<string, Injury> {
@@ -31,7 +31,7 @@ export function parseInjuries(feed: unknown): Map<string, Injury> {
       const key = normName(name)
       const cur = out.get(key)
       if (!cur || SEVERITY[status] > SEVERITY[cur.status])
-        out.set(key, { status, label: i.status, note: typeof i.shortComment === 'string' ? i.shortComment.slice(0, 240) : '', name, ...(typeof t.displayName === 'string' ? { team: t.displayName } : {}) })
+        out.set(key, { status, label: i.status, note: typeof i.shortComment === 'string' ? i.shortComment.slice(0, 240) : '', name, ...(typeof i.date === 'string' && Number.isFinite(Date.parse(i.date)) ? { updated: i.date } : {}), ...(typeof t.displayName === 'string' ? { team: t.displayName } : {}) })
     }
   return out
 }

@@ -65,6 +65,9 @@ async function startSync(mode, player) {
   try {
     if (mode === 'odds') {
       await runNode(join(root, 'scripts', 'sync_odds.mjs'), [], 'Syncing odds')
+    } else if (mode === 'injuries') {
+      // The league's official injury report (a PDF it re-posts about every 15 minutes): fetch the newest one and store it, so the Lineups page and the model read what it says now.
+      await run([], 'Reading the NBA injury report', join(root, 'research', 'nba_injury_pdf.py'))
     } else if (mode === 'games') {
       // Re-score the upcoming games from today's injury report. No box-score sync: it reads the data already on disk, so it takes seconds.
       await run([], 'Scoring upcoming games', join(root, 'research', 'game_snapshot.py'))
@@ -106,7 +109,7 @@ createServer((req, res) => {
     if (state.running) return json(res, 409, { error: 'A sync is already running', ...state })
     const player = url.searchParams.get('player')
     if (player !== null && !isSafePlayerName(player)) return json(res, 400, { error: 'Bad player name' })
-    startSync(url.searchParams.get('only') === 'games' ? 'games' : url.searchParams.get('only') === 'odds' ? 'odds' : player ? 'player' : 'all', player)
+    startSync(url.searchParams.get('only') === 'games' ? 'games' : url.searchParams.get('only') === 'odds' ? 'odds' : url.searchParams.get('only') === 'injuries' ? 'injuries' : player ? 'player' : 'all', player)
     return json(res, 202, { started: true })
   }
   json(res, 404, { error: 'Not found' })
@@ -136,7 +139,16 @@ createServer((req, res) => {
     saved.oddsAt = Date.now(); writeFileSync(stateFile, JSON.stringify(saved))
     await startSync('odds')
   }
-  tick().then(tickOdds)
-  setInterval(() => tick().then(tickOdds), 5 * 60_000)
-  console.log(`automatic: sync every ${hours}h, odds every ${oddsEvery / 60_000} min (state in ingest/.auto_state.json)`)
+  // The NBA injury report: every INJURY_SYNC_MINUTES (default 15, the league's own rhythm).        AUTO_INJURIES=0 turns it off
+  const injuriesEvery = (Number(process.env.INJURY_SYNC_MINUTES) > 0 ? Number(process.env.INJURY_SYNC_MINUTES) : 15) * 60_000
+  const tickInjuries = async () => {
+    if (state.running || process.env.AUTO_INJURIES === '0') return
+    if (Date.now() - (saved.injuriesAt ?? 0) < injuriesEvery) return
+    console.log(`auto-injuries ${new Date().toLocaleTimeString()}`)
+    saved.injuriesAt = Date.now(); writeFileSync(stateFile, JSON.stringify(saved))
+    await startSync('injuries')
+  }
+  tick().then(tickOdds).then(tickInjuries)
+  setInterval(() => tick().then(tickOdds).then(tickInjuries), 5 * 60_000)
+  console.log(`automatic: sync every ${hours}h, odds every ${oddsEvery / 60_000} min, NBA injury report every ${injuriesEvery / 60_000} min (state in ingest/.auto_state.json)`)
 })

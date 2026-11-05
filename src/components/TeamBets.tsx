@@ -3,6 +3,7 @@ import { gameReasons, type GameLeanRow } from '../../shared/games.ts'
 import { normName } from '../../shared/picks.ts'
 import type { BookLine, TeamBet } from '../../shared/teamBets.ts'
 import { LEVELS, gutKey, type GutPick, type GutRef } from '../../shared/gut.ts'
+import { STATUS_LABEL, type LineupStatus } from '../../shared/lineups.ts'
 import { commonLean, type TeamForm } from '../../shared/teamForm.ts'
 import { api, pct } from '../lib/format'
 import { teamByName } from '../lib/teams'
@@ -10,8 +11,10 @@ import { TIERS, tierOf } from '../lib/tiers'
 import ReasonList from './ReasonList'
 import TeamChip from './TeamChip'
 
+interface LineupFlag { name: string; role: 'starter' | 'bench' | 'listed'; status: LineupStatus; reason: string; note: string | null; lastPlayed?: string | null; missed?: number | null }
+interface LineupSide { source: 'official' | 'espn' | 'none'; asOf: string | null; starters: string[]; flagged: LineupFlag[] }
 interface Row {
-  id: string; gutRef: GutRef; date: string; state: 'pre' | 'in' | 'post'; status: string
+  id: string; lineup: { home: LineupSide; away: LineupSide } | null; gutRef: GutRef; date: string; state: 'pre' | 'in' | 'post'; status: string
   home: { abbr: string; name: string; score: string }; away: { abbr: string; name: string; score: string }
   bet: TeamBet; books: BookLine[]; form: TeamForm; model: GameLeanRow | null; modelAsOf: string | null; modelStale?: boolean
 }
@@ -118,6 +121,60 @@ function Form({ r }: { r: Row }) {
   )
 }
 
+const FLAG_PILL: Record<LineupStatus, string> = {
+  out: 'bg-red-500/15 text-red-300', doubtful: 'bg-orange-500/15 text-orange-300', questionable: 'bg-amber-500/15 text-amber-300', gtd: 'bg-amber-500/10 text-amber-200', probable: 'bg-emerald-500/15 text-emerald-300',
+}
+const stamp = (t: string | null) => {
+  const m = t?.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/)
+  if (!m) return null
+  const h = Number(m[4])
+  return `${new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${h % 12 || 12}:${m[5]} ${h < 12 ? 'AM' : 'PM'} ET`
+}
+
+/** Who is flagged on each side, from the same lineup data as the Lineups tab, with where the list came from and when it was written. */
+function LineupPanel({ r }: { r: Row }) {
+  const lu = r.lineup!
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-neutral-500">Lineups and injuries</span>
+        <a href="#/Lineups" className="text-neutral-400 underline-offset-2 hover:text-neutral-100 hover:underline">Full lineups</a>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {([['away', r.away], ['home', r.home]] as const).map(([side, t]) => {
+          const L = lu[side]
+          const starters = L.flagged.filter((f) => f.role === 'starter')
+          const others = L.flagged.filter((f) => f.role !== 'starter')
+          return (
+            <div key={side} className="rounded-lg bg-neutral-950/50 px-3 py-2">
+              <div className="mb-1 font-medium text-neutral-200">{t.abbr} <span className="font-normal text-neutral-600">starters</span></div>
+              <div className="text-neutral-300">
+                {L.starters.length === 0 ? <span className="text-neutral-600">no recent box scores</span> : L.starters.map((n, i) => {
+                  const f = starters.find((x) => x.name === n)
+                  return <span key={n}>{i > 0 && ', '}<span className={f?.status === 'out' ? 'text-neutral-500 line-through' : ''}>{n}</span>{f && <span className={`ml-1 rounded px-1 py-px text-[10px] font-semibold ${FLAG_PILL[f.status]}`} title={f.note ?? undefined}>{STATUS_LABEL[f.status]}</span>}</span>
+                })}
+              </div>
+              {others.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5 text-neutral-500">
+                  {others.slice(0, 5).map((f) => (
+                    <li key={f.name} title={f.note ?? undefined}>
+                      <span className={`mr-1 rounded px-1 py-px text-[10px] font-semibold ${FLAG_PILL[f.status]}`}>{STATUS_LABEL[f.status]}</span>
+                      <span className="text-neutral-400">{f.name}</span>{f.reason && <span> · {f.reason}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-1.5 text-[10px] uppercase tracking-wide text-neutral-700">
+                {L.source === 'official' ? `NBA injury report${stamp(L.asOf) ? ` · updated ${stamp(L.asOf)}` : ''}` : L.source === 'espn' ? 'ESPN list (not on the NBA report yet)' : 'No injury list yet'}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /** The expanded game: both teams side by side with every book's price, the lines, head-to-head, common opponents, the model's reasons and the injury report. */
 function GameDetail({ r, absent, onOpenGame, status, claude }: { r: Row; absent: Absence[]; onOpenGame: (id: string) => void; status: FormStatus | undefined; claude: GutPick | undefined }) {
   const pick = pickOf(r)
@@ -157,12 +214,7 @@ function GameDetail({ r, absent, onOpenGame, status, claude }: { r: Row; absent:
       <Form r={r} />
 
       {reasons.length > 0 ? <ReasonList title={`Why the model favours ${r.model && r.model.model_home_prob >= 0.5 ? r.model.home : r.model?.away}`} reasons={reasons} /> : <p className="text-xs text-neutral-500">No model number for this game yet (it appears after the next sync).</p>}
-      {mine.length > 0 && (
-        <p className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-neutral-500">Injury report</span>
-          {mine.map((a) => <span key={a.id} className={`rounded-full px-2.5 py-0.5 ${a.status === 'out' ? 'bg-red-500/15 text-red-300' : 'bg-neutral-800 text-neutral-300'}`}>{a.team} {a.name.split(' ').slice(-1)[0]} · {a.status}</span>)}
-        </p>
-      )}
+      {r.lineup && <LineupPanel r={r} />}
       {status && <p className="text-xs text-neutral-600">Over {status.commonOpponentLean.games.toLocaleString()} past games (judged with only that season's earlier games) the common-opponent lean picked the winner {pct(status.commonOpponentLean.picksWinner)} of the time (always picking the home team: {pct(status.commonOpponentLean.homeTeamWon)}); with a gap of two or more opponents, {pct(status.commonOpponentLeanGap2.picksWinner)}.</p>}
     </div>
   )
@@ -260,17 +312,24 @@ function TopStrip({ games, onJump }: { games: Row[]; onJump: (id: string) => voi
 
 export default function TeamBets({ refreshKey, onOpenGame }: { refreshKey: number; onOpenGame: (id: string) => void }) {
   const [res, setRes] = useState<Res | null>(null)
-  const [absent, setAbsent] = useState<Absence[]>([])
   const [gut, setGut] = useState<GutRes | null>(null)
   const [error, setError] = useState('')
   const [sort, setSort] = useState<Sort>('tip')
   const [day, setDay] = useState<string | null>(null)
   const [help, setHelp] = useState(false)
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({})
+  // Who is out, from the same lineup data the Lineups tab shows (the NBA's report first, ESPN for teams that have not filed), so the two pages cannot disagree.
+  const absent = useMemo<Absence[]>(() => {
+    const seen = new Map<string, Absence>()          // a team plays on several days, so the same player is flagged in each of its games: count him once
+    for (const g of res?.data.games ?? []) for (const side of ['home', 'away'] as const) for (const f of g.lineup?.[side].flagged ?? []) {
+      const key = `${g[side].abbr}|${f.name}`
+      if (!seen.has(key)) seen.set(key, { id: seen.size + 1, name: f.name, team: g[side].abbr, status: f.status === 'gtd' ? 'day-to-day' : f.status })
+    }
+    return [...seen.values()]
+  }, [res])
   useEffect(() => {
     let live = true
     api<Res>('/team-bets').then((r) => live && setRes(r)).catch((e) => live && setError(e.message))
-    api<{ data: Absence[] }>('/absences').then((r) => live && setAbsent(r.data)).catch(() => live && setAbsent([]))
     return () => { live = false }
   }, [refreshKey])
   useEffect(() => {
