@@ -26,6 +26,7 @@ import { OPP_ALLOWED_SQL, attachOpponent, buildOppTable, type AllowedRow } from 
 import { boardPayload, slim } from '../../shared/boardPayload.ts'
 import { TEAM_IDS, abbrOfTeamId, normAbbr } from '../../shared/teamCodes.ts'
 import { evaluateHealth } from '../../shared/health.ts'
+import { PLAYER_PROPS } from '../../src/lib/features.ts'
 import { matchupSummary, teamFacts, workloadFacts, type PlayedGame, type WorkloadFacts } from '../../shared/schedule.ts'
 import humanFactorsStatus from '../../shared/humanFactors.status.json' with { type: 'json' }
 import defenseStatus from '../../shared/defense.status.json' with { type: 'json' }
@@ -721,6 +722,10 @@ app.get('/health', async (c) => {
     oddsKeySet: !!c.env.SHARPAPI_KEY, captureTokenSet: !!c.env.CAPTURE_TOKEN, tables,
     lastSync: await one("SELECT value AS v FROM meta WHERE key = 'last_sync'"), newestGame: await one('SELECT MAX(date) AS v FROM games'),
     newestProjection: tables.includes('projections') ? await one('SELECT MAX(created_at) AS v FROM projections') : null, now: Date.now(),
+    propsOn: PLAYER_PROPS,
+    oddsGamesFetchedAt: tables.includes('odds_snapshot') ? Number(await one("SELECT MAX(fetched_at) AS v FROM odds_snapshot WHERE kind = 'games'")) || null : null,
+    modelAsOf: tables.includes('game_lean') ? await one('SELECT MAX(as_of) AS v FROM game_lean') : null,
+    injuryReportAt: tables.includes('nba_injury_report') ? await one('SELECT MAX(report_time) AS v FROM nba_injury_report') : null,
   })
   return c.json(report, report.status === 'down' ? 503 : 200)
 })

@@ -22,7 +22,9 @@
     "grade": "ingest\\.venv\\Scripts\\python ingest\\sync.py --grade-only",
     "test:integration": "node --no-warnings --test --test-concurrency=1 tests/integration/api.test.mjs tests/integration/fallback_v3.test.mjs tests/integration/odds_budget.test.mjs tests/integration/odds_sync.test.mjs tests/integration/own_lines.test.mjs tests/integration/team_bets.test.mjs tests/integration/season_review.test.mjs tests/integration/gut.test.mjs tests/integration/lineups.test.mjs tests/integration/picks_payload.test.mjs tests/integration/ops.test.mjs tests/integration/injuries_roles.test.mjs tests/integration/injuries_down.test.mjs tests/integration/splits.test.mjs",
     "test:mutation": "node --no-warnings tests/mutation_check.mjs",
-    "check:data": "node --no-warnings ingest/check_data.mjs"
+    "check:data": "node --no-warnings ingest/check_data.mjs",
+    "setup:remote": "powershell -File scripts/setup_remote.ps1",
+    "check:remote": "powershell -File scripts/setup_remote.ps1 -Check"
   },
   "dependencies": {
     "hono": "^4.13.13",

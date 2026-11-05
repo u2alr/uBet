@@ -26,7 +26,7 @@ test('half-wins, half-losses and voids are priced from their real payoffs, never
     { outcome: 'win' as const, probability: 0.3 }, { outcome: 'half_win' as const, probability: 0.2 },
     { outcome: 'push' as const, probability: 0.1 }, { outcome: 'half_loss' as const, probability: 0.15 }, { outcome: 'lose' as const, probability: 0.25 },
   ]
-  near(expectedReturn(2.0, asian), 0.3 * 1 + 0.2 * 0.5 + 0.1 * 0 + 0.15 * -0.5 + 0.25 * -1)
+  near(expectedReturn(2.0, asian), 0.3 * 1 + 0.2 * 0.5 + 0.15 * -0.5 + 0.25 * -1)   // a push contributes nothing, so its term (0.1 x 0) is simply left out
   const withVoid = [{ outcome: 'win' as const, probability: 0.4 }, { outcome: 'void' as const, probability: 0.2 }, { outcome: 'lose' as const, probability: 0.4 }]
   near(expectedReturn(2.5, withVoid), 0.4 * 1.5 - 0.4)
 })
