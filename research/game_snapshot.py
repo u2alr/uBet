@@ -58,21 +58,6 @@ def season_review_rows(played: pd.DataFrame, abbr_to_id: dict) -> list[tuple]:
             for r, pi in zip(cur.itertuples(), p) if to_abbr.get(r.home_id) and to_abbr.get(r.away_id)]
 
 
-def injury_report() -> list[dict]:
-    """Every Out / Doubtful / Questionable entry ESPN lists right now: {team name, player, status, note}. Empty when the feed cannot be read (then no player is treated as absent)."""
-    try:
-        with urllib.request.urlopen("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries", timeout=30) as r:
-            feed = json.load(r)
-    except Exception as e:  # noqa: BLE001
-        print(f"  injury report unavailable ({e}); no player is treated as absent")
-        return []
-    rows = []
-    for team in feed.get("injuries", []):
-        for i in team.get("injuries", []):
-            rows.append({"team": team.get("displayName", ""), "player": i.get("athlete", {}).get("displayName", ""), "status": str(i.get("status", "")), "note": str(i.get("shortComment", ""))[:200]})
-    return rows
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--remote", action="store_true")
@@ -111,12 +96,14 @@ def main():
     names = pl.dropna(subset=["PLAYER_NAME"]).drop_duplicates("PLAYER_ID", keep="last")
     by_name = {norm_name(n): int(i) for n, i in zip(names.PLAYER_NAME, names.PLAYER_ID)}
     label = dict(zip(names.PLAYER_ID.astype(int), names.PLAYER_NAME))
-    report = injury_report()
-    official = NI.official_report([(t["abbreviation"], t["full_name"]) for t in nba_static.get_teams()])     # the league's own PDF, newer than ESPN's list; None when it cannot be read
-    if official and official["rows"]:
-        listed, unmatched = NI.to_espn_shape(official["rows"], {NI.letters(n): n for n in names.PLAYER_NAME})
-        report = NI.merge(report, listed, {r["team_name"] for r in official["rows"]})   # the league's own list is the base; ESPN fills in only for teams that have not filed
+    # The injury list is the NBA's own report ONLY (the PDFs on official.nba.com): no other feed. A team that has not filed, or a report that cannot be read, means no player is treated as absent.
+    report = []
+    official = NI.official_report([(t["abbreviation"], t["full_name"]) for t in nba_static.get_teams()])
+    if official and (official["rows"] or official["filings"]):
+        report, unmatched = NI.to_espn_shape(official["rows"], {NI.letters(n): n for n in names.PLAYER_NAME})
         print(f"  official report {official['report_time']} ET: {len(official['rows'])} listed, {len(unmatched)} not on the roster ({', '.join(unmatched[:6])}{'...' if len(unmatched) > 6 else ''})")
+    else:
+        print("  no NBA injury report could be read; no player is treated as absent")
     out_ids = {by_name[norm_name(r["player"])] for r in report if "out" in r["status"].lower() and norm_name(r["player"]) in by_name}
 
     # For the shadow feature only: anyone on the report, whatever the status, is not assumed to play (a Day-To-Day star back from a long absence must not earn "returning" credit by default).
